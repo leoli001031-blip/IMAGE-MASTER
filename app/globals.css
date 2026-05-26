@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "STSong", "Songti SC", "Noto Serif SC", serif;
+
+  /* 暖米咖色彩体系 */
+  --color-warm-bg: #F7F1E7;
+  --color-warm-paper: #FFFCF6;
+  --color-warm-soft: #F2E7D8;
+  --color-warm-ink: #2F2722;
+  --color-warm-muted: #7C6F63;
+  --color-warm-line: #DDD0C0;
+  --color-warm-primary: #7A553C;
+  --color-warm-primary-soft: #E8D7C2;
+  --color-warm-sage: #8E9A83;
+  --color-warm-clay: #C97961;
+}
+
+body {
+  background-color: var(--color-warm-bg);
+  color: var(--color-warm-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

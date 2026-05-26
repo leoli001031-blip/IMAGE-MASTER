@@ -1,0 +1,924 @@
+[
+  {
+    "type": "visual_style",
+    "title": "Clean Ecommerce White Background",
+    "description": "A crisp product-first white-background style for marketplace main images and detail-page hero blocks.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.visual_style.clean_ecommerce_white",
+      "label": "Clean Ecommerce White Background",
+      "parameters": {
+        "colorPalette": ["#FFFFFF", "#F5F7FA", "#1F2937"],
+        "lighting": "Softbox lighting with even highlights and minimal shadow spill.",
+        "composition": "Centered product, straightened verticals, clear silhouette, no decorative clutter.",
+        "materialLanguage": "Accurate material texture with restrained contrast and realistic edge definition.",
+        "backgroundLanguage": "Pure white or very light neutral background suitable for marketplace compliance.",
+        "typography": "No embedded typography unless the connected platform rule explicitly allows it."
+      },
+      "constraints": [
+        "Keep the product outline complete and readable.",
+        "Avoid props that may be mistaken for included accessories."
+      ],
+      "promptFragments": [
+        "clean ecommerce product photography on a pure white background",
+        "soft even studio lighting, accurate color and material, centered composition"
+      ],
+      "negativeRules": [
+        "No busy background, watermark, fake logo, distorted product geometry, or extra bundled accessories."
+      ],
+      "compatibleWith": [
+        "commercial.platform.amazon_main_image",
+        "commercial.platform.taobao_detail_page"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "visual_style",
+    "title": "Premium Business Model",
+    "description": "A high-end business portrait and product display style for polished model-led commercial visuals.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.visual_style.premium_business_model",
+      "label": "Premium Business Model",
+      "parameters": {
+        "colorPalette": ["#111827", "#F9FAFB", "#B59B6B"],
+        "lighting": "Controlled directional key light with gentle fill and premium editorial contrast.",
+        "composition": "Model and product share the frame with a clear hero hierarchy and confident posture.",
+        "materialLanguage": "Polished fabric, leather, metal, glass, and packaging textures without over-retouching.",
+        "backgroundLanguage": "Modern business interior, neutral walls, or subtle architectural planes.",
+        "typography": "Minimal premium copy space; keep text outside model/product overlap zones."
+      },
+      "constraints": [
+        "Do not change model identity anchors when a model asset is connected.",
+        "Keep the product scale commercially plausible."
+      ],
+      "promptFragments": [
+        "premium business commercial photography with a poised professional model",
+        "modern executive styling, refined lighting, confident product presentation"
+      ],
+      "negativeRules": [
+        "No exaggerated luxury props, unrealistic skin smoothing, warped hands, or product-logo changes."
+      ],
+      "compatibleWith": [
+        "commercial.scene.office_business",
+        "commercial.recipe.model_display"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "visual_style",
+    "title": "Warm Lifestyle",
+    "description": "A warm lifestyle style for approachable social-commerce covers and contextual product stories.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.visual_style.warm_lifestyle",
+      "label": "Warm Lifestyle",
+      "parameters": {
+        "colorPalette": ["#F7EFE3", "#6B7280", "#D97706"],
+        "lighting": "Natural warm daylight with soft shadows and believable ambient bounce.",
+        "composition": "Human-scale contextual framing with enough product clarity for commerce.",
+        "materialLanguage": "Tactile, inviting materials with natural imperfections preserved.",
+        "backgroundLanguage": "Lived-in but tidy lifestyle environment with shallow-to-medium depth.",
+        "typography": "Leave a clean upper or side area for short social cover copy when needed."
+      },
+      "constraints": [
+        "Lifestyle props must support the product use case.",
+        "Keep the product visible enough for a shopper to recognize it quickly."
+      ],
+      "promptFragments": [
+        "warm lifestyle commercial photography, natural daylight, inviting everyday scene",
+        "authentic product use context, tasteful props, approachable social-commerce mood"
+      ],
+      "negativeRules": [
+        "No cluttered table, misleading product use, heavy filters, or unreadable product details."
+      ],
+      "compatibleWith": [
+        "commercial.scene.home_lifestyle",
+        "commercial.scene.cafe_lifestyle",
+        "commercial.platform.xiaohongshu_cover"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "scene",
+    "title": "Home Lifestyle Scene",
+    "description": "A tidy home setting for lifestyle product display, daily-use visuals, and social-commerce storytelling.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.scene.home_lifestyle",
+      "label": "Home Lifestyle Scene",
+      "parameters": {
+        "environment": "Bright home living room, bedroom corner, kitchen counter, or entryway depending on product category.",
+        "props": ["soft textiles", "wood surface", "ceramic cup", "plant", "storage tray"],
+        "lighting": "Window daylight with soft ambient fill.",
+        "depth": "Medium depth with background context visible but not distracting.",
+        "cameraAngle": "Eye-level or slight top-down angle for product clarity.",
+        "placementRules": [
+          "Place the product on a clean surface or in realistic use.",
+          "Keep props secondary and category-relevant."
+        ]
+      },
+      "promptFragments": [
+        "tidy warm home lifestyle scene with natural daylight",
+        "realistic daily-use context, clean surface, tasteful supporting props"
+      ],
+      "qualityRules": [
+        "Product remains the primary readable subject.",
+        "No prop suggests a false bundle."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "scene",
+    "title": "Cafe Lifestyle Scene",
+    "description": "A modern coffee-shop setting for warm social covers, premium casual product moments, and creator-style visuals.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.scene.cafe_lifestyle",
+      "label": "Cafe Lifestyle Scene",
+      "parameters": {
+        "environment": "Calm specialty coffee shop with warm counter, window seat, or small table.",
+        "props": ["coffee cup", "linen napkin", "menu card without readable brand", "wood table", "soft window reflection"],
+        "lighting": "Warm window light mixed with gentle interior ambience.",
+        "depth": "Shallow-to-medium depth for editorial warmth.",
+        "cameraAngle": "Three-quarter tabletop or seated human-scale framing.",
+        "placementRules": [
+          "Avoid competing labels on cups or menus.",
+          "Keep product scale and contact shadows believable."
+        ]
+      },
+      "promptFragments": [
+        "warm modern cafe lifestyle scene, specialty coffee shop atmosphere",
+        "tasteful tabletop styling, soft window light, social-commerce cover friendly"
+      ],
+      "negativeRules": [
+        "No third-party readable brands, messy table, or over-dark ambient lighting."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "scene",
+    "title": "Office Business Scene",
+    "description": "A premium office and meeting-room setting for business products, model display, and professional campaigns.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.scene.office_business",
+      "label": "Office Business Scene",
+      "parameters": {
+        "environment": "Modern office, meeting room, executive desk, or glass-wall workspace.",
+        "props": ["notebook", "laptop with blank screen", "pen", "neutral documents", "architectural glass"],
+        "lighting": "Clean daylight with controlled interior fill and polished highlights.",
+        "depth": "Layered background with professional context and low visual noise.",
+        "cameraAngle": "Eye-level portrait, desk-level product hero, or three-quarter business display.",
+        "placementRules": [
+          "Keep screens blank or abstract.",
+          "Use props to signal business context without distracting from product or model."
+        ]
+      },
+      "promptFragments": [
+        "premium modern office business scene, clean professional interior",
+        "executive desk or meeting-room context, refined commercial lighting"
+      ],
+      "qualityRules": [
+        "Business props must remain generic and brand-safe.",
+        "Model posture and product placement should feel commercially credible."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "platform_rule",
+    "title": "Amazon Main Image Rule",
+    "description": "Marketplace-safe main image constraints for Amazon-style product hero images.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.platform.amazon_main_image",
+      "label": "Amazon Main Image Rule",
+      "parameters": {
+        "platform": "Amazon",
+        "aspectRatios": ["1:1"],
+        "sizes": ["2000x2000"],
+        "imageCount": 2,
+        "requiredAssets": ["product_asset"],
+        "costTier": "low",
+        "suitableFor": ["Amazon main image", "marketplace product hero"],
+        "safeAreas": ["Product fills most of the square canvas while preserving full outline."],
+        "textAllowance": "No promotional text, badges, watermarks, or decorative copy on main image.",
+        "backgroundRestrictions": ["Pure white background preferred", "No lifestyle props for main image"],
+        "exportNaming": "{sku}_amazon_main_{index}.png",
+        "formats": ["PNG", "JPEG"]
+      },
+      "constraints": [
+        "Main image must clearly show the product being sold.",
+        "Avoid accessories not included with the product."
+      ],
+      "qualityRules": [
+        "White background compliance.",
+        "No embedded promotional text.",
+        "Product geometry and color remain accurate."
+      ],
+      "compatibleWith": ["commercial.visual_style.clean_ecommerce_white"],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "platform_rule",
+    "title": "Taobao Detail Page Rule",
+    "description": "Detail-page constraints for a Taobao-style commercial image set with feature storytelling.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.platform.taobao_detail_page",
+      "label": "Taobao Detail Page Rule",
+      "parameters": {
+        "platform": "Taobao",
+        "aspectRatios": ["1:1", "3:4", "4:5", "750:1000"],
+        "sizes": ["1200x1200", "1200x1600", "1200x1500", "750x1000"],
+        "imageCount": 4,
+        "requiredAssets": ["product_asset", "selling_points"],
+        "costTier": "medium",
+        "suitableFor": ["Taobao detail page", "Tmall listing", "feature education"],
+        "safeAreas": ["Keep headline and selling-point copy away from product detail zones."],
+        "textAllowance": "Short Chinese selling-point copy allowed when it does not cover product-critical details.",
+        "backgroundRestrictions": ["Background may be white, lifestyle, or themed if product remains clear"],
+        "exportNaming": "{sku}_taobao_detail_{slot}_{index}.png",
+        "formats": ["PNG", "JPEG", "JSON manifest"]
+      },
+      "constraints": [
+        "Feature callouts must be truthful and grounded in supplied product data.",
+        "Use consistent style across the pack."
+      ],
+      "qualityRules": [
+        "Readable product detail.",
+        "Copy does not obscure product.",
+        "Commercial layout has clear hierarchy."
+      ],
+      "compatibleWith": [
+        "commercial.visual_style.clean_ecommerce_white",
+        "commercial.visual_style.warm_lifestyle"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "platform_rule",
+    "title": "Xiaohongshu Cover Rule",
+    "description": "Social cover constraints for Xiaohongshu-style discovery images with product clarity and readable cover copy.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.platform.xiaohongshu_cover",
+      "label": "Xiaohongshu Cover Rule",
+      "parameters": {
+        "platform": "Xiaohongshu",
+        "aspectRatios": ["3:4", "4:5"],
+        "sizes": ["1242x1660", "1080x1350"],
+        "imageCount": 3,
+        "requiredAssets": ["product_asset", "cover_headline"],
+        "costTier": "medium",
+        "suitableFor": ["Xiaohongshu cover", "social product note", "creator-style product story"],
+        "safeAreas": ["Reserve one clean text area near top or side without covering product or face."],
+        "textAllowance": "Short cover headline allowed; avoid exaggerated claims.",
+        "backgroundRestrictions": ["Lifestyle backgrounds allowed if clean and authentic"],
+        "exportNaming": "{sku}_xhs_cover_{index}.png",
+        "formats": ["PNG", "JPEG"]
+      },
+      "constraints": [
+        "Cover should read clearly at feed thumbnail size.",
+        "Avoid medical, financial, or absolute-performance claims unless verified."
+      ],
+      "qualityRules": [
+        "Thumbnail readability.",
+        "Product and use case visible.",
+        "No misleading before/after framing."
+      ],
+      "compatibleWith": [
+        "commercial.visual_style.warm_lifestyle",
+        "commercial.scene.cafe_lifestyle",
+        "commercial.scene.home_lifestyle"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "platform_rule",
+    "title": "Poster Campaign Rule",
+    "description": "Poster and banner constraints for launch campaigns, store banners, and social announcements.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.platform.poster_campaign",
+      "label": "Poster Campaign Rule",
+      "parameters": {
+        "platform": "Poster",
+        "aspectRatios": ["9:16", "16:9", "3:4", "1:1"],
+        "sizes": ["1080x1920", "1920x1080", "1242x1660", "1080x1080"],
+        "imageCount": 4,
+        "requiredAssets": ["product_asset", "visual_style", "campaign_headline"],
+        "costTier": "medium",
+        "suitableFor": ["launch poster", "store banner", "event promotion", "social announcement"],
+        "safeAreas": [
+          "Keep headline and CTA in a stable copy zone away from product edges.",
+          "Reserve one version with no text for downstream localization."
+        ],
+        "textAllowance": "Campaign headline and short CTA allowed; product truth and readability are more important than decorative typography.",
+        "backgroundRestrictions": ["Scene or graphic background allowed if product silhouette remains readable"],
+        "exportNaming": "{sku}_poster_{format}_{index}.png",
+        "formats": ["PNG", "JPEG", "JSON manifest"]
+      },
+      "constraints": [
+        "Hero product must remain the primary subject.",
+        "Campaign layout should work as a set across vertical, square, and banner formats."
+      ],
+      "qualityRules": [
+        "Readable headline at mobile preview size.",
+        "Clear product hierarchy.",
+        "Consistent palette and art direction across the pack."
+      ],
+      "compatibleWith": [
+        "commercial.visual_style.warm_lifestyle",
+        "commercial.visual_style.premium_business_model",
+        "commercial.quality.commercial_polish"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "platform_rule",
+    "title": "Product Detail Page Rule",
+    "description": "Generic product-detail constraints for storefront modules that are not locked to one marketplace.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.platform.product_detail_page",
+      "label": "Product Detail Page Rule",
+      "parameters": {
+        "platform": "Product Detail Page",
+        "aspectRatios": ["1:1", "3:4", "4:5", "750:1000"],
+        "sizes": ["1200x1200", "1200x1600", "1200x1500", "750x1000"],
+        "imageCount": 5,
+        "requiredAssets": ["product_asset", "product_brief", "selling_points", "brand_kit"],
+        "costTier": "medium",
+        "suitableFor": ["DTC detail page", "marketplace detail modules", "feature education"],
+        "safeAreas": ["Keep proof points, icons, and copy outside material close-up zones."],
+        "textAllowance": "Short benefit copy allowed; long paragraphs should be exported as copy pack rather than burned into image.",
+        "backgroundRestrictions": ["White, lifestyle, gradient, or scene backgrounds allowed when product detail remains accurate"],
+        "exportNaming": "{sku}_detail_{slot}_{index}.png",
+        "formats": ["PNG", "JPEG", "JSON manifest"]
+      },
+      "constraints": [
+        "Product claims must be grounded in the product brief.",
+        "Each module should explain exactly one shopper question."
+      ],
+      "qualityRules": [
+        "Material and structure readable.",
+        "Copy hierarchy is scannable.",
+        "No feature invention."
+      ],
+      "compatibleWith": [
+        "commercial.brand.default_commerce",
+        "commercial.quality.product_consistency",
+        "commercial.quality.commercial_polish"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "brand_kit",
+    "title": "Default Commerce Brand Kit",
+    "description": "A neutral default brand kit for demo commerce workflows before a real brand system is attached.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.brand.default_commerce",
+      "label": "Default Commerce Brand Kit",
+      "parameters": {
+        "logos": [],
+        "colorPalettes": [
+          {
+            "name": "Neutral Commerce",
+            "colors": ["#111827", "#FFFFFF", "#F3F4F6", "#D97706"]
+          }
+        ],
+        "fonts": ["system sans", "Inter fallback"],
+        "toneOfVoice": "Clear, specific, restrained, shopper-friendly.",
+        "dos": [
+          "Use concrete product benefits.",
+          "Keep copy short and verifiable.",
+          "Let product material and use case lead the visual."
+        ],
+        "donts": [
+          "Do not invent awards, certifications, or brand logos.",
+          "Do not overstate performance claims.",
+          "Do not hide product defects with heavy effects."
+        ],
+        "templateLocks": ["product geometry", "brand color accents", "truthful copy zones"],
+        "complianceRules": ["No fake third-party marks", "No unreadable fine print", "No unsupported claims"]
+      },
+      "promptFragments": [
+        "neutral premium commerce brand system, clear benefit-led copy, restrained accent color"
+      ],
+      "qualityRules": [
+        "Copy must remain truthful and specific.",
+        "Visual style must not overpower the product."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "quality_rule",
+    "title": "Product Consistency Check",
+    "description": "Blocks generations that alter product structure, material, color, visible logo areas, or included accessories.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.quality.product_consistency",
+      "label": "Product Consistency Check",
+      "parameters": {
+        "checks": ["shape", "material", "color", "logoRegion", "scale", "includedItems"],
+        "thresholds": { "minimumScore": 0.9, "blockOnLogoChange": true },
+        "scoreWeights": { "shape": 0.3, "material": 0.2, "color": 0.2, "logoRegion": 0.2, "scale": 0.1 },
+        "blockingIssues": [
+          "Changed product silhouette",
+          "Invented logo or label",
+          "Wrong material or color",
+          "Added accessories not sold with product"
+        ]
+      },
+      "qualityRules": [
+        "Product identity must stay consistent with the source asset.",
+        "Reject if a shopper may believe the product has a different feature."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "quality_rule",
+    "title": "Platform Compliance Check",
+    "description": "Checks whether output follows connected marketplace or social-platform image rules.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.quality.platform_compliance",
+      "label": "Platform Compliance Check",
+      "parameters": {
+        "checks": ["aspectRatio", "safeArea", "textPolicy", "backgroundPolicy", "exportFormat"],
+        "thresholds": { "minimumScore": 0.85, "blockOnPolicyViolation": true },
+        "scoreWeights": { "aspectRatio": 0.2, "safeArea": 0.2, "textPolicy": 0.25, "backgroundPolicy": 0.25, "exportFormat": 0.1 },
+        "blockingIssues": [
+          "Text on no-text main image",
+          "Wrong aspect ratio",
+          "Unsafe crop",
+          "Non-compliant background"
+        ]
+      },
+      "qualityRules": [
+        "Connected platform rule is treated as the source of truth.",
+        "Reject outputs with obvious marketplace policy conflicts."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "quality_rule",
+    "title": "Commercial Polish Check",
+    "description": "Scores whether a generated image feels ready for storefront, ad, or social-commerce use.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.quality.commercial_polish",
+      "label": "Commercial Polish Check",
+      "parameters": {
+        "checks": ["compositionHierarchy", "lightingQuality", "materialDetail", "copyReadability", "cropConfidence"],
+        "thresholds": { "minimumScore": 0.82 },
+        "scoreWeights": { "compositionHierarchy": 0.25, "lightingQuality": 0.2, "materialDetail": 0.2, "copyReadability": 0.2, "cropConfidence": 0.15 },
+        "blockingIssues": [
+          "Amateur composition",
+          "Muddy lighting",
+          "Unreadable cover copy",
+          "Awkward crop"
+        ]
+      },
+      "qualityRules": [
+        "Image should have a clear hero subject within two seconds.",
+        "Reject if it looks like a rough draft rather than a commercial asset."
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "image_recipe",
+    "title": "Taobao Detail Image Recipe",
+    "description": "A multi-slot recipe for Taobao product detail images with hero, feature, lifestyle, and comparison-ready shots.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.recipe.taobao_detail",
+      "label": "Taobao Detail Image Recipe",
+      "parameters": {
+        "purpose": "Create a coherent Taobao detail-page image set for product selling points and shopper confidence.",
+        "platformRules": ["commercial.platform.taobao_detail_page"],
+        "brandConstraints": ["commercial.brand.default_commerce"],
+        "styleConstraints": ["consistent visual system", "truthful Chinese selling-point copy", "detail-safe crop"],
+        "outputPack": "commercial.output_pack.taobao_detail",
+        "shotList": [
+          { "slot": "main", "ratio": "1:1", "intent": "Clean product hero" },
+          { "slot": "feature", "ratio": "3:4", "intent": "Key material or function close-up" },
+          { "slot": "lifestyle", "ratio": "4:5", "intent": "Product in realistic use context" },
+          { "slot": "detail", "ratio": "750:1000", "intent": "Structured benefit explanation area" }
+        ],
+        "compositionRules": [
+          "Keep one consistent visual system across all shots.",
+          "Use truthful feature callouts only from supplied product data."
+        ],
+        "copyRequirements": ["Short Chinese headline", "One concrete benefit per image", "No unsupported absolute claims"],
+        "outputCount": 4
+      },
+      "promptFragments": [
+        "Taobao product detail image set, coherent commercial visual system",
+        "hero image, feature close-up, lifestyle use case, detail explanation layout"
+      ],
+      "compatibleWith": [
+        "commercial.platform.taobao_detail_page",
+        "commercial.quality.product_consistency",
+        "commercial.quality.commercial_polish"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "image_recipe",
+    "title": "Amazon Main Image Recipe",
+    "description": "A strict white-background recipe for Amazon-style product main images.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.recipe.amazon_main",
+      "label": "Amazon Main Image Recipe",
+      "parameters": {
+        "purpose": "Create marketplace-safe product main images with full product clarity and compliance.",
+        "platformRules": ["commercial.platform.amazon_main_image"],
+        "brandConstraints": ["source product identity only", "no decorative brand copy"],
+        "styleConstraints": ["pure white background", "centered product", "complete silhouette"],
+        "outputPack": "commercial.output_pack.amazon_main",
+        "shotList": [
+          { "slot": "main", "ratio": "1:1", "intent": "Pure product hero on white background" },
+          { "slot": "variant", "ratio": "1:1", "intent": "Secondary angle if supplied by product asset" }
+        ],
+        "compositionRules": [
+          "Product fills the square without crop.",
+          "No lifestyle props, no badges, no text."
+        ],
+        "copyRequirements": [],
+        "outputCount": 2
+      },
+      "promptFragments": [
+        "Amazon marketplace main image, pure white background, complete product silhouette"
+      ],
+      "compatibleWith": [
+        "commercial.platform.amazon_main_image",
+        "commercial.visual_style.clean_ecommerce_white",
+        "commercial.quality.platform_compliance"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "image_recipe",
+    "title": "Model Display Recipe",
+    "description": "A model-led display recipe for premium business or lifestyle product presentation.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.recipe.model_display",
+      "label": "Model Display Recipe",
+      "parameters": {
+        "purpose": "Show the product with a model while preserving product truth and model identity anchors.",
+        "platformRules": ["commercial.platform.xiaohongshu_cover", "commercial.platform.product_detail_page"],
+        "brandConstraints": ["commercial.brand.default_commerce"],
+        "styleConstraints": [
+          "credible pose",
+          "clear product visibility",
+          "non-sexual model presentation",
+          "real location capture feeling",
+          "scene lighting controls face and body lighting"
+        ],
+        "outputPack": "commercial.output_pack.model_display",
+        "shotList": [
+          { "slot": "model_hero", "ratio": "4:5", "intent": "Model and product hero frame" },
+          { "slot": "use_context", "ratio": "3:4", "intent": "Natural use or wearing context" },
+          { "slot": "detail", "ratio": "1:1", "intent": "Product close-up with model-hand or body context if relevant" }
+        ],
+        "compositionRules": [
+          "Face, hand, and product details must remain credible.",
+          "Model should support the product story rather than dominate it."
+        ],
+        "copyRequirements": ["Optional short premium headline outside face and product detail zones"],
+        "outputCount": 3
+      },
+      "promptFragments": [
+        "premium model display commercial image, credible pose, clear product visibility, real location capture feeling, no separate studio face light"
+      ],
+      "compatibleWith": [
+        "commercial.visual_style.premium_business_model",
+        "commercial.scene.office_business",
+        "commercial.quality.product_consistency"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "image_recipe",
+    "title": "Xiaohongshu Cover Image Recipe",
+    "description": "A social-commerce recipe for Xiaohongshu covers that balance thumbnail readability, lifestyle warmth, and product clarity.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.recipe.xiaohongshu_cover",
+      "label": "Xiaohongshu Cover Image Recipe",
+      "parameters": {
+        "purpose": "Create a scroll-stopping Xiaohongshu cover and supporting note images without losing product truth.",
+        "platformRules": ["commercial.platform.xiaohongshu_cover"],
+        "brandConstraints": ["commercial.brand.default_commerce"],
+        "styleConstraints": ["warm lifestyle", "thumbnail-readable headline", "authentic daily-use scene"],
+        "outputPack": "commercial.output_pack.xiaohongshu_cover",
+        "shotList": [
+          { "slot": "cover", "ratio": "3:4", "intent": "Feed cover with clean headline zone" },
+          { "slot": "use_case", "ratio": "4:5", "intent": "Product in a believable lifestyle moment" },
+          { "slot": "detail", "ratio": "1:1", "intent": "Close-up proof point for note body" }
+        ],
+        "compositionRules": [
+          "Cover must still read at thumbnail size.",
+          "Lifestyle scene should explain use case without clutter.",
+          "Do not cover product or face with text."
+        ],
+        "copyRequirements": ["Short Chinese cover headline", "One concrete benefit", "No absolute or medical-style claims"],
+        "outputCount": 3
+      },
+      "promptFragments": [
+        "Xiaohongshu social-commerce cover, warm lifestyle context, readable short Chinese headline zone",
+        "product clarity, authentic everyday scene, creator-style commercial polish"
+      ],
+      "compatibleWith": [
+        "commercial.platform.xiaohongshu_cover",
+        "commercial.visual_style.warm_lifestyle",
+        "commercial.quality.commercial_polish"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "image_recipe",
+    "title": "Poster Campaign Image Recipe",
+    "description": "A campaign recipe for vertical posters, square announcements, and store banners with a consistent product-led art direction.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.recipe.poster_campaign",
+      "label": "Poster Campaign Image Recipe",
+      "parameters": {
+        "purpose": "Create a reusable launch poster set with product hero, campaign headline, and channel variants.",
+        "platformRules": ["commercial.platform.poster_campaign"],
+        "brandConstraints": ["commercial.brand.default_commerce"],
+        "styleConstraints": ["hero product hierarchy", "campaign palette consistency", "clear copy zone"],
+        "outputPack": "commercial.output_pack.poster_campaign",
+        "shotList": [
+          { "slot": "vertical_poster", "ratio": "9:16", "intent": "Primary launch poster" },
+          { "slot": "banner", "ratio": "16:9", "intent": "Store or landing-page banner" },
+          { "slot": "social_square", "ratio": "1:1", "intent": "Social announcement crop" },
+          { "slot": "textless", "ratio": "3:4", "intent": "Localization-safe art-only variant" }
+        ],
+        "compositionRules": [
+          "Keep product hero visible before decorative campaign elements.",
+          "Use a consistent palette and lighting logic across formats.",
+          "Reserve copy-safe variants for localization."
+        ],
+        "copyRequirements": ["Short campaign headline", "Optional CTA", "No unsupported discounts or endorsements"],
+        "outputCount": 4
+      },
+      "promptFragments": [
+        "commercial launch poster set, product hero hierarchy, campaign headline zone",
+        "cohesive poster art direction across vertical, square, and banner formats"
+      ],
+      "compatibleWith": [
+        "commercial.platform.poster_campaign",
+        "commercial.quality.commercial_polish",
+        "commercial.brand.default_commerce"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "image_recipe",
+    "title": "Product Detail Page Image Recipe",
+    "description": "A generic detail-page recipe for hero, proof, feature, lifestyle, and comparison-safe modules.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.recipe.product_detail_page",
+      "label": "Product Detail Page Image Recipe",
+      "parameters": {
+        "purpose": "Build a complete detail-page module set that answers shopper questions with truthful visuals and scannable copy.",
+        "platformRules": ["commercial.platform.product_detail_page"],
+        "brandConstraints": ["commercial.brand.default_commerce"],
+        "styleConstraints": ["module consistency", "detail-safe copy", "proof-first feature framing"],
+        "outputPack": "commercial.output_pack.product_detail_page",
+        "shotList": [
+          { "slot": "hero", "ratio": "1:1", "intent": "Product hero and category recognition" },
+          { "slot": "feature", "ratio": "3:4", "intent": "One core selling point" },
+          { "slot": "material_closeup", "ratio": "1:1", "intent": "Texture or construction proof" },
+          { "slot": "use_context", "ratio": "4:5", "intent": "Realistic use case" },
+          { "slot": "spec_module", "ratio": "750:1000", "intent": "Structured detail or size explanation" }
+        ],
+        "compositionRules": [
+          "One shopper question per module.",
+          "Close-ups must preserve actual product structure.",
+          "Spec module should leave room for editable copy."
+        ],
+        "copyRequirements": ["One concise claim per module", "Use supplied feature names", "No fake certifications"],
+        "outputCount": 5
+      },
+      "promptFragments": [
+        "commerce product detail page image modules, feature proof, material close-up, lifestyle use case",
+        "truthful benefit-led layout, scannable product education"
+      ],
+      "compatibleWith": [
+        "commercial.platform.product_detail_page",
+        "commercial.quality.product_consistency",
+        "commercial.quality.commercial_polish"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "output_pack",
+    "title": "Taobao Detail Output Pack",
+    "description": "Exports a Taobao-ready detail-page pack with image slots, manifest, and QA report.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.output_pack.taobao_detail",
+      "label": "Taobao Detail Output Pack",
+      "parameters": {
+        "channels": ["Taobao"],
+        "platformRules": ["commercial.platform.taobao_detail_page"],
+        "imageRecipe": "commercial.recipe.taobao_detail",
+        "brandConstraints": ["truthful copy", "consistent accent color", "manifest required"],
+        "deliverables": [
+          { "slot": "main", "ratio": "1:1", "size": "1200x1200" },
+          { "slot": "feature", "ratio": "3:4", "size": "1200x1600" },
+          { "slot": "lifestyle", "ratio": "4:5", "size": "1200x1500" },
+          { "slot": "detail", "ratio": "750:1000", "size": "750x1000" }
+        ],
+        "fileNaming": "{sku}_taobao_{slot}_{index}.png",
+        "includeManifest": true,
+        "includeQaReport": true
+      },
+      "compatibleWith": [
+        "commercial.recipe.taobao_detail",
+        "commercial.platform.taobao_detail_page"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "output_pack",
+    "title": "Amazon Main Image Output Pack",
+    "description": "Exports Amazon-style square main images with compliance metadata.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.output_pack.amazon_main",
+      "label": "Amazon Main Image Output Pack",
+      "parameters": {
+        "channels": ["Amazon"],
+        "platformRules": ["commercial.platform.amazon_main_image"],
+        "imageRecipe": "commercial.recipe.amazon_main",
+        "brandConstraints": ["source product only", "no text overlays", "white background compliance"],
+        "deliverables": [
+          { "slot": "main", "ratio": "1:1", "size": "2000x2000" },
+          { "slot": "variant", "ratio": "1:1", "size": "2000x2000" }
+        ],
+        "fileNaming": "{sku}_amazon_main_{index}.png",
+        "includeManifest": true,
+        "includeQaReport": true
+      },
+      "compatibleWith": [
+        "commercial.recipe.amazon_main",
+        "commercial.platform.amazon_main_image"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "output_pack",
+    "title": "Model Display Output Pack",
+    "description": "Exports model-led commercial display images for storefront and social campaign review.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.output_pack.model_display",
+      "label": "Model Display Output Pack",
+      "parameters": {
+        "channels": ["Storefront", "Xiaohongshu", "Campaign review"],
+        "platformRules": ["commercial.platform.xiaohongshu_cover", "commercial.platform.product_detail_page"],
+        "imageRecipe": "commercial.recipe.model_display",
+        "brandConstraints": ["non-sexual model presentation", "product truth", "optional premium headline"],
+        "deliverables": [
+          { "slot": "model_hero", "ratio": "4:5", "size": "1600x2000" },
+          { "slot": "use_context", "ratio": "3:4", "size": "1500x2000" },
+          { "slot": "detail", "ratio": "1:1", "size": "1600x1600" }
+        ],
+        "fileNaming": "{sku}_model_display_{slot}_{index}.png",
+        "includeManifest": true,
+        "includeQaReport": true
+      },
+      "compatibleWith": [
+        "commercial.recipe.model_display",
+        "commercial.visual_style.premium_business_model"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "output_pack",
+    "title": "Xiaohongshu Cover Output Pack",
+    "description": "Exports Xiaohongshu-ready cover and note images with thumbnail-safe copy metadata.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.output_pack.xiaohongshu_cover",
+      "label": "Xiaohongshu Cover Output Pack",
+      "parameters": {
+        "channels": ["Xiaohongshu"],
+        "platformRules": ["commercial.platform.xiaohongshu_cover"],
+        "imageRecipe": "commercial.recipe.xiaohongshu_cover",
+        "brandConstraints": ["short truthful headline", "thumbnail readability", "authentic lifestyle mood"],
+        "deliverables": [
+          { "slot": "cover", "ratio": "3:4", "size": "1242x1660" },
+          { "slot": "use_case", "ratio": "4:5", "size": "1080x1350" },
+          { "slot": "detail", "ratio": "1:1", "size": "1080x1080" }
+        ],
+        "fileNaming": "{sku}_xhs_{slot}_{index}.png",
+        "includeManifest": true,
+        "includeQaReport": true,
+        "includeCopyPack": true
+      },
+      "compatibleWith": [
+        "commercial.recipe.xiaohongshu_cover",
+        "commercial.platform.xiaohongshu_cover"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "output_pack",
+    "title": "Poster Campaign Output Pack",
+    "description": "Exports campaign poster variants for vertical, banner, square, and localization-safe art-only use.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.output_pack.poster_campaign",
+      "label": "Poster Campaign Output Pack",
+      "parameters": {
+        "channels": ["Poster", "Store banner", "Social"],
+        "platformRules": ["commercial.platform.poster_campaign"],
+        "imageRecipe": "commercial.recipe.poster_campaign",
+        "brandConstraints": ["campaign palette consistency", "clear headline area", "textless localization variant"],
+        "deliverables": [
+          { "slot": "vertical_poster", "ratio": "9:16", "size": "1080x1920" },
+          { "slot": "banner", "ratio": "16:9", "size": "1920x1080" },
+          { "slot": "social_square", "ratio": "1:1", "size": "1080x1080" },
+          { "slot": "textless", "ratio": "3:4", "size": "1242x1660" }
+        ],
+        "fileNaming": "{sku}_poster_{slot}_{index}.png",
+        "includeManifest": true,
+        "includeQaReport": true,
+        "includeCopyPack": true
+      },
+      "compatibleWith": [
+        "commercial.recipe.poster_campaign",
+        "commercial.platform.poster_campaign"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  },
+  {
+    "type": "output_pack",
+    "title": "Product Detail Page Output Pack",
+    "description": "Exports generic product-detail modules with manifest, copy slots, and QA report.",
+    "status": "published",
+    "metadata": {
+      "seedKey": "commercial.output_pack.product_detail_page",
+      "label": "Product Detail Page Output Pack",
+      "parameters": {
+        "channels": ["DTC storefront", "Marketplace detail page"],
+        "platformRules": ["commercial.platform.product_detail_page"],
+        "imageRecipe": "commercial.recipe.product_detail_page",
+        "brandConstraints": ["one claim per module", "truthful feature proof", "editable copy zones"],
+        "deliverables": [
+          { "slot": "hero", "ratio": "1:1", "size": "1200x1200" },
+          { "slot": "feature", "ratio": "3:4", "size": "1200x1600" },
+          { "slot": "material_closeup", "ratio": "1:1", "size": "1200x1200" },
+          { "slot": "use_context", "ratio": "4:5", "size": "1200x1500" },
+          { "slot": "spec_module", "ratio": "750:1000", "size": "750x1000" }
+        ],
+        "fileNaming": "{sku}_detail_{slot}_{index}.png",
+        "includeManifest": true,
+        "includeQaReport": true,
+        "includeCopyPack": true
+      },
+      "compatibleWith": [
+        "commercial.recipe.product_detail_page",
+        "commercial.platform.product_detail_page"
+      ],
+      "source": { "kind": "template", "referenceId": "commercial-component-seeds-v1" }
+    }
+  }
+]

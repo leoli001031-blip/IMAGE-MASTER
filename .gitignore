@@ -1,0 +1,48 @@
+# Environment variables (contains API keys)
+.env
+.env.local
+.env.*.local
+
+# Local data directory (SQLite DB, generated images)
+.data/
+.data-smoke/
+
+# Next.js build output
+.next/
+.next-*/
+
+# Dependencies
+node_modules/
+
+# Test artifacts and generated output
+test_artifacts/
+.playwright-mcp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Root-level generated screenshots/images and archives
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/*.gif
+*.zip
+*.db
+*.db-journal
+*.db-wal
+
+# Local debug/status artifacts
+*.log
+console-log-*.txt
+CURRENT_EXECUTION_STATUS.md
+
+# TypeScript build info
+tsconfig.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
