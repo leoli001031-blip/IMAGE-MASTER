@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType, DragEvent, ReactNode } from "react";
-import { GripVertical, ImageIcon, Pencil, Plus, Search, Sparkles, Star, Trash2 } from "lucide-react";
+import { GripVertical, ImageIcon, Maximize2, Pencil, Plus, Search, Sparkles, Star, Trash2 } from "lucide-react";
 import { AssetPreview } from "@/components/canvas/asset-preview";
 import { cn } from "@/lib/utils/cn";
 
@@ -14,7 +14,22 @@ export interface AssetTrayItem {
   category?: string;
   status?: AssetTrayItemState;
   previewUrl?: string;
+  referenceUrl?: string;
   previewAlt?: string;
+  sourceLabel?: string;
+  prompt?: string;
+  provider?: string;
+  model?: string;
+  referenceImages?: Array<{
+    title: string;
+    url: string;
+    role?: string;
+    providerUsable?: boolean;
+  }>;
+  promptFragments?: string[];
+  constraints?: string[];
+  negativeRules?: string[];
+  qualityRules?: string[];
   icon?: ComponentType<{ className?: string }>;
   chips?: string[];
   favorite?: boolean;
@@ -45,6 +60,8 @@ export interface AssetTrayProps {
   onRenameItem?: (item: AssetTrayItem) => void;
   onToggleFavorite?: (item: AssetTrayItem) => void;
   onDeleteItem?: (item: AssetTrayItem) => void;
+  onPreviewItem?: (item: AssetTrayItem) => void;
+  onPlaceItem?: (item: AssetTrayItem) => void;
   onItemDragStart?: (item: AssetTrayItem, event: DragEvent<HTMLElement>) => void;
   footer?: ReactNode;
   compact?: boolean;
@@ -84,6 +101,8 @@ export function AssetTray({
   onRenameItem,
   onToggleFavorite,
   onDeleteItem,
+  onPreviewItem,
+  onPlaceItem,
   onItemDragStart,
   footer,
   compact = false,
@@ -99,11 +118,12 @@ export function AssetTray({
             {secondaryActionLabel && (
               <button
                 type="button"
-                className="rounded-md p-1.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink"
+                className="inline-flex items-center gap-1 rounded-md border border-warm-line/55 bg-warm-bg px-2 py-1.5 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
                 onClick={onSecondaryAction}
                 title={secondaryActionLabel}
               >
                 <Plus className="h-4 w-4" />
+                <span>{secondaryActionLabel}</span>
               </button>
             )}
             {actionLabel && (
@@ -154,7 +174,14 @@ export function AssetTray({
         </div>
       )}
 
-      <div className={cn("min-h-0 flex-1 overflow-auto p-2.5", compact ? "space-y-1.5" : "space-y-2")}>
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-auto p-2.5",
+          compact
+            ? "grid auto-rows-min grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-2"
+            : "space-y-2"
+        )}
+      >
         {items.map((item) => (
           <AssetTrayCard
             key={item.id}
@@ -164,6 +191,8 @@ export function AssetTray({
             onRename={onRenameItem}
             onToggleFavorite={onToggleFavorite}
             onDelete={onDeleteItem}
+            onPreview={onPreviewItem}
+            onPlace={onPlaceItem}
             onItemDragStart={onItemDragStart}
             compact={compact}
           />
@@ -211,6 +240,8 @@ export function AssetTrayCard({
   onRename,
   onToggleFavorite,
   onDelete,
+  onPreview,
+  onPlace,
   onItemDragStart,
   compact = false,
   className,
@@ -221,12 +252,16 @@ export function AssetTrayCard({
   onRename?: (item: AssetTrayItem) => void;
   onToggleFavorite?: (item: AssetTrayItem) => void;
   onDelete?: (item: AssetTrayItem) => void;
+  onPreview?: (item: AssetTrayItem) => void;
+  onPlace?: (item: AssetTrayItem) => void;
   onItemDragStart?: (item: AssetTrayItem, event: DragEvent<HTMLElement>) => void;
   compact?: boolean;
   className?: string;
 }) {
   const Icon = item.icon ?? ImageIcon;
   const status = item.status ?? "draft";
+  const canPreview = Boolean(onPreview);
+  const canPlace = Boolean(onPlace && item.dragData);
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>) => {
     if (item.dragData) {
@@ -257,12 +292,35 @@ export function AssetTrayCard({
       onDragStart={handleDragStart}
     >
       <div className={cn("flex items-start", compact ? "gap-2" : "gap-3")}>
-        <AssetPreview
-          src={item.previewUrl}
-          alt={item.previewAlt ?? item.title}
-          icon={Icon}
-          size="md"
-        />
+        {canPreview ? (
+          <button
+            type="button"
+            className="group/preview relative shrink-0 rounded-md text-left outline-none ring-warm-primary/30 transition focus-visible:ring-2"
+            title="查看大图"
+            aria-label={`查看${item.title}大图`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onPreview?.(item);
+            }}
+          >
+            <AssetPreview
+              src={item.previewUrl}
+              alt={item.previewAlt ?? item.title}
+              icon={Icon}
+              size="md"
+            />
+            <span className="absolute bottom-1 right-1 inline-flex rounded bg-warm-ink/70 p-1 text-warm-paper opacity-0 transition group-hover/preview:opacity-100 group-focus-visible/preview:opacity-100">
+              <Maximize2 className="h-3 w-3" />
+            </span>
+          </button>
+        ) : (
+          <AssetPreview
+            src={item.previewUrl}
+            alt={item.previewAlt ?? item.title}
+            icon={Icon}
+            size="md"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -323,7 +381,7 @@ export function AssetTrayCard({
             {compact ? (
               <span
                 className="shrink-0 rounded border border-warm-line/60 bg-warm-bg px-1.5 py-1 text-warm-muted transition group-hover:border-warm-primary/30 group-hover:text-warm-primary"
-                title="拖入生成框"
+                title="拖到画布"
                 aria-hidden
               >
                 <GripVertical className="h-3.5 w-3.5" />
@@ -339,9 +397,23 @@ export function AssetTrayCard({
               <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-none", statusClassName[status])}>
                 {status === "ready" ? "可用" : statusLabel[status]}
               </span>
-              <span className="truncate text-[10px] leading-none text-warm-muted/75">
-                拖入生成框
-              </span>
+              {canPlace ? (
+                <button
+                  type="button"
+                  className="shrink-0 rounded border border-warm-line/55 bg-warm-bg px-1.5 py-0.5 text-[10px] leading-none text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                  title="放到画布，作为 Agent 参考"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onPlace?.(item);
+                  }}
+                >
+                  放到画布
+                </button>
+              ) : (
+                <span className="truncate text-[10px] leading-none text-warm-muted/75">
+                  拖到画布
+                </span>
+              )}
             </div>
           )}
           {!compact && item.description && <p className="mt-1 line-clamp-2 text-xs leading-snug text-warm-muted">{item.description}</p>}

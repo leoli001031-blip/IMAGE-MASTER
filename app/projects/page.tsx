@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
@@ -61,6 +62,16 @@ interface AssetRecord {
   status: string;
 }
 
+interface SampleProjectTemplate {
+  id: string;
+  title: string;
+  description: string;
+  agentStarterPrompt: string;
+  requiredInputs: string[];
+  expectedOutputs: string[];
+  tags: string[];
+}
+
 type BatchState = "draft" | "generated" | "in_review" | "reviewed" | "locked" | "delivered";
 
 const batchStateLabel: Record<BatchState, string> = {
@@ -81,14 +92,50 @@ const batchStateClass: Record<BatchState, string> = {
   delivered: "bg-warm-ink text-warm-paper",
 };
 
+const sampleProjectTemplates: SampleProjectTemplate[] = [
+  {
+    id: "taobao-detail-product-set",
+    title: "淘宝详情页图组",
+    description: "上传商品图后，让 Agent 规划主图、卖点海报、细节和详情页。",
+    agentStarterPrompt:
+      "我会上传一个真实商品。请帮我规划一套淘宝详情页图组：主图、卖点海报、商品细节、使用场景和收尾转化图。商品身份必须强参考真实商品图；文案按每张图的用途判断是否烧进画面，不能改商品包装标签。",
+    requiredInputs: ["真实商品图", "卖点/参数文案"],
+    expectedOutputs: ["主图", "卖点海报", "细节图", "详情页"],
+    tags: ["商品强参考", "烧字按需", "多比例"],
+  },
+  {
+    id: "model-multi-scene-campaign",
+    title: "模特多场景宣传图",
+    description: "一个模特、一件或多件商品，拆成室内/户外/商场等场景成片。",
+    agentStarterPrompt:
+      "我会上传模特资产、商品图和可选场景/风格参考。请规划一套模特多场景宣传图：每张图明确商品、模特、场景和风格的引用方式。模特只用于身份和气质，商品必须保持真实外观，多件商品要分别成组，不要混成一张商品资产。",
+    requiredInputs: ["模特资产", "商品或服装图", "可选场景/风格图"],
+    expectedOutputs: ["模特展示", "场景图", "海报图"],
+    tags: ["同一模特", "多商品矩阵", "场景发散"],
+  },
+  {
+    id: "cross-platform-launch-kit",
+    title: "跨平台上市套图",
+    description: "同一商品拆成 Amazon、社媒封面、海报和详情页方向。",
+    agentStarterPrompt:
+      "我会上传商品图和基础卖点。请帮我规划一套跨平台上市套图：Amazon 主图/辅图、社媒封面、商业海报、详情页卖点图。每张图自适应比例和平台用途；商品图强参考，风格和文案按用途调用。",
+    requiredInputs: ["真实商品图", "卖点/参数", "可选风格参考"],
+    expectedOutputs: ["Amazon 图", "社媒封面", "海报", "详情页"],
+    tags: ["跨平台", "渠道比例", "统一视觉"],
+  },
+];
+
 export default function ProjectsPage() {
+  const router = useRouter();
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [creatingTemplateId, setCreatingTemplateId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
+  const [templateMessage, setTemplateMessage] = useState("");
 
   const visibleProjects = useMemo(
     () => projects.filter((project) => !isHiddenProject(project)),
@@ -158,6 +205,44 @@ export default function ProjectsPage() {
     }
   };
 
+  const createProjectFromTemplate = async (template: SampleProjectTemplate) => {
+    if (creatingTemplateId) return;
+    setCreatingTemplateId(template.id);
+    setError("");
+    setTemplateMessage("");
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: template.title,
+          description: template.description,
+          metadata: {
+            source: "sample-template",
+            sampleTemplateId: template.id,
+            agentStarterPrompt: template.agentStarterPrompt,
+            onboarding: {
+              kind: "optional-sample-template",
+              autoPopulateCanvas: false,
+              requiredInputs: template.requiredInputs,
+              expectedOutputs: template.expectedOutputs,
+              tags: template.tags,
+            },
+          },
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "项目模板创建失败");
+      setProjects((current) => [payload.project, ...current]);
+      setTemplateMessage("已创建空项目，画布不会自动塞入示例资产。");
+      router.push(`/canvas?projectId=${encodeURIComponent(payload.project.id)}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "项目模板创建失败");
+    } finally {
+      setCreatingTemplateId(null);
+    }
+  };
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5 px-2 py-4 sm:px-4 lg:py-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -185,6 +270,57 @@ export default function ProjectsPage() {
         <ProjectMetric icon={ImageIcon} label="全局资产" value={dashboard.assetCount} />
         <ProjectMetric icon={PackageCheck} label="批次" value={dashboard.batchCount} />
         <ProjectMetric icon={Clock3} label="待处理" value={dashboard.pendingReviewCount} />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-warm-ink">快速开始模板</h2>
+            <p className="text-xs text-warm-muted">
+              只保存 Agent 起始需求，不自动塞入素材或画布节点。
+            </p>
+          </div>
+          {templateMessage && <span className="text-xs text-warm-primary">{templateMessage}</span>}
+        </div>
+        <div className="grid gap-3 lg:grid-cols-3">
+          {sampleProjectTemplates.map((template) => (
+            <article
+              key={template.id}
+              className="flex min-h-[180px] flex-col justify-between gap-4 rounded-lg border border-warm-line/70 bg-warm-paper p-4"
+            >
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-warm-ink">{template.title}</h3>
+                    <p className="mt-1 text-sm leading-6 text-warm-muted">{template.description}</p>
+                  </div>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warm-primary-soft text-warm-primary">
+                    <Sparkles className="h-4 w-4" />
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {template.tags.map((tag) => (
+                    <span key={tag} className="rounded bg-warm-soft px-2 py-1 text-xs text-warm-muted">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => createProjectFromTemplate(template)}
+                disabled={!!creatingTemplateId}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-warm-ink px-3 text-sm font-medium text-warm-paper transition hover:bg-warm-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creatingTemplateId === template.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="h-4 w-4" />
+                )}
+                用这个开始
+              </button>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="grid gap-3 rounded-lg border border-warm-line/70 bg-warm-paper p-3 lg:grid-cols-[1.2fr_1fr_auto] lg:items-end">
@@ -229,7 +365,9 @@ export default function ProjectsPage() {
       ) : visibleProjects.length === 0 ? (
         <div className="rounded-lg border border-dashed border-warm-line bg-warm-paper px-6 py-12 text-center">
           <h2 className="text-base font-medium text-warm-ink">还没有项目</h2>
-          <p className="mt-2 text-sm text-warm-muted">新建一个项目，然后进入画布开始生成。</p>
+          <p className="mt-2 text-sm text-warm-muted">
+            新建一个项目，或从上方模板开始；模板不会自动塞入示例素材。
+          </p>
         </div>
       ) : (
         <div className="divide-y divide-warm-line/70 border-y border-warm-line/70">

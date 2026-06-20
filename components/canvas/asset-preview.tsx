@@ -8,10 +8,11 @@ interface AssetPreviewProps {
   src?: string;
   alt: string;
   icon?: ComponentType<{ className?: string }>;
-  size?: "sm" | "md" | "lg" | "wide" | "node" | "nodeTall" | "canvasImage" | "canvasResult" | "inspectorHero";
+  size?: "sm" | "md" | "lg" | "wide" | "node" | "nodeTall" | "canvasImage" | "canvasResult" | "canvasResultAuto" | "inspectorHero";
   fit?: "cover" | "contain";
   className?: string;
   eager?: boolean;
+  aspectRatio?: number;
 }
 
 const sizeClass = {
@@ -23,6 +24,7 @@ const sizeClass = {
   nodeTall: "h-44 w-full",
   canvasImage: "h-48 w-full",
   canvasResult: "h-60 w-full",
+  canvasResultAuto: "w-full",
   inspectorHero: "h-36 w-full",
 };
 
@@ -34,6 +36,7 @@ export function AssetPreview({
   fit = "cover",
   className,
   eager = false,
+  aspectRatio,
 }: AssetPreviewProps) {
   const [failed, setFailed] = useState(false);
   const [shouldLoad, setShouldLoad] = useState(eager);
@@ -73,6 +76,7 @@ export function AssetPreview({
         sizeClass[size],
         className
       )}
+      style={aspectRatio ? { aspectRatio } : undefined}
     >
       {src && shouldLoad && !failed ? (
         <img
@@ -83,7 +87,11 @@ export function AssetPreview({
           fetchPriority={eager ? "high" : "low"}
           className={cn(
             "h-full w-full",
-            fit === "contain" ? "object-contain p-1.5" : "object-cover"
+            fit === "contain"
+              ? size === "canvasResultAuto"
+                ? "object-contain p-0.5"
+                : "object-contain p-1.5"
+              : "object-cover"
           )}
           onError={() => setFailed(true)}
         />

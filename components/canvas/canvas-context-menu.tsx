@@ -10,24 +10,17 @@ import {
   RefreshCcw,
   Save,
   Shirt,
-  ShoppingBag,
   Sparkles,
   Trash2,
   Wand2,
   type LucideIcon,
 } from "lucide-react";
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { cn } from "@/lib/utils/cn";
 
 export type CanvasContextMenuKind = "pane" | "imageNode" | "generationFrame";
 
 export type CanvasContextMenuAction =
-  | "create-generation-frame"
-  | "create-frame-custom-template"
-  | "create-product-asset"
-  | "create-model-asset"
-  | "create-scene-asset"
-  | "create-style-asset"
   | "create-knowledge-asset"
   | "import-image"
   | "paste-as-copy"
@@ -36,7 +29,6 @@ export type CanvasContextMenuAction =
   | "set-role-style"
   | "set-role-scene"
   | "set-role-copy"
-  | "add-to-generation-frame"
   | "open-preview"
   | "save-as-asset"
   | "delete"
@@ -93,6 +85,28 @@ export function CanvasContextMenu({
   onClose,
   className,
 }: CanvasContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!context || !onClose) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      onClose();
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [context, onClose]);
+
   if (!context) return null;
 
   const sections = getMenuSections(context);
@@ -100,6 +114,7 @@ export function CanvasContextMenu({
 
   return (
     <div
+      ref={menuRef}
       className={cn(
         "fixed z-50 min-w-[188px] overflow-x-hidden overflow-y-auto rounded-lg border border-warm-line bg-warm-paper/95 p-1.5 text-sm text-warm-ink shadow-xl backdrop-blur",
         className
@@ -176,17 +191,7 @@ function getMenuSections(context: CanvasContextMenuContext): MenuItem[][] {
       [
         { action: "import-image", label: "导入图片", icon: ImagePlus },
         { action: "paste-as-copy", label: "粘贴文案", icon: ClipboardList },
-      ],
-      [
-        { action: "create-generation-frame", label: "生成框", icon: Wand2 },
-        { action: "create-product-asset", label: "商品框", icon: ShoppingBag },
-        { action: "create-model-asset", label: "模特框", icon: Shirt },
-        { action: "create-scene-asset", label: "场景框", icon: ImagePlus },
-        { action: "create-style-asset", label: "风格框", icon: Sparkles },
         { action: "create-knowledge-asset", label: "文案卡", icon: Layers3 },
-      ],
-      [
-        { action: "create-frame-custom-template", label: "自定义模板", icon: Wand2 },
       ],
     ];
   }
@@ -223,7 +228,6 @@ function getMenuSections(context: CanvasContextMenuContext): MenuItem[][] {
         icon: Save,
         disabled: context.canSaveAsAsset === false,
       },
-      { action: "add-to-generation-frame", label: "放入生成框", icon: Wand2 },
     ],
     [{ action: "delete", label: "删除", icon: Trash2, destructive: true }],
   ];
@@ -231,6 +235,6 @@ function getMenuSections(context: CanvasContextMenuContext): MenuItem[][] {
 
 function getContextLabel(context: CanvasContextMenuContext): string {
   if (context.type === "pane") return "画布菜单";
-  if (context.type === "generationFrame") return "生成框菜单";
+  if (context.type === "generationFrame") return "图组任务菜单";
   return "图片节点菜单";
 }

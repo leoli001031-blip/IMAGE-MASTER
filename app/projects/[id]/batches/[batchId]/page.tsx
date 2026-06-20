@@ -192,7 +192,7 @@ export default async function ProjectBatchPage({
       ) : (
         <div className="rounded-lg border border-dashed border-warm-line bg-warm-paper px-6 py-12 text-center">
           <h2 className="text-base font-medium text-warm-ink">这个批次还没有任务</h2>
-          <p className="mt-2 text-sm text-warm-muted">回到画布后重新创建生成框或图组任务。</p>
+          <p className="mt-2 text-sm text-warm-muted">回到画布后让 Agent 重新规划，或从已有图片发起重做。</p>
         </div>
       )}
     </div>

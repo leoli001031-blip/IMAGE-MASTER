@@ -3,12 +3,20 @@
 import { spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import path from "node:path";
+import {
+  restoreSourceFiles,
+  snapshotSourceFiles,
+  stopSmokeServer,
+} from "./smoke-runtime.mjs";
 
 const port = Number(process.env.PROJECT_CANVAS_STATE_SMOKE_PORT || 3491);
 const externalBaseUrl = process.env.PROJECT_CANVAS_STATE_SMOKE_BASE_URL?.trim();
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
 const stamp = Date.now();
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 let server;
 let serverOutput = "";
 let createdProjectId = "";
@@ -21,6 +29,7 @@ if (shouldSpawnServer) {
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      WATCHPACK_POLLING: process.env.WATCHPACK_POLLING || "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -122,7 +131,8 @@ try {
   process.exitCode = 1;
 } finally {
   cleanup();
-  if (server) server.kill("SIGTERM");
+  if (server) await stopSmokeServer(server);
+  restoreSourceFiles(sourceFileSnapshots);
 }
 
 function cleanup() {

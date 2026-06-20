@@ -126,7 +126,7 @@ export default async function ProjectDetailPage({
               })}
             </div>
           ) : (
-            <EmptyLine icon={Sparkles} text="还没有生成批次；进入画布后创建生成框即可开始。" />
+            <EmptyLine icon={Sparkles} text="还没有生成批次；进入画布后把需求交给 Agent 即可开始。" />
           )}
         </section>
 
