@@ -31,6 +31,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   style_asset: "风格",
   scene: "场景",
   scene_asset: "场景",
+  copy: "文案",
+  copy_asset: "文案",
   output: "输出图",
   output_reference: "输出参考",
   generated_output: "生成图",

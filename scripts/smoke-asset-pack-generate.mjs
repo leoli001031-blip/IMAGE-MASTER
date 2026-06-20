@@ -129,7 +129,7 @@ try {
   if (!modelPrompt.includes("Zone A is a small library display card")) {
     throw new Error("Expected model asset dry-run to separate library display and downstream identity zones");
   }
-  if (!modelPrompt.includes("Zone B is the downstream identity reference")) {
+  if (!modelPrompt.includes("Zone B is the downstream identity reference zone")) {
     throw new Error("Expected model asset dry-run to expose the downstream identity reference zone");
   }
   const fullModelTemplatePrompt = String(modelDryRun.generationPlan?.metadata?.fullTemplatePromptSnapshot || "");
@@ -139,8 +139,16 @@ try {
   if (!fullModelTemplatePrompt.includes("soft diffuse daylight")) {
     throw new Error("Expected full model template to use diffuse low-contrast model-card lighting");
   }
-  if (!fullModelTemplatePrompt.includes("Every Zone B pose should feel like a photographer is gently guiding the model")) {
-    throw new Error("Expected full model template to preserve low-prompt adaptation notes");
+  if (!fullModelTemplatePrompt.includes("Zone B pose rules: the large 3/4 identity reference uses low relaxed shoulders")) {
+    throw new Error("Expected full model template to use concrete downstream identity pose rules");
+  }
+  if (/feel like a photographer is gently guiding/i.test(fullModelTemplatePrompt)) {
+    throw new Error("Model asset prompt should not use vague photographer-guidance wording");
+  }
+  if (!modelDryRun.generationPlan?.metadata?.downstreamReferenceRules?.some?.((rule) =>
+    String(rule).includes("Final scene lighting and pose instructions override this asset sheet")
+  )) {
+    throw new Error("Expected model asset dry-run to expose downstream identity override rules");
   }
   if (modelDryRun.generationPlan?.metadata?.promptFamily !== "model-template.character-sheet.v1") {
     throw new Error("Expected model asset dry-run to expose the model template prompt family");
