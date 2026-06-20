@@ -2,10 +2,18 @@
   "name": "image-master",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "next dev",
-    "build": "next build && node scripts/fix-next-static-chunks.mjs",
+    "build": "node scripts/clean-next-build.mjs && next build && node scripts/fix-next-static-chunks.mjs",
+    "build:standalone": "node scripts/build-standalone.mjs",
     "start": "next start",
+    "electron": "electron .",
+    "electron:prepare-server": "node scripts/prepare-electron-server.mjs",
+    "electron:prepare-server:env": "node scripts/prepare-electron-server.mjs --include-env",
+    "electron:build:dir": "npm run build:standalone && npm run electron:prepare-server:env && electron-builder --mac dir",
+    "electron:build:dmg": "npm run build:standalone && npm run electron:prepare-server:env && electron-builder --mac dmg",
+    "smoke:electron-server": "node scripts/smoke-electron-server.mjs",
     "typecheck": "npx tsc --noEmit --pretty false",
     "lint": "next lint",
     "demo:export-pack": "node scripts/seed-demo-export-pack.mjs --write",
@@ -27,6 +35,7 @@
     "smoke:project-generation-ownership": "node scripts/smoke-project-generation-ownership.mjs",
     "smoke:project-batch-results-page": "node scripts/smoke-project-batch-results-page.mjs",
     "smoke:project-review-history": "node scripts/smoke-project-review-history.mjs",
+    "smoke:project-template-entry": "node scripts/smoke-project-template-entry.mjs",
     "smoke:batch-archive-cleanup": "node scripts/smoke-batch-archive-cleanup.mjs",
     "smoke:batch-persistence": "node scripts/smoke-batch-persistence.mjs",
     "smoke:batch-enqueue": "node scripts/smoke-batch-enqueue.mjs",
@@ -40,9 +49,19 @@
     "smoke:generation-plan-run": "node scripts/smoke-generation-plan-run.mjs",
     "smoke:agent-plan-matrix": "node scripts/smoke-agent-plan-matrix.mjs",
     "smoke:agent-plan-only": "node scripts/smoke-agent-plan-only.mjs",
+    "smoke:agent-plan-20": "node scripts/smoke-agent-plan-20.mjs",
+    "smoke:agent-project-intent-context": "node scripts/smoke-agent-project-intent-context.mjs",
     "smoke:agent-output-scenarios": "node scripts/smoke-agent-output-scenarios.mjs",
     "smoke:agent-complex-campaign": "node scripts/smoke-agent-complex-campaign.mjs",
     "smoke:agent-burnin-scenarios": "node scripts/smoke-agent-burnin-scenarios.mjs",
+    "smoke:canvas-entry-surface": "node scripts/smoke-canvas-entry-surface.mjs",
+    "smoke:canvas-result-nodes": "node scripts/smoke-canvas-result-nodes.mjs",
+    "smoke:canvas-result-wall-50": "node scripts/smoke-canvas-result-wall-50.mjs",
+    "smoke:canvas-result-wall-200": "node scripts/smoke-canvas-result-wall-50.mjs --count=200",
+    "smoke:agent-image-revision-context": "node scripts/smoke-agent-image-revision-context.mjs",
+    "smoke:generation-output-save-metadata": "node scripts/smoke-generation-output-save-metadata.mjs",
+    "smoke:inline-metadata-migration": "node scripts/smoke-inline-metadata-migration.mjs",
+    "smoke:large-metadata-safe-list": "node scripts/smoke-large-metadata-safe-list.mjs",
     "smoke:generation-frame-sop": "node scripts/smoke-generation-frame-sop.mjs",
     "smoke:product-frame-closed-loop": "node scripts/smoke-product-frame-closed-loop.mjs",
     "smoke:super-i-import": "node scripts/smoke-super-i-import.mjs",
@@ -65,12 +84,20 @@
     "smoke:real-plan-batch": "node scripts/smoke-real-plan-batch.mjs",
     "smoke:real-mixed-reference-e2e": "node scripts/smoke-real-mixed-reference-e2e.mjs",
     "smoke:real-agent-suite": "node scripts/smoke-real-agent-suite.mjs",
+    "smoke:real-acceptance-projects": "node scripts/smoke-real-acceptance-projects.mjs",
+    "smoke:real-acceptance-projects:guard": "node scripts/smoke-real-acceptance-projects.mjs --real --expect-confirmation-error",
+    "smoke:real-acceptance-projects:real": "node scripts/smoke-real-acceptance-projects.mjs --real",
     "stress:product-flow": "node scripts/stress-product-to-scene-flow.mjs",
+    "perf:api-mock": "node scripts/perf-api-mock.mjs",
     "prepare:model-neutral-reference": "node scripts/prepare-model-neutral-reference.mjs",
     "smoke:direct-mixed-reference": "node scripts/smoke-lanyi-direct-mixed-reference.mjs",
     "smoke:direct-mixed-reference:neutral": "DIRECT_MIXED_REF_MODEL_MODE=neutral node scripts/smoke-lanyi-direct-mixed-reference.mjs",
     "smoke:direct-mixed-reference:full": "DIRECT_MIXED_REF_MODEL_MODE=full node scripts/smoke-lanyi-direct-mixed-reference.mjs",
     "verify:smoke:local": "npm run typecheck && npm run smoke:durable-queue",
+    "verify:trial": "npm run typecheck && npm run smoke:canvas-entry-surface && npm run smoke:project-template-entry && npm run smoke:project-canvas-state && npm run smoke:scoped-api-queries && npm run smoke:canvas-result-wall-50 && npm run smoke:agent-project-intent-context && npm run smoke:agent-image-revision-context && npm run smoke:generation-output-save-metadata && npm run smoke:batch-item-retry",
+    "verify:electron": "npm run build:standalone && npm run electron:prepare-server && npm run smoke:electron-server",
+    "verify:agent-plan": "npm run smoke:agent-plan-20",
+    "metadata:migrate-inline-images": "node scripts/migrate-inline-metadata-images.mjs",
     "generated:cleanup": "node scripts/cleanup-generated-files.mjs --json",
     "generated:cleanup:delete": "node scripts/cleanup-generated-files.mjs --json --delete"
   },
@@ -95,8 +122,40 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.local.image-master",
+    "productName": "Image Master",
+    "afterPack": "electron/after-pack.cjs",
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "directories": {
+      "output": "dist-electron/release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-electron/app-server",
+        "to": "app-server"
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        "dir",
+        "dmg"
+      ]
+    }
   }
 }

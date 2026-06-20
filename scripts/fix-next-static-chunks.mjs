@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const chunksDir = join(process.cwd(), ".next", "static", "chunks");
+const nextDistDir = process.env.NEXT_DIST_DIR || ".next";
+const chunksDir = join(process.cwd(), nextDistDir, "static", "chunks");
 
 function ensureStableChunk(prefix, targetName) {
   const targetPath = join(chunksDir, targetName);

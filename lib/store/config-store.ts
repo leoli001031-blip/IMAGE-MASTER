@@ -26,14 +26,14 @@ let cache: AppConfig | null = null;
 
 const CONFIG_DEFAULTS: Record<string, string> = {
   apiKey: "",
-  baseUrl: "https://api.openai.com/v1",
-  visionModel: "gpt-4o",
+  baseUrl: "https://slb.apikey.fun/v1",
+  visionModel: "gpt-5.5",
   visionApiKey: "",
   visionBaseUrl: "",
-  imageModel: "dall-e-3",
+  imageModel: "gpt-5.5",
   imageApiKey: "",
   imageBaseUrl: "",
-  textModel: "gpt-4o",
+  textModel: "gpt-5.5",
   textApiKey: "",
   textBaseUrl: "",
 };
@@ -50,16 +50,16 @@ function loadCache(): AppConfig {
 
   cache = {
     apiKey: config.apiKey || process.env.OPENAI_API_KEY || "",
-    baseUrl: config.baseUrl || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-    visionModel: config.visionModel || process.env.VISION_MODEL || "gpt-4o",
-    visionApiKey: config.visionApiKey || "",
-    visionBaseUrl: config.visionBaseUrl || "",
-    imageModel: config.imageModel || process.env.IMAGE_MODEL || "dall-e-3",
-    imageApiKey: config.imageApiKey || "",
-    imageBaseUrl: config.imageBaseUrl || "",
-    textModel: config.textModel || process.env.TEXT_MODEL || "gpt-4o",
-    textApiKey: config.textApiKey || "",
-    textBaseUrl: config.textBaseUrl || "",
+    baseUrl: config.baseUrl || process.env.OPENAI_BASE_URL || CONFIG_DEFAULTS.baseUrl,
+    visionModel: config.visionModel || process.env.VISION_MODEL || CONFIG_DEFAULTS.visionModel,
+    visionApiKey: config.visionApiKey || process.env.VISION_API_KEY || "",
+    visionBaseUrl: config.visionBaseUrl || process.env.VISION_BASE_URL || "",
+    imageModel: config.imageModel || process.env.IMAGE_MODEL || CONFIG_DEFAULTS.imageModel,
+    imageApiKey: config.imageApiKey || process.env.IMAGE_API_KEY || "",
+    imageBaseUrl: config.imageBaseUrl || process.env.IMAGE_BASE_URL || "",
+    textModel: config.textModel || process.env.TEXT_MODEL || CONFIG_DEFAULTS.textModel,
+    textApiKey: config.textApiKey || process.env.TEXT_API_KEY || "",
+    textBaseUrl: config.textBaseUrl || process.env.TEXT_BASE_URL || "",
   };
 
   return cache;

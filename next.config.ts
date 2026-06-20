@@ -4,6 +4,7 @@ const distDir = process.env.NEXT_DIST_DIR || getIsolatedDevDistDir();
 
 const nextConfig: NextConfig = {
   ...(distDir ? { distDir } : {}),
+  ...(process.env.IMAGE_MASTER_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   outputFileTracingRoot: process.cwd(),
   serverExternalPackages: ["better-sqlite3"],
   images: {
@@ -20,7 +21,18 @@ const nextConfig: NextConfig = {
         ...config.watchOptions,
         ignored: [
           "**/.data/**",
+          "**/.data-*/**",
+          "**/.data-smoke/**",
           "**/.playwright-mcp/**",
+          "**/.git/**",
+          "**/.next/**",
+          "**/.next-*/**",
+          "**/.next-dev-*/**",
+          "**/.next-smoke/**",
+          "**/coverage/**",
+          "**/dist/**",
+          "**/dist-electron/**",
+          "**/node_modules/**",
           "**/test_artifacts/**",
           "**/*.png",
           "**/*.zip",
@@ -44,7 +56,8 @@ function getIsolatedDevDistDir(): string | undefined {
 }
 
 function isNextDevCommand(): boolean {
-  return process.argv.some((arg) => arg === "dev" || arg.endsWith("/next-dev"));
+  if (process.env.npm_lifecycle_event === "dev") return true;
+  return process.argv.some((arg) => arg === "dev" || arg === "next" || arg.endsWith("/next-dev"));
 }
 
 function getCliOptionValue(names: string[]): string | undefined {
