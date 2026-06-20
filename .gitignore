@@ -6,17 +6,24 @@
 # Local data directory (SQLite DB, generated images)
 .data/
 .data-smoke/
+.data-electron-smoke/
 
 # Next.js build output
 .next/
 .next-*/
+.next-standalone-build/
 
 # Dependencies
 node_modules/
+dist-electron/
+.data-electron-build/
 
 # Test artifacts and generated output
 test_artifacts/
 .playwright-mcp/
+.playwright-console-errors*.txt
+demo-static-showcase/
+demo-video/
 
 # OS files
 .DS_Store
