@@ -28,7 +28,7 @@ export interface AssetInvocationDecision {
 
 export interface AssetInvocationPlan {
   version: 1;
-  mode: "llm_asset_invocation_v1" | "fallback_existing_roles_v1";
+  mode: "llm_asset_invocation_v1" | "agent_routed_roles_v1" | "fallback_existing_roles_v1";
   fallbackUsed: boolean;
   fallbackReason?: string;
   referenceRoles: GenerationReferenceRole[];
@@ -65,7 +65,8 @@ export async function planAssetInvocation(
   input: AssetInvocationPlannerInput
 ): Promise<AssetInvocationPlan> {
   const normalizedContext = normalizeGenerationReferenceContext(input.referenceContext);
-  const fallback = buildFallbackPlan(input.item, normalizedContext);
+  const itemWithRequest = mergeUserRequestIntoItemIntent(input.item, input.userRequest);
+  const fallback = buildFallbackPlan(itemWithRequest, normalizedContext);
 
   if (!shouldUseAiPlanner()) {
     return {
@@ -84,7 +85,7 @@ export async function planAssetInvocation(
 
   try {
     const aiPlan = await runPlanner(input, normalizedContext, availableRoles);
-    return normalizeAiPlan(aiPlan, fallback, normalizedContext, availableRoles, input.item);
+    return normalizeAiPlan(aiPlan, fallback, normalizedContext, availableRoles, itemWithRequest);
   } catch (error) {
     if (!allowAssetInvocationFallback()) {
       throw error;
@@ -94,6 +95,18 @@ export async function planAssetInvocation(
       fallbackReason: error instanceof Error ? error.message : "Asset invocation planner failed",
     };
   }
+}
+
+function mergeUserRequestIntoItemIntent(
+  item: GenerationPlanItem,
+  userRequest: string | undefined
+): GenerationPlanItem {
+  const request = shortText(userRequest, 1200);
+  if (!request) return item;
+  return {
+    ...item,
+    prompt: [item.prompt, `User request: ${request}`].filter(Boolean).join("\n"),
+  };
 }
 
 function allowAssetInvocationFallback(): boolean {
@@ -168,7 +181,7 @@ async function runPlanner(
 ): Promise<unknown> {
   const config = getConfig();
   const apiKey = config.textApiKey || config.apiKey;
-  const baseURL = config.textBaseUrl || config.baseUrl || "https://api.openai.com/v1";
+  const baseURL = config.textBaseUrl || config.baseUrl || "https://slb.apikey.fun/v1";
   if (!apiKey) throw new Error("Text API key not configured");
 
   const provider = createOpenAI({ apiKey, baseURL });
@@ -231,6 +244,7 @@ async function runPlanner(
       "场景图：只在当前镜头需要同空间、同光影或场景延展时 providerInput=true；否则可以 prompt_only。",
       "风格图：通常只提供质感、色调和镜头语言，不要覆盖商品/模特/场景事实。",
       "文案图：copy 默认不能 providerInput，除非系统以后显式支持文字图层图片输入；现在作为 copy_layer 或 prompt_only。",
+      "白底主图、Amazon 合规主图、尺寸图、参数图、商品多角度图：provider 图片输入优先只保留 product；scene/style/copy 应降级为 prompt_only 或 unused，避免污染干净商品图。",
       "如果 existingProviderReferenceRoles 里已有 product/model/scene，且镜头要求同一身份、同一场景、保持或延续参考，则不要降级为 unused 或 prompt_only。",
       "如果是白底主图、多角度商品图、细节图、参数图，不要调用模特。",
       "如果是模特展示、街拍、场景搭配图，优先调用 product + model，并按需要调用 scene/style。",
@@ -288,24 +302,61 @@ function normalizeAiPlan(
   if (!isRecord(value)) throw new Error("Asset invocation planner returned invalid JSON");
 
   const availableSet = new Set(availableRoles);
-  const decisions = Array.isArray(value.decisions)
-    ? value.decisions.flatMap((entry): AssetInvocationDecision[] => {
+  const decisions = getDecisionEntries(value)
+    .flatMap((entry): AssetInvocationDecision[] => {
+        if (typeof entry === "string") {
+          const role = normalizeRole(entry);
+          if (!role || !availableSet.has(role)) return [];
+          const providerInput = role !== "copy" && hasProviderUsableRole(context, role);
+          return [{
+            role,
+            mode: modeByRole[role],
+            providerInput,
+            reason: "Agent 以角色列表形式选择该素材",
+          }];
+        }
         if (!isRecord(entry)) return [];
-        const role = normalizeRole(entry.role);
+        const role = normalizeRole(
+          entry.role ??
+          entry.assetRole ??
+          entry.referenceRole ??
+          entry.roleName ??
+          entry.asset ??
+          entry.key ??
+          entry.type
+        );
         if (!role || !availableSet.has(role)) return [];
-        const mode = normalizeMode(entry.mode) ?? modeByRole[role];
-        const providerInput = role !== "copy" && isTruthyProviderInput(entry.providerInput) && hasProviderUsableRole(context, role);
+        const rawMode = entry.mode ?? entry.invocationMode ?? entry.referenceMode ?? entry.useMode ?? entry.action;
+        const providerInput = role !== "copy" && isTruthyProviderInput(
+          entry.providerInput ??
+          entry.provider_input ??
+          entry.provider ??
+          entry.useProviderInput ??
+          entry.use_provider_input ??
+          entry.sendToProvider ??
+          entry.send_to_provider ??
+          entry.asProviderInput ??
+          entry.as_provider_input ??
+          entry.imageInput ??
+          entry.image_input ??
+          entry.includeInProvider ??
+          entry.providerReference ??
+          entry.useImage
+        ) && hasProviderUsableRole(context, role);
+        let mode = normalizeMode(rawMode) ?? modeByRole[role];
+        if (providerInput && (mode === "unused" || mode === "prompt_only" || isGenericProviderInputMode(rawMode))) {
+          mode = modeByRole[role];
+        }
         return [{
           role,
           mode: providerInput && mode === "unused" ? modeByRole[role] : mode,
           providerInput,
-          reason: shortText(entry.reason, 160) || "Agent 选择该素材调用方式",
+          reason: shortText(entry.reason ?? entry.rationale ?? entry.note ?? entry.notes, 160) || "Agent 选择该素材调用方式",
         }];
-      })
-    : [];
+      });
 
   if (decisions.length === 0) {
-    throw new Error("Asset invocation planner returned no usable decisions");
+    throw new Error(`Asset invocation planner returned no usable decisions: ${compactPlannerJsonPreview(value)}`);
   }
 
   const decisionsByRole = new Map<GenerationReferenceRole, AssetInvocationDecision>();
@@ -322,9 +373,15 @@ function normalizeAiPlan(
   }
 
   const enforcedProviderRoles = getCriticalProviderRoles(item, fallback, context, availableRoles);
+  const guardedDecisions = applyItemIntentDecisionGuards(
+    applyItemRoleBoundary(Array.from(decisionsByRole.values()), item),
+    item
+  );
+  const guardedDecisionsByRole = new Map<GenerationReferenceRole, AssetInvocationDecision>();
+  for (const decision of guardedDecisions) guardedDecisionsByRole.set(decision.role, decision);
   for (const role of enforcedProviderRoles) {
-    const previous = decisionsByRole.get(role);
-    decisionsByRole.set(role, {
+    const previous = guardedDecisionsByRole.get(role) ?? decisionsByRole.get(role);
+    guardedDecisionsByRole.set(role, {
       role,
       mode: modeByRole[role],
       providerInput: true,
@@ -334,7 +391,7 @@ function normalizeAiPlan(
     });
   }
 
-  const finalDecisions = Array.from(decisionsByRole.values());
+  const finalDecisions = Array.from(guardedDecisionsByRole.values());
   const referenceRoles = uniqueRoles(
     finalDecisions
       .filter((decision) => decision.mode !== "unused" || decision.providerInput)
@@ -370,6 +427,90 @@ function normalizeAiPlan(
   };
 }
 
+function getDecisionEntries(value: Record<string, unknown>): unknown[] {
+  const direct = value.decisions;
+  if (Array.isArray(direct)) return direct;
+  if (isRecord(direct)) return objectDecisionEntries(direct);
+
+  const plan = value.plan;
+  if (isRecord(plan)) {
+    if (Array.isArray(plan.decisions)) return plan.decisions;
+    if (isRecord(plan.decisions)) return objectDecisionEntries(plan.decisions);
+  }
+
+  const assetInvocationPlan = value.assetInvocationPlan;
+  if (isRecord(assetInvocationPlan)) {
+    if (Array.isArray(assetInvocationPlan.decisions)) return assetInvocationPlan.decisions;
+    if (isRecord(assetInvocationPlan.decisions)) return objectDecisionEntries(assetInvocationPlan.decisions);
+  }
+
+  const roleArrayEntries = roleArrayDecisionEntries(value);
+  if (roleArrayEntries.length > 0) return roleArrayEntries;
+
+  const nestedCandidates = [
+    value.assetInvocations,
+    value.assetInvocation,
+    value.referencePlan,
+    value.references,
+    value.roles,
+  ];
+  for (const candidate of nestedCandidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (isRecord(candidate)) {
+      const entries = objectDecisionEntries(candidate);
+      if (entries.length > 0) return entries;
+    }
+  }
+
+  const roleKeyEntries = objectDecisionEntries(value);
+  if (roleKeyEntries.length > 0) return roleKeyEntries;
+
+  return [];
+}
+
+function objectDecisionEntries(value: Record<string, unknown>): unknown[] {
+  return Object.entries(value).flatMap(([roleKey, decision]) => {
+    const role = normalizeRole(roleKey);
+    if (isRecord(decision)) {
+      if ("role" in decision || "assetRole" in decision || "referenceRole" in decision) {
+        return [role && !("role" in decision) ? { ...decision, role } : decision];
+      }
+      return role ? [{ ...decision, role }] : [];
+    }
+    if (!role) return [];
+    if (typeof decision === "string") {
+      return isTruthyProviderInput(decision)
+        ? [{ role, providerInput: true }]
+        : [{ role, mode: decision }];
+    }
+    if (typeof decision === "boolean") {
+      return [{ role, providerInput: decision }];
+    }
+    return [];
+  });
+}
+
+function roleArrayDecisionEntries(value: Record<string, unknown>): unknown[] {
+  const referenceRoles = normalizeRoles([
+    ...getStringArray(value.referenceRoles),
+    ...getStringArray(value.activeRoles),
+    ...getStringArray(value.usedRoles),
+    ...getStringArray(value.roles),
+  ]);
+  const providerRoles = normalizeRoles([
+    ...getStringArray(value.providerReferenceRoles),
+    ...getStringArray(value.providerInputRoles),
+    ...getStringArray(value.providerRoles),
+    ...getStringArray(value.imageReferenceRoles),
+    ...getStringArray(value.strongReferenceRoles),
+  ]);
+  const providerSet = new Set(providerRoles);
+  return uniqueRoles([...referenceRoles, ...providerRoles]).map((role) => ({
+    role,
+    providerInput: providerSet.has(role),
+  }));
+}
+
 function getCriticalProviderRoles(
   item: GenerationPlanItem,
   fallback: AssetInvocationPlan,
@@ -378,12 +519,17 @@ function getCriticalProviderRoles(
 ): GenerationReferenceRole[] {
   const availableSet = new Set(availableRoles);
   const fallbackProviderSet = new Set(fallback.providerReferenceRoles);
-  const text = `${item.title} ${item.type} ${item.prompt} ${item.copyText ?? ""}`.toLowerCase();
+  const itemRoleSet = new Set<GenerationReferenceRole>([
+    ...(item.referenceRoles ?? []),
+    ...(item.providerReferenceRoles ?? []),
+  ]);
+  const text = getItemIntentText(item);
   const critical: GenerationReferenceRole[] = [];
+  const noModelIntent = hasExplicitNoModelIntent(text);
 
   for (const role of generationReferenceRoles) {
     if (
-      role !== "copy" &&
+      role === "product" &&
       availableSet.has(role) &&
       hasProviderUsableRole(context, role) &&
       hasAgentSelectedImageRole(item, role)
@@ -400,23 +546,154 @@ function getCriticalProviderRoles(
     critical.push("product");
   }
   if (
-    fallbackProviderSet.has("model") &&
+    !noModelIntent &&
+    (fallbackProviderSet.has("model") || hasModelProviderIntent(text)) &&
+    itemRoleSet.has("model") &&
     availableSet.has("model") &&
     hasProviderUsableRole(context, "model") &&
-    /同一模特|同一位|同一个人|人物身份|身份|脸|五官|发型|身形|模特|真人|穿|上身|手持|拿着|背着|佩戴/.test(text)
+    (fallbackProviderSet.has("model") || hasModelProviderIntent(text))
   ) {
     critical.push("model");
   }
   if (
-    fallbackProviderSet.has("scene") &&
+    (fallbackProviderSet.has("scene") || hasSceneProviderIntent(text)) &&
+    itemRoleSet.has("scene") &&
     availableSet.has("scene") &&
     hasProviderUsableRole(context, "scene") &&
-    /同一|保持|延续|参考场景|固定场景|场景参考|同空间|同光影|空间关系|窗光|光源|背景关系|台面材质|透视|阴影|场景|厨房|室内|室外|街拍/.test(text)
+    (fallbackProviderSet.has("scene") || hasSceneProviderIntent(text))
   ) {
     critical.push("scene");
   }
 
   return uniqueRoles(critical);
+}
+
+function applyItemRoleBoundary(
+  decisions: AssetInvocationDecision[],
+  item: GenerationPlanItem
+): AssetInvocationDecision[] {
+  const allowedRoles = new Set<GenerationReferenceRole>([
+    ...(item.referenceRoles ?? []),
+    ...(item.providerReferenceRoles ?? []),
+  ]);
+  if (allowedRoles.size === 0) return decisions;
+  return decisions.map((decision) => {
+    if (allowedRoles.has(decision.role)) return decision;
+    return {
+      ...decision,
+      mode: "unused",
+      providerInput: false,
+      reason: "Plan-level Agent 未选择该素材角色，本张图不额外引入该参考。",
+    };
+  });
+}
+
+function hasModelProviderIntent(text: string): boolean {
+  if (hasExplicitNoModelIntent(text)) return false;
+  return /同一模特|同一位|同一个人|人物身份|身份|脸|五官|发型|身形|模特|真人|穿|上身|手持|拿着|背着|佩戴|坐在|站在|人物|model|person|lookbook|wearing/.test(text);
+}
+
+function hasSceneProviderIntent(text: string): boolean {
+  return /同一|保持|延续|参考场景|固定场景|场景参考|同空间|同光影|空间关系|窗光|光源|背景关系|台面材质|透视|阴影|场景|厨房|室内|室外|街拍|花店|商场|咖啡|卧室|客厅|户外|室内|雪山|街边|店外|背景|scene|lifestyle|street|indoor|outdoor/.test(text);
+}
+
+function applyItemIntentDecisionGuards(
+  decisions: AssetInvocationDecision[],
+  item: GenerationPlanItem
+): AssetInvocationDecision[] {
+  if (hasExplicitNoModelIntent(getItemIntentText(item))) {
+    decisions = decisions.map((decision) => {
+      if (decision.role !== "model") return decision;
+      return {
+        ...decision,
+        mode: "unused",
+        providerInput: false,
+        reason: "本张图明确要求无模特/无人物，模特参考不进入 provider 输入。",
+      };
+    });
+  }
+
+  if (shouldUseProductOnlyReferences(item)) {
+    return decisions.map((decision) => {
+      if (decision.role === "product" || decision.role === "copy") return decision;
+      return {
+        ...decision,
+        mode: "unused",
+        providerInput: false,
+        reason: "当前镜头是商品主图/白底/商品独立展示，非商品素材不进入本张图调用",
+      };
+    });
+  }
+
+  if (shouldDropModelReferenceForProductDetail(item)) {
+    return decisions.map((decision) => {
+      if (decision.role !== "model") return decision;
+      return {
+        ...decision,
+        mode: "unused",
+        providerInput: false,
+        reason: "当前镜头是商品材质/细节特写，手部或局部动作不需要锁定模特身份",
+      };
+    });
+  }
+
+  if (shouldDropSceneReferenceForProductDetail(item)) {
+    return decisions.map((decision) => {
+      if (decision.role !== "scene") return decision;
+      return {
+        ...decision,
+        mode: "unused",
+        providerInput: false,
+        reason: "当前镜头是商品材质/细节特写，未明确要求场景承接，场景参考不进入本张图调用",
+      };
+    });
+  }
+
+  return decisions;
+}
+
+function shouldDropSceneReferenceForProductDetail(item: GenerationPlanItem): boolean {
+  const text = getItemIntentText(item);
+  if (!/product_detail|product_macro|material|texture|macro|材质|细节|微距|纹理/.test(text)) {
+    return false;
+  }
+  return !/product_scene|scene|lifestyle|环境|场景|台面|桌面|背景|生活方式|空间|花店|咖啡|商场|街拍/.test(text);
+}
+
+function shouldDropModelReferenceForProductDetail(item: GenerationPlanItem): boolean {
+  const text = getItemIntentText(item);
+  if (hasExplicitNoModelIntent(text)) return true;
+  if (!/product_detail|product_macro|material|texture|macro|detail|材质|细节|微距|纹理|静物/.test(text)) {
+    return false;
+  }
+  return !hasExplicitModelIdentityIntent(text);
+}
+
+function shouldUseProductOnlyReferences(item: GenerationPlanItem): boolean {
+  const labelText = `${item.title} ${item.type}`.toLowerCase();
+  const fullText = getItemIntentText(item);
+  if (!hasExplicitNoModelIntent(fullText) && hasExplicitModelIdentityIntent(fullText)) return false;
+  if (/amazon\s*main|marketplace[-_ ]?main|white[-_ ]?main|product[-_ ]?white|product[-_ ]?only|packshot|ecommerce[-_ ]?main|淘宝主图|商品主图|主图风格|白底|纯白|主图|商品正面主图/.test(labelText)) {
+    return true;
+  }
+  return hasExplicitNoModelIntent(fullText) &&
+    /white[-_ ]?background|pure white|白底|纯白|主图|packshot|product[-_ ]?only|无场景|no scene/.test(fullText);
+}
+
+function hasExplicitNoModelIntent(text: string): boolean {
+  return /no model|no person|without model|without person|product[-_ ]?only|无模特|无人物|不要模特|不要人物|不需要模特|不需要人物|不用模特|不用人物|不带模特|不带人物|不要使用模特|不要使用人物|无需模特|无需人物|模特不要|人物不要/.test(text);
+}
+
+function hasExplicitModelIdentityIntent(text: string): boolean {
+  if (hasExplicitNoModelIntent(text)) return false;
+  return /model|person|human|wearing|lookbook|model_showcase|模特|人物|真人|女性|男性|同一个人|人像|穿搭|背着展示|佩戴展示|上身展示/.test(text);
+}
+
+function getItemIntentText(item: GenerationPlanItem): string {
+  const metadata = isRecord(item.metadata) ? item.metadata : {};
+  const shotIntentText = shortText(metadata.shotIntentText, 2000);
+  if (shotIntentText) return `${shotIntentText} ${item.prompt} ${item.copyText ?? ""}`.toLowerCase();
+  return `${item.title} ${item.type} ${item.prompt} ${item.copyText ?? ""}`.toLowerCase();
 }
 
 function hasAgentSelectedImageRole(item: GenerationPlanItem, role: GenerationReferenceRole): boolean {
@@ -484,58 +761,112 @@ function uniqueStrings(value: readonly string[]): string[] {
 function normalizeRole(value: unknown): GenerationReferenceRole | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
+  const compact = normalized.replace(/[\s_-]+/g, "");
   const aliases: Record<string, GenerationReferenceRole> = {
     product: "product",
+    productreference: "product",
+    productasset: "product",
+    productimage: "product",
+    productref: "product",
     商品: "product",
     产品: "product",
+    商品图: "product",
+    产品图: "product",
+    商品图片: "product",
+    产品图片: "product",
+    商品参考: "product",
+    商品参考图: "product",
     商品资产: "product",
     产品资产: "product",
     model: "model",
     person: "model",
+    modelreference: "model",
+    modelasset: "model",
+    personreference: "model",
     人物: "model",
     模特: "model",
+    人物图: "model",
+    模特图: "model",
+    模特参考: "model",
+    模特参考图: "model",
     模特资产: "model",
     scene: "scene",
+    scenereference: "scene",
+    sceneasset: "scene",
+    scenecontext: "scene",
     场景: "scene",
     背景: "scene",
+    场景图: "scene",
+    背景图: "scene",
+    场景参考: "scene",
+    场景参考图: "scene",
     场景资产: "scene",
     style: "style",
+    stylereference: "style",
+    styleasset: "style",
+    visualstyle: "style",
     风格: "style",
+    风格图: "style",
+    风格参考: "style",
+    风格参考图: "style",
     风格资产: "style",
     copy: "copy",
     text: "copy",
+    copybrief: "copy",
+    copyasset: "copy",
+    textasset: "copy",
     文案: "copy",
     文字: "copy",
+    文案图: "copy",
+    文字图: "copy",
+    文案参考: "copy",
+    文案参考图: "copy",
     文案资产: "copy",
   };
-  return aliases[normalized] ?? generationReferenceRoles.find((role) => role === normalized);
+  return aliases[normalized] ?? aliases[compact] ?? generationReferenceRoles.find((role) => role === normalized);
 }
 
 function normalizeMode(value: unknown): AssetInvocationMode | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
+  const compact = normalized.replace(/[\s-]+/g, "_");
   const aliases: Record<string, AssetInvocationMode> = {
     hard_reference: "hard_reference",
+    hardreference: "hard_reference",
+    provider_input: "hard_reference",
+    providerinput: "hard_reference",
     商品硬参考: "hard_reference",
     真实商品参考: "hard_reference",
     identity_reference: "identity_reference",
+    identityreference: "identity_reference",
     身份参考: "identity_reference",
     人物身份参考: "identity_reference",
     lighting_space: "lighting_space",
+    lightingspace: "lighting_space",
+    scene_lighting: "lighting_space",
     场景光影: "lighting_space",
     空间光影: "lighting_space",
     style_finish: "style_finish",
+    stylefinish: "style_finish",
     风格完成度: "style_finish",
     风格参考: "style_finish",
     copy_layer: "copy_layer",
+    copylayer: "copy_layer",
     文案图层: "copy_layer",
     prompt_only: "prompt_only",
+    promptonly: "prompt_only",
     仅提示词: "prompt_only",
     文字约束: "prompt_only",
     unused: "unused",
     不使用: "unused",
   };
-  return aliases[normalized] ?? undefined;
+  return aliases[normalized] ?? aliases[compact] ?? undefined;
+}
+
+function isGenericProviderInputMode(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const compact = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return compact === "providerinput" || compact === "imageinput";
 }
 
 function isTruthyProviderInput(value: unknown): boolean {
@@ -562,6 +893,14 @@ function tryParsePlannerJson(text: string): unknown | undefined {
     }
   }
   return undefined;
+}
+
+function compactPlannerJsonPreview(value: unknown): string {
+  try {
+    return shortText(JSON.stringify(value), 520);
+  } catch {
+    return "[unserializable planner payload]";
+  }
 }
 
 function shortText(value: unknown, maxChars: number): string {

@@ -35,6 +35,9 @@ export interface BuildCopyRenderPolicyInput {
 const burnInTerms = [
   "烧进",
   "带字",
+  "带文案",
+  "短文案",
+  "文案进图",
   "直接出字",
   "直接生成文字",
   "把字放进图",
@@ -42,6 +45,7 @@ const burnInTerms = [
   "画面文字",
   "封面标题",
   "海报标题",
+  "短标题",
   "in-image",
   "burn in",
   "burn-in",
@@ -151,9 +155,18 @@ export function normalizeCopyRenderMode(value: unknown): CopyRenderMode | undefi
   return undefined;
 }
 
+export function inferCopyRenderModeFromText(request: string | undefined): CopyRenderMode | undefined {
+  return inferRequestedMode(request);
+}
+
 function inferRequestedMode(request: string | undefined): CopyRenderMode | undefined {
   const text = (request ?? "").toLowerCase();
   if (!text) return undefined;
+  if (
+    /(?:文案|文字).{0,8}(?:不|别|不要|无需|不需要).{0,8}(?:进图|入图|烧字|烧进|写进|渲染|出字|放进图)|(?:不|别|不要|无需|不需要).{0,8}(?:文案|文字|烧字|烧进|直接出字|直接生成文字|把字放进图|把文案放进图|把文字放进图|出字|进图)/.test(text)
+  ) {
+    return "layout_layer";
+  }
   if (burnInTerms.some((term) => text.includes(term.toLowerCase()))) return "burn_in";
   return undefined;
 }

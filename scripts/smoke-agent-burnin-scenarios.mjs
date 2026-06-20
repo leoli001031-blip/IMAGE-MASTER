@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { seedCommercialComponents } from "./seed-commercial-components.mjs";
+import { stopSmokeServer } from "./smoke-runtime.mjs";
 
 const port = Number(process.env.AGENT_BURNIN_SCENARIOS_PORT || 3524);
 const externalBaseUrl = process.env.AGENT_BURNIN_SCENARIOS_BASE_URL?.trim();
@@ -24,6 +26,11 @@ const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const workflowPrefix = `smoke_agent_burnin_${stamp}`;
 const outDir = path.join(process.cwd(), "test_artifacts", "api-smoke", `agent-burnin-scenarios-${stamp}`);
 const reportPath = path.join(outDir, "report.json");
+const distDir = process.env.AGENT_BURNIN_SCENARIOS_DIST_DIR ||
+  path.join(".next-smoke", `agent-burnin-scenarios-${stamp}`);
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 
 let server;
 let serverOutput = "";
@@ -36,6 +43,7 @@ if (shouldSpawnServer) {
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      NEXT_DIST_DIR: distDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -114,7 +122,29 @@ try {
   process.exitCode = 1;
 } finally {
   await cleanupCreatedRows().catch(() => {});
-  if (server) server.kill("SIGTERM");
+  if (server) await stopSmokeServer(server);
+  if (shouldSpawnServer && process.env.AGENT_BURNIN_SCENARIOS_KEEP_DIST !== "1") {
+    await fs.rm(distDir, { recursive: true, force: true }).catch(() => {});
+  }
+  restoreSourceFiles(sourceFileSnapshots);
+}
+
+function snapshotSourceFiles(files) {
+  return files.map((file) => ({
+    file,
+    exists: fsSync.existsSync(file),
+    contents: fsSync.existsSync(file) ? fsSync.readFileSync(file, "utf8") : "",
+  }));
+}
+
+function restoreSourceFiles(snapshots) {
+  for (const snapshot of snapshots) {
+    if (snapshot.exists) {
+      fsSync.writeFileSync(snapshot.file, snapshot.contents);
+    } else {
+      fsSync.rmSync(snapshot.file, { force: true });
+    }
+  }
 }
 
 async function runBurnInScenario(scenario) {
@@ -247,6 +277,9 @@ function validateRun(scenario, run, items) {
     const unsafeText = visibleText.find((line) => isUnsafeBurnInPlacement(job.prompt || "", line));
     if (unsafeText) {
       addIssue(scenario.id, "copy_placement", `${title} placed burn-in text on product/object body: ${unsafeText}`);
+    }
+    if (hasUnsafeBurnInPlacementPhrase(job.prompt || "")) {
+      addIssue(scenario.id, "copy_placement", `${title} contains a direct product-surface text placement phrase`);
     }
     if (
       (providerRoles.includes("model") || promptOnlyRoles.includes("model")) &&
@@ -597,6 +630,27 @@ function isUnsafeBurnInPlacement(prompt, text) {
 
   return new RegExp(`${object}.{0,24}${verb}.{0,24}${quoted}`).test(source) ||
     new RegExp(`${quoted}.{0,24}(?:${verb}.{0,12})?${object}`).test(source);
+}
+
+function hasUnsafeBurnInPlacementPhrase(prompt) {
+  const source = String(prompt || "");
+  const safeNegation = "(?:不|不要|不得|不能|避免).{0,12}(?:印在|写在|贴在|落在|放在|出现在|渲染在|烧在|商品|产品|机身|外壳|音箱|包装|标签|屏幕|道具)";
+  const textTerms = "(?:文案|文字|标题|卖点|短句|标语|slogan|copy|headline)";
+  const placeVerbs = "(?:出现在|印在|写在|贴在|放在|渲染在|烧在|位于|落在|覆盖在)";
+  const strongPlaceVerbs = "(?:出现在|印在|写在|贴在|渲染在|烧在|位于|落在|覆盖在)";
+  const surfaces = "(?:商品|产品|商品本体|产品本体|机身|外壳|音箱|扬声孔|网孔|格栅|旋钮|包装|标签|label|logo|屏幕|显示器|道具|纸张|卡片|便签|菜单|贴纸)";
+  const patterns = [
+    new RegExp(`${textTerms}.{0,48}${placeVerbs}.{0,24}${surfaces}`, "gi"),
+    new RegExp(`${strongPlaceVerbs}.{0,18}${surfaces}(?:表面|上|区域)?`, "gi"),
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source))) {
+      const window = source.slice(Math.max(0, match.index - 24), Math.min(source.length, match.index + match[0].length + 24));
+      if (!new RegExp(safeNegation).test(window)) return true;
+    }
+  }
+  return /\b(text|headline|copy|slogan).{0,36}(on|onto|printed on|written on|placed on).{0,24}(product|body|shell|label|logo|screen|packaging|prop)\b/i.test(source);
 }
 
 function escapeRegExp(value) {

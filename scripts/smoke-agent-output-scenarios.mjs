@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import http from "node:http";
@@ -8,6 +9,7 @@ import https from "node:https";
 import { spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { seedCommercialComponents } from "./seed-commercial-components.mjs";
+import { stopSmokeServer } from "./smoke-runtime.mjs";
 
 const port = Number(process.env.AGENT_OUTPUT_SCENARIOS_PORT || 3514);
 const externalBaseUrl = process.env.AGENT_OUTPUT_SCENARIOS_BASE_URL?.trim();
@@ -17,6 +19,11 @@ const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const workflowPrefix = `smoke_agent_output_${stamp}`;
 const outDir = path.join(process.cwd(), "test_artifacts", "api-smoke", `agent-output-scenarios-${stamp}`);
 const reportPath = path.join(outDir, "report.json");
+const distDir = process.env.AGENT_OUTPUT_SCENARIOS_DIST_DIR ||
+  path.join(".next-smoke", `agent-output-scenarios-${stamp}`);
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 const requestTimeoutMs = Number(process.env.AGENT_OUTPUT_SCENARIOS_TIMEOUT_MS || 600000);
 const maxPreviewItems = Number(process.env.AGENT_OUTPUT_SCENARIOS_MAX_PREVIEW_ITEMS || 3);
 const maxMatrixItems = Number(process.env.AGENT_OUTPUT_SCENARIOS_MAX_MATRIX_ITEMS || 4);
@@ -36,6 +43,8 @@ if (shouldSpawnServer) {
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      WATCHPACK_POLLING: process.env.WATCHPACK_POLLING || "true",
+      NEXT_DIST_DIR: distDir,
       // Important: no mock env here. We want the real text Agent/prompt route
       // when a text key is configured, but every generation plan uses enqueue:false,
       // so image generation jobs are never started.
@@ -124,11 +133,33 @@ try {
   process.exitCode = 1;
 } finally {
   await cleanupCreatedRows().catch(() => {});
-  if (server) server.kill("SIGTERM");
+  if (server) await stopSmokeServer(server);
+  if (shouldSpawnServer && process.env.AGENT_OUTPUT_SCENARIOS_KEEP_DIST !== "1") {
+    await fs.rm(distDir, { recursive: true, force: true }).catch(() => {});
+  }
+  restoreSourceFiles(sourceFileSnapshots);
 }
 
 function scenarioRunner(id, run) {
   return { id, run };
+}
+
+function snapshotSourceFiles(files) {
+  return files.map((file) => ({
+    file,
+    exists: fsSync.existsSync(file),
+    contents: fsSync.existsSync(file) ? fsSync.readFileSync(file, "utf8") : "",
+  }));
+}
+
+function restoreSourceFiles(snapshots) {
+  for (const snapshot of snapshots) {
+    if (snapshot.exists) {
+      fsSync.writeFileSync(snapshot.file, snapshot.contents);
+    } else {
+      fsSync.rmSync(snapshot.file, { force: true });
+    }
+  }
 }
 
 async function runComposedCommerceScenario(scenario) {
@@ -723,6 +754,61 @@ function validateCommonNoImageRun(scenario, run, expectedJobs) {
   for (const job of run.jobs ?? []) {
     if (job.status !== "pending") addIssue(scenario.id, "job_status", `${job.metadata?.planItemTitle} status is ${job.status}, expected pending`);
     if (job.resultUrl) addIssue(scenario.id, "image_generation", `${job.metadata?.planItemTitle} already has resultUrl`);
+    validateJobAssetInvocationPlan(scenario, job);
+  }
+}
+
+function validateJobAssetInvocationPlan(scenario, job) {
+  const title = job.metadata?.planItemTitle || "Untitled job";
+  const plan = job.metadata?.assetInvocationPlan;
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    addIssue(scenario.id, "asset_invocation", `${title} missing assetInvocationPlan`);
+    return;
+  }
+  if (!Array.isArray(plan.decisions) || plan.decisions.length === 0) {
+    addIssue(scenario.id, "asset_invocation", `${title} assetInvocationPlan has no decisions`);
+    return;
+  }
+
+  const itemProviderRoles = unique(getStringArray(job.metadata?.itemProviderReferenceRoles));
+  const itemReferenceRoles = unique(getStringArray(job.metadata?.itemReferenceRoles));
+  const planProviderRoles = unique(getStringArray(plan.providerReferenceRoles));
+  if (!sameStringSet(itemProviderRoles, planProviderRoles)) {
+    addIssue(
+      scenario.id,
+      "asset_invocation",
+      `${title} provider roles mismatch: item=${itemProviderRoles.join(",") || "none"} plan=${planProviderRoles.join(",") || "none"}`
+    );
+  }
+  const leakedAssetGroupRoles = unique(getStringArray(job.metadata?.agentAssetGroupIds)
+    .map(getRoleFromAssetGroupId)
+    .filter((role) => role && !itemReferenceRoles.includes(role)));
+  if (leakedAssetGroupRoles.length > 0) {
+    addIssue(
+      scenario.id,
+      "asset_invocation",
+      `${title} selected unused asset group roles: ${leakedAssetGroupRoles.join(",")}`
+    );
+  }
+  if (planProviderRoles.includes("copy")) {
+    addIssue(scenario.id, "asset_invocation", `${title} assetInvocationPlan routed copy into provider input`);
+  }
+
+  const decisionsByRole = new Map();
+  for (const decision of plan.decisions) {
+    if (!decision || typeof decision !== "object" || Array.isArray(decision)) continue;
+    const role = String(decision.role || "");
+    if (!role) continue;
+    decisionsByRole.set(role, decision);
+    if (role === "copy" && decision.providerInput === true) {
+      addIssue(scenario.id, "asset_invocation", `${title} copy decision providerInput=true`);
+    }
+  }
+  for (const role of itemProviderRoles) {
+    const decision = decisionsByRole.get(role);
+    if (!decision?.providerInput) {
+      addIssue(scenario.id, "asset_invocation", `${title} provider role ${role} has no providerInput decision`);
+    }
   }
 }
 
@@ -810,11 +896,16 @@ function hasRenderedCopyInstruction(prompt) {
   const safePatterns = [
     /无任何.{0,12}(文案|文字|标题|卖点|参数|标签)/,
     /无.{0,8}(文案|文字|标题|卖点|参数|标签)/,
+    /没有任何.{0,12}(文案|文字|标题|卖点|参数|标签)/,
+    /禁止任何.{0,12}(文案|文字|标题|卖点|参数|标签)/,
+    /禁止出现任何.{0,12}(文案|文字|标题|卖点|参数|标签)/,
+    /禁止.{0,18}(渲染|显示|写入|烧入|烧进|生成).{0,18}(文案|文字|标题|卖点|参数|标签)/,
     /不出现任何.{0,12}(文案|文字|标题|卖点|参数|标签)/,
     /不要.{0,18}(渲染|显示|写入|烧入|烧进|生成).{0,18}(文案|文字|标题|卖点|参数|标签)/,
     /不.{0,8}(渲染|显示|写入|烧入|烧进|生成).{0,18}(文案|文字|标题|卖点|参数|标签)/,
     /不.{0,8}(出现|放置|加入).{0,18}(文案|文字|标题|卖点|参数|标签)/,
     /预留.{0,16}(留白|安全区|文案区|文字图层)/,
+    /供后期.{0,12}(添加|叠加).{0,12}(文案|文字|标题|卖点|参数|标签)/,
     /适合.{0,12}(叠加|后期).{0,12}(文字|文案|图层)/,
   ];
   if (safePatterns.some((pattern) => pattern.test(text))) return false;
@@ -856,6 +947,7 @@ function validateMatrixSeparation(scenario, run) {
   const sceneGroups = (plan?.assetGroups ?? []).filter((group) => group.role === "scene" && group.available);
   if (productGroups.length !== 2) addIssue(scenario.id, "matrix", `expected 2 product groups, got ${productGroups.length}`);
   if (sceneGroups.length !== 3) addIssue(scenario.id, "matrix", `expected 3 scene groups, got ${sceneGroups.length}`);
+  const groupById = new Map((plan?.assetGroups ?? []).map((group) => [group.id, group]));
   for (const job of run.jobs ?? []) {
     const matrix = job.metadata?.agentMatrixItem;
     const assetGroupIds = Array.isArray(matrix?.assetGroupIds) ? matrix.assetGroupIds : [];
@@ -869,7 +961,44 @@ function validateMatrixSeparation(scenario, run) {
         addIssue(scenario.id, "matrix", `${job.metadata?.planItemTitle} missing provider role ${role}; got ${providerRoles.join(",")}`);
       }
     }
+    validateSelectedGroupMatchesJobTitle(scenario, job, products, groupById, "product");
+    validateSelectedGroupMatchesJobTitle(scenario, job, scenes, groupById, "scene");
   }
+}
+
+function validateSelectedGroupMatchesJobTitle(scenario, job, groupIds, groupById, role) {
+  const title = String(job.metadata?.planItemTitle || "");
+  const expected = getExpectedMatrixCue(title, role);
+  if (!expected) return;
+  const selectedText = groupIds
+    .map((id) => groupById.get(id))
+    .filter(Boolean)
+    .map((group) => `${group.title || ""} ${group.sourceKey || ""}`)
+    .join(" ");
+  if (!normalizeMatrixCue(selectedText).includes(normalizeMatrixCue(expected))) {
+    addIssue(
+      scenario.id,
+      "matrix_asset_match",
+      `${title} expected ${role} group to include ${expected}; got ${selectedText || "none"}`
+    );
+  }
+}
+
+function getExpectedMatrixCue(title, role) {
+  if (role === "product") {
+    if (/银色羽绒服/.test(title)) return "银色羽绒服";
+    if (/黑色冲锋衣/.test(title)) return "黑色冲锋衣";
+  }
+  if (role === "scene") {
+    if (/雪山/.test(title)) return "雪山";
+    if (/咖啡厅/.test(title)) return "咖啡厅";
+    if (/商场/.test(title)) return "商场";
+  }
+  return "";
+}
+
+function normalizeMatrixCue(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, "");
 }
 
 function validatePromptShape(scenario, run) {
@@ -893,8 +1022,25 @@ function getJobPromptOnlyRoles(job) {
   return unique((job.metadata?.providerReferenceAdapter?.promptOnlyImages ?? []).map((image) => image.role).filter(Boolean));
 }
 
+function getRoleFromAssetGroupId(id) {
+  const match = String(id || "").match(/^asset\.([a-z]+)\./);
+  return match?.[1] || "";
+}
+
 function unique(values) {
   return Array.from(new Set(values));
+}
+
+function getStringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" && item.trim())
+    : [];
+}
+
+function sameStringSet(left, right) {
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function addIssue(scenarioId, category, message) {

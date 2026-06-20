@@ -265,7 +265,7 @@ function buildScenePayload({ input, workflowId, batchId, productAssetDataUrl }) 
 
 async function probeGuardrail() {
   const overLimitPayload = {
-    images: Array.from({ length: 11 }, (_, index) => ({
+    images: Array.from({ length: 21 }, (_, index) => ({
       title: `Over limit ${index + 1}`,
       type: "stress_guardrail",
       copyText: "",

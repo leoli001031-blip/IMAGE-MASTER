@@ -126,8 +126,8 @@ export interface GenerationFrameState {
 export function buildGenerationFramePlanSpecs({
   request,
   outputType = "commercial_image_set",
-  frameLabel = "生成框",
-  maxItems = 10,
+  frameLabel = "Agent 任务",
+  maxItems = 20,
 }: BuildGenerationFramePlanSpecsInput): GenerationFramePlanSpec[] {
   const cleanRequest = (request ?? "").trim();
   const normalizedRequest = cleanRequest.toLowerCase();
@@ -136,7 +136,10 @@ export function buildGenerationFramePlanSpecs({
     explicitCount ?? inferDefaultPlanCount(normalizedRequest, outputType),
     maxItems
   );
+  const globalRequestedRatio = extractRequestedRatio(cleanRequest) ?? inferOrientationRatio(cleanRequest);
+  const requestedBurnInCopy = extractRequestedShotBurnInText(cleanRequest) ?? extractLooseBurnInText(cleanRequest);
   const requestedShotTemplates = buildRequestedShotTemplates(cleanRequest, targetCount);
+  const shouldApplyGlobalHints = requestedShotTemplates.length === 0;
   const seeds = requestedShotTemplates.length > 0
     ? requestedShotTemplates
     : mergeKeywordPlanTemplates(
@@ -150,18 +153,31 @@ export function buildGenerationFramePlanSpecs({
     planned.push(genericPlanTemplates[planned.length % genericPlanTemplates.length]);
   }
 
-  return planned.slice(0, targetCount).map((template, index) => ({
-    id: `${template.id}-${index + 1}`,
-    title: `${frameLabel} · ${template.title}`,
-    type: `${outputType}_${template.id}`,
-    instruction: template.instruction,
-    size: template.size,
-    ratio: template.ratio,
-    whiteBackground: template.whiteBackground,
-    textAllowed: template.textAllowed,
-    modelRequired: template.modelRequired,
-    exportSpecId: template.id,
-  }));
+  return planned.slice(0, targetCount).map((template, index) => {
+    const copyText = shouldApplyGlobalHints
+      ? template.copyText ?? requestedBurnInCopy
+      : template.copyText;
+    const ratio = shouldApplyGlobalHints && globalRequestedRatio
+      ? globalRequestedRatio
+      : template.ratio;
+    const size = shouldApplyGlobalHints && globalRequestedRatio
+      ? imageSizeForRequestedRatio(globalRequestedRatio)
+      : template.size;
+    return {
+      id: `${template.id}-${index + 1}`,
+      title: `${frameLabel} · ${template.title}`,
+      type: `${outputType}_${template.id}`,
+      instruction: template.instruction,
+      size,
+      ratio,
+      whiteBackground: template.whiteBackground,
+      textAllowed: template.textAllowed || Boolean(copyText),
+      modelRequired: template.modelRequired,
+      exportSpecId: template.id,
+      copyText,
+      copyRenderMode: template.copyRenderMode ?? (copyText ? "burn_in" : undefined),
+    };
+  });
 }
 
 export interface GenerationFrameBindingInput {
@@ -677,6 +693,17 @@ function mergeCopyRules(
   return dedupeStrings([...(base ?? []), ...(copyRules ?? [])]);
 }
 
+function sanitizeCopyPromptRules(lines: string[]): string[] {
+  return lines
+    .map((line) =>
+      line
+        .replace(/文案资产\s*[:：]\s*/g, "")
+        .replace(/(Visible image copy candidates:\s*)(?:画面文字|图中文字|封面标题|海报标题|标题)\s*[:：]\s*/i, "$1")
+        .trim()
+    )
+    .filter(Boolean);
+}
+
 function mergeRoleContext(
   base: GenerationReferenceRoleContext | undefined,
   next: GenerationReferenceRoleContext
@@ -735,7 +762,9 @@ function normalizeSlotBinding(
     providerMode,
     parameters: getRecord(input.parameters),
     copyBrief: normalizeStructuredCopyBrief(input.copyBrief ?? getRecord(input.parameters)?.copyBrief),
-    promptFragments: getStringArray(input.promptFragments),
+    promptFragments: input.role === "copy"
+      ? sanitizeCopyPromptRules(getStringArray(input.promptFragments))
+      : getStringArray(input.promptFragments),
     constraints: getStringArray(input.constraints),
     negativeRules: getStringArray(input.negativeRules),
     qualityRules: getStringArray(input.qualityRules),
@@ -1290,7 +1319,7 @@ const xiaohongshuTemplates: PlanTemplate[] = [
     title: "小红书封面",
     instruction:
       "Create a strong Xiaohongshu-style cover image with immediate product focus, lifestyle texture, and clean room for later title copy.",
-    size: "1024x1024",
+    size: "1024x1536",
     ratio: "3:4",
     whiteBackground: false,
     textAllowed: false,
@@ -1303,7 +1332,7 @@ const xiaohongshuTemplates: PlanTemplate[] = [
     title: "收藏图",
     instruction:
       "Create a save-worthy social commerce image that feels natural, polished, and visually consistent with the cover.",
-    size: "1024x1024",
+    size: "1024x1536",
     ratio: "3:4",
     whiteBackground: false,
     textAllowed: false,
@@ -1317,7 +1346,7 @@ const posterTemplates: PlanTemplate[] = [
     title: "品牌主视觉",
     instruction:
       "Create a polished campaign key visual with strong product hierarchy, premium lighting, and clear commercial focus.",
-    size: "1024x1024",
+    size: "1024x1536",
     ratio: "4:5",
     whiteBackground: false,
     textAllowed: false,
@@ -1328,7 +1357,7 @@ const posterTemplates: PlanTemplate[] = [
     title: "促销海报",
     instruction:
       "Create a promotional poster-ready image with strong central composition and clean reserved space for later campaign copy.",
-    size: "1024x1024",
+    size: "1024x1536",
     ratio: "4:5",
     whiteBackground: false,
     textAllowed: false,
@@ -1353,8 +1382,9 @@ function buildRequestedShotTemplates(request: string, targetCount: number): Plan
   return shotNames.map((shotName, index) => {
     const profile = inferRequestedShotProfile(shotName, request);
     const normalizedTitle = normalizeRequestedShotTitle(shotName, index);
-    const copyText = extractRequestedShotBurnInText(shotName);
-    const copyRenderMode = copyText ? "burn_in" : undefined;
+    const noTextRequested = isNoTextShotRequested(`${shotName} ${request}`);
+    const copyText = noTextRequested ? undefined : extractRequestedShotBurnInText(shotName, request);
+    const copyRenderMode = noTextRequested ? "metadata_only" : copyText ? "burn_in" : undefined;
     return {
       id: `requested-${slugifyRequestedShot(normalizedTitle) || index + 1}`,
       title: normalizedTitle,
@@ -1362,6 +1392,9 @@ function buildRequestedShotTemplates(request: string, targetCount: number): Plan
         `Create one single finished commercial image for this specific shot only: ${normalizedTitle}.`,
         "Treat this as one independent deliverable in the requested image set.",
         "Do not include the other requested shots inside this image.",
+        noTextRequested
+          ? "Do not render any readable text, captions, labels, slogans, badges, UI marks, watermarks, or typography inside the bitmap."
+          : "",
         copyText
           ? "Render only the approved short text as a clean layout layer in a safe empty area; do not print it on the product, label, zipper, fabric, tag, screen, sign, or scene prop."
           : "",
@@ -1370,7 +1403,7 @@ function buildRequestedShotTemplates(request: string, targetCount: number): Plan
       size: profile.size,
       ratio: profile.ratio,
       whiteBackground: profile.whiteBackground,
-      textAllowed: profile.textAllowed || !!copyText,
+      textAllowed: noTextRequested ? false : profile.textAllowed || !!copyText,
       modelRequired: profile.modelRequired,
       copyText,
       copyRenderMode,
@@ -1379,28 +1412,137 @@ function buildRequestedShotTemplates(request: string, targetCount: number): Plan
 }
 
 function parseRequestedShotList(request: string, targetCount: number): string[] {
+  const scanRequest = request.replace(/\r/g, "").replace(/\n+/g, "；");
   const patterns = [
-    /(?:generate|create|make|produce)\s+\d{1,2}\s+(?:finished\s+)?(?:images?|photos?|shots?|outputs?)\s*[:：]\s*([^。.\n]+)/i,
-    /(?:生成|输出|做|制作|需要)[^。.\n:：]{0,48}(?:成片|图|图片|最终图|完成图|输出)\s*[:：]\s*([^。.\n]+)/i,
-    /(?:生成|输出|做|制作|需要)\s*(?:\d{1,2}|[一二两三四五六七八九十])?\s*(?:张|个)?(?:成片|图|图片|最终图|完成图)?\s*[:：]\s*([^。.\n]+)/i,
+    /(?:generate|create|make|produce)\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:finished\s+)?(?:images?|photos?|shots?|outputs?)\s*[:：]\s*([^。.\n]+)/i,
+    /(?:generate|create|make|produce)\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:finished\s+)?(?:images?|photos?|shots?|outputs?)\s+([^。.\n]+)/i,
+    /(?:生成|输出|做|制作|需要)[^。.\n:：]{0,48}(?:成片|图|图片|样张|最终图|完成图|输出)\s*[:：]\s*([^。.\n]+)/i,
+    /(?:生成|输出|做|制作|需要)\s*(?:\d{1,2}|[一二两三四五六七八九十])?\s*(?:张|个)?(?:成片|图|图片|样张|最终图|完成图)?\s*[:：]\s*([^。.\n]+)/i,
     /(?:分别是|包括)\s*[:：]\s*([^。.\n]+)/i,
   ];
-  const match = patterns.map((pattern) => request.match(pattern)).find(Boolean);
+  const match = patterns.map((pattern) => scanRequest.match(pattern)).find(Boolean);
   const rawList = match?.[1]?.trim();
   if (!rawList) return [];
   const items = splitRequestedShotItems(rawList)
-    .map((item) =>
-      item
-        .trim()
-        .replace(/^(?:\d{1,2}|[一二两三四五六七八九十])\s*(?:张成片|张图|张|幅|个|images?|pics?|photos?|shots?|outputs?)?\s*/i, "")
-        .replace(/^[-、\s]+/, "")
-        .replace(/[。.]$/, "")
-        .trim()
-    )
-    .filter((item) => item.length >= 2 && item.length <= 80)
+    .map(cleanRequestedShotItem)
+    .flatMap((item) => expandCountedRequestedShot(item, targetCount))
+    .filter((item) => item.length >= 2 && item.length <= 140)
     .filter((item) => !/^(and|以及|还有)$/.test(item.toLowerCase()));
   if (items.length < 2) return [];
   return items.slice(0, targetCount);
+}
+
+function cleanRequestedShotItem(item: string): string {
+  return item
+    .trim()
+    .replace(/^[-、\s]+/, "")
+    .replace(/[。.]$/, "")
+    .trim();
+}
+
+function expandCountedRequestedShot(item: string, targetCount: number): string[] {
+  const match = item.match(/^(\d{1,2}|[一二两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)\s*(张成片|张图|张|幅|个|images?|pics?|photos?|shots?|outputs?)?\s*(.+)$/i);
+  if (!match?.[1] || !match[3]) return [item];
+  if (!match[2]) return [match[3].trim()];
+
+  const count = Math.max(1, Math.min(targetCount, parseRequestedCountToken(match[1]) ?? 1));
+  const rest = match[3].trim();
+  if (count <= 1) return [rest];
+
+  const baseTitle = stripRequestedShotExpansionNotes(rest);
+  const variants = extractRequestedShotVariants(rest, count);
+  return Array.from({ length: count }, (_, index) => {
+    const variant = variants[index] ?? buildDefaultRequestedShotVariant(baseTitle, index, count);
+    return `${baseTitle} ${index + 1}/${count}${variant ? `：${variant}` : ""}`.trim();
+  });
+}
+
+function parseRequestedCountToken(value: string): number | undefined {
+  const normalized = value.trim().toLowerCase();
+  const numeric = Number(normalized);
+  if (Number.isFinite(numeric) && numeric > 0) return Math.floor(numeric);
+  const chinese: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+  if (chinese[normalized]) return chinese[normalized];
+  const english: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  return english[normalized];
+}
+
+function stripRequestedShotExpansionNotes(value: string): string {
+  return value
+    .replace(/[:：]\s*(?:分别安排|分别是|分别为|分别)\s*.+$/i, "")
+    .replace(/[，,]\s*(?:必须|每张|不要每张|不要|分别安排|分别是|分别为|分别)\s*.+$/i, "")
+    .trim();
+}
+
+function extractRequestedShotVariants(value: string, count: number): string[] {
+  const explicit = value.match(/(?:分别安排|分别是|分别为|分别)\s*[:：]?\s*([^。.\n]+)/i)?.[1]?.trim();
+  const source = explicit || "";
+  if (!source) return [];
+  return source
+    .split(/\s*[、,，;；]\s*/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length >= 2)
+    .slice(0, count);
+}
+
+function buildDefaultRequestedShotVariant(baseTitle: string, index: number, count: number): string {
+  const text = baseTitle.toLowerCase();
+  const noModel = /无人物|无模特|不要人物|不要模特|不需要人物|不需要模特|不用人物|不用模特|不带人物|不带模特|no model|no person|without model|without person/.test(text);
+  if (/细节|材质|五金|特写|macro|detail|texture|material|扣|拉链|绒|皮革/.test(text)) {
+    return [
+      "材质纹理近景",
+      "五金扣具特写",
+      "边缘缝线与手柄细节",
+      "开口结构与内部容量细节",
+    ][index % 4];
+  }
+  if (/静物|场景|lifestyle|scene|桌面|花店|咖啡|商场/.test(text)) {
+    return [
+      "正面平拍，商品自然放在场景台面",
+      "三分角侧拍，展示商品厚度和环境层次",
+      "低机位近景，突出接触阴影和真实尺度",
+      "轻俯拍，展示商品轮廓和周边道具关系",
+    ][index % 4];
+  }
+  if (!noModel && /模特|model|look|穿搭|展示|街拍|上身|背|手持|佩戴/.test(text)) {
+    return [
+      "站立侧身回头，重心压在后脚，眼神看镜头旁边",
+      "行走中轻扶商品，前脚落地，眼神看向街边橱窗",
+      "坐姿低头整理商品，肩颈放松，眼神落在手部",
+      "身体三分之二侧向镜头，一手提商品，另一手自然摆动",
+    ][index % 4];
+  }
+  if (/卖点|海报|封面|poster|cover/.test(text)) {
+    return [
+      "主标题版式，商品占画面中心",
+      "卖点短句版式，商品旁留干净安全区",
+      "氛围主视觉版式，背景简洁不压商品",
+    ][index % 3];
+  }
+  return count > 1 ? `第 ${index + 1} 个不同机位` : "";
 }
 
 function splitRequestedShotItems(rawList: string): string[] {
@@ -1411,8 +1553,14 @@ function splitRequestedShotItems(rawList: string): string[] {
     return clean.split(/\s*[;；]\s*/);
   }
 
+  if (/\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:horizontal|vertical|wide|portrait|landscape)\b/i.test(clean)) {
+    return clean.split(
+      /\s+(?=(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:horizontal|vertical|wide|portrait|landscape)\b)/i
+    );
+  }
+
   return clean.split(
-    /\s*(?:,|，|、|\/|\||\band\b)\s*(?=(?:\d{1,2}|[一二两三四五六七八九十])?\s*(?:张|个|幅)?\s*(?:\d+\s*:\s*\d+|白底|主图|海报|详情|细节|材质|卖点|小红书|封面|模特|场景|雪山|户外|室内|街拍|amazon|taobao|poster|detail|model|scene|cover))/i
+    /\s*(?:,|，|、|\/|\||\band\b)\s*(?=(?:\d{1,2}|[一二两三四五六七八九十])?\s*(?:张|个|幅)?\s*(?:\d+\s*:\s*\d+|白底|主图|主视觉|海报|详情|细节|材质|卖点|小红书|封面|模特|场景|环境|雪山|户外|室内|街拍|amazon|taobao|poster|detail|model|scene|cover|banner))/i
   );
 }
 
@@ -1436,10 +1584,16 @@ function slugifyRequestedShot(value: string): string {
 function inferRequestedShotProfile(shotName: string, fullRequest = ""): Omit<PlanTemplate, "id" | "title" | "instruction"> & {
   instruction: string;
 } {
+  const shotText = shotName.toLowerCase();
   const text = `${shotName} ${fullRequest}`.toLowerCase();
-  const requestedRatio = extractRequestedRatio(shotName);
+  const requestedRatio = extractRequestedRatio(shotName) ?? inferOrientationRatio(shotName);
   const requestedSize = requestedRatio ? imageSizeForRequestedRatio(requestedRatio) : undefined;
-  const burnInRequested = isShotBurnInRequested(shotName);
+  const burnInRequested = isShotBurnInRequested(text) && !isNoTextShotRequested(text);
+  const productOnlyShot = /商品静物|静物|材质|五金|细节|详情页|参数|尺寸|微距|特写|无人物|无模特|不要人物|不要模特|不需要人物|不需要模特|不用人物|不用模特|不带人物|不带模特/i.test(shotText);
+  const hasModelIntent = !productOnlyShot && (
+    /model|模特|wear|wearing|carry|carrying|holding|背|拿|手持|上身|穿着|坐姿|行走|回眸|侧身/i.test(shotText) ||
+    (/(cover|poster|hero|scene|封面|海报|主视觉|场景图)/i.test(shotText) && /model|模特|同一位|同一个人|真人|人物/.test(text))
+  );
   if (/(white|packshot|amazon|listing|白底|主图|亚马逊)/i.test(shotName)) {
     const ratio = requestedRatio ?? "1:1";
     return {
@@ -1454,23 +1608,27 @@ function inferRequestedShotProfile(shotName: string, fullRequest = ""): Omit<Pla
   if (/(xiaohongshu|rednote|cover|小红书|封面)/i.test(shotName)) {
     const ratio = requestedRatio ?? "3:4";
     return {
-      instruction: "Make it feel like a polished social cover with strong first-glance product hierarchy and clean space for later editable copy.",
+      instruction: burnInRequested
+        ? "Make it feel like a polished social cover with strong first-glance product hierarchy and a clean copy-safe area for one short visible headline."
+        : "Make it feel like a polished social cover with strong first-glance product hierarchy and clean space for later editable copy.",
       size: requestedSize ?? imageSizeForRequestedRatio(ratio),
       ratio,
       whiteBackground: false,
       textAllowed: burnInRequested,
-      modelRequired: /model|模特|wear|carry|背|拿|手持/i.test(text),
+      modelRequired: hasModelIntent,
     };
   }
   if (/(poster|taobao|selling|benefit|卖点|淘宝|海报)/i.test(shotName)) {
     const ratio = requestedRatio ?? "4:5";
     return {
-      instruction: "Use a poster-ready commercial composition with one clear selling point and reserved negative space for editable copy layers.",
+      instruction: burnInRequested
+        ? "Use a poster-ready commercial composition with one clear visual selling point and a clean safe area for one short visible copy line."
+        : "Use a poster-ready commercial composition with one clear selling point and reserved negative space for editable copy layers.",
       size: requestedSize ?? imageSizeForRequestedRatio(ratio),
       ratio,
       whiteBackground: false,
       textAllowed: burnInRequested,
-      modelRequired: /model|模特|wear|carry|背|拿|手持/i.test(text),
+      modelRequired: hasModelIntent,
     };
   }
   if (/(detail|close|macro|material|texture|特写|细节|材质|五金|肩带|手柄|扣|拉链|绒|皮革|织物)/i.test(shotName)) {
@@ -1484,7 +1642,7 @@ function inferRequestedShotProfile(shotName: string, fullRequest = ""): Omit<Pla
       modelRequired: false,
     };
   }
-  if (/(model|wear|wearing|carry|carrying|holding|seated|outdoor|indoor|street|cafe|模特|上身|背|拿|手持|坐|室内|户外|街拍|咖啡|回眸|侧身|行走|逛|商场|花店)/i.test(text)) {
+  if (hasModelIntent) {
     const ratio = requestedRatio ?? "4:5";
     return {
       instruction: `Use a realistic location-shot fashion/product photograph. ${buildShotSpecificActionDirection(shotName, fullRequest)} ${productModelRealismInstruction} ${modelActionMotivationInstruction} ${sceneLightingIntegrationInstruction}`,
@@ -1493,6 +1651,17 @@ function inferRequestedShotProfile(shotName: string, fullRequest = ""): Omit<Pla
       whiteBackground: false,
       textAllowed: false,
       modelRequired: true,
+    };
+  }
+  if (/(outdoor|indoor|street|cafe|room|shop|store|室内|户外|街拍|咖啡|商场|花店|店铺|场景)/i.test(text)) {
+    const ratio = requestedRatio ?? "4:5";
+    return {
+      instruction: "Use a realistic product-only lifestyle location photograph. Place the exact product naturally in the requested environment with believable scale, contact shadows, lens perspective, and scene lighting. Do not add people, models, hands, faces, mannequins, readable labels, or extra product variants unless explicitly requested.",
+      size: requestedSize ?? imageSizeForRequestedRatio(ratio),
+      ratio,
+      whiteBackground: false,
+      textAllowed: burnInRequested,
+      modelRequired: false,
     };
   }
   if (/(banner|横幅)/i.test(text)) {
@@ -1518,19 +1687,57 @@ function inferRequestedShotProfile(shotName: string, fullRequest = ""): Omit<Pla
 }
 
 function isShotBurnInRequested(value: string): boolean {
-  return /(烧进|带字|直接出字|画面文字|图中文字|海报标题|封面标题|图片上写|写上|加字|burn[\s-]?in|in-image|render text)/i.test(value);
+  return /(烧进|烧字|带字|带文案|短文案|短标题|文案进图|直接出字|画面文字|图中文字|海报标题|封面标题|图片上写|写上|加字|burn[\s-]?in|in-image|render text)/i.test(value);
 }
 
-function extractRequestedShotBurnInText(value: string): string | undefined {
+function isNoTextShotRequested(value: string): boolean {
+  return /(无字|无文字|不要文字|不要文案|不加字|不带字|不要加字|不烧字|不要烧字|不出字|不要出字|文案不要进图|文字不要进图|文案不进图|文字不进图|不要把文案放进图|不要把文字放进图|不要进图|no\s+text|without\s+text|textless)/i.test(value);
+}
+
+function extractRequestedShotBurnInText(value: string, context = ""): string | undefined {
+  if (isNoTextShotRequested(`${value} ${context}`)) return undefined;
   if (!isShotBurnInRequested(value)) return undefined;
   const quoted = value.match(/[「『“"]([^」』”"]{1,24})[」』”"]/);
   const text = quoted?.[1]?.trim();
+  if (text) return `画面文字：${text}`;
+  const fallback = inferDefaultBurnInCopy(value, context);
+  return fallback ? `画面文字：${fallback}` : undefined;
+}
+
+function extractLooseBurnInText(value: string): string | undefined {
+  if (isNoTextShotRequested(value)) return undefined;
+  if (!isShotBurnInRequested(value)) return undefined;
+  const patterns = [
+    /(?:画面文字|图中文字|海报标题|封面标题|短标题|图片上写|写上|加字|烧字|带字|带文案|短文案)\s*[:：]\s*([^。.\n]{1,24})/i,
+    /(?:burn[\s-]?in|render)\s+(?:short\s+)?(?:text|copy|words?)\s*[:：]?\s+([a-z0-9][a-z0-9\s'-]{1,30})$/i,
+  ];
+  const match = patterns.map((pattern) => value.match(pattern)).find(Boolean);
+  const text = match?.[1]?.trim().replace(/[。.,，]+$/, "");
   return text ? `画面文字：${text}` : undefined;
+}
+
+function inferDefaultBurnInCopy(value: string, context = ""): string | undefined {
+  const text = `${value} ${context}`.toLowerCase();
+  if (/毛绒|绒|软糯|furry|plush/.test(text) && /包|bag/.test(text)) {
+    return "软糯小包 出门刚好";
+  }
+  if (/羽绒服|down jacket|puffer/.test(text)) return "轻暖出行 不惧寒风";
+  if (/手机|phone|小米|xiaomi/.test(text)) return "影像旗舰 随手出片";
+  if (/鼠标|mouse|rog|gaming/.test(text)) return "精准掌控 一触即发";
+  if (/封面|cover|小红书|rednote/.test(text)) return "今日新品 值得收藏";
+  if (/详情|卖点|海报|poster|selling|benefit/.test(text)) return "质感细节 一眼心动";
+  return "新品上新 值得收藏";
 }
 
 function extractRequestedRatio(value: string): string | undefined {
   const match = value.match(/(?:^|[^\d])((?:1:1|3:2|4:3|3:4|4:5|5:4|9:16|16:9|2:3|3:5))(?:$|[^\d])/i);
   return match?.[1];
+}
+
+function inferOrientationRatio(value: string): string | undefined {
+  if (/\b(horizontal|wide|landscape)\b|横版|横图/i.test(value)) return "3:2";
+  if (/\b(vertical|portrait)\b|竖版|竖图/i.test(value)) return "4:5";
+  return undefined;
 }
 
 function imageSizeForRequestedRatio(ratio: string): "1024x1024" | "1024x1536" | "1536x1024" {
@@ -1541,6 +1748,7 @@ function imageSizeForRequestedRatio(ratio: string): "1024x1024" | "1024x1536" | 
 }
 
 function selectPlanSeedTemplates(request: string, outputType: string): PlanTemplate[] {
+  const noModelRequested = isNoModelRequested(request);
   if (outputType.includes("product_asset")) return productAssetTemplates;
   if (outputType.includes("model_asset")) return modelAssetTemplates;
   if (outputType.includes("style_asset") || outputType.includes("visual_style")) return styleAssetTemplates;
@@ -1556,7 +1764,7 @@ function selectPlanSeedTemplates(request: string, outputType: string): PlanTempl
   if (isWhiteBackgroundRequest(request, outputType)) {
     return whiteProductMultiViewTemplates;
   }
-  if (hasAnyKeyword(request, ["模特", "上身", "穿着", "model"]) || outputType.includes("model")) {
+  if (!noModelRequested && (hasAnyKeyword(request, ["模特", "上身", "穿着", "model"]) || outputType.includes("model"))) {
     return [genericPlanTemplates[4], genericPlanTemplates[0], genericPlanTemplates[2]];
   }
   if (isSceneRequest(request, outputType)) {
@@ -1572,8 +1780,10 @@ function mergeKeywordPlanTemplates(
   outputType: string
 ): PlanTemplate[] {
   let next = [...templates];
+  const noModelRequested = isNoModelRequested(request);
   if (next.some((template) => template.id.startsWith("accessory-"))) return next;
   if (
+    !noModelRequested &&
     (hasAnyKeyword(request, ["模特", "上身", "穿着", "model"]) || outputType.includes("model")) &&
     !next.some((template) => template.id === "model" || template.modelRequired)
   ) {
@@ -1586,6 +1796,10 @@ function mergeKeywordPlanTemplates(
     next = insertPlanTemplate(next, genericPlanTemplates[3], 5);
   }
   return next;
+}
+
+function isNoModelRequested(value: string): boolean {
+  return /no model|no person|without model|without person|product[-_ ]?only|无模特|无人物|不要模特|不要人物|不需要模特|不需要人物|不用模特|不用人物|不带模特|不带人物|不要使用模特|不要使用人物|无需模特|无需人物|模特不要|人物不要/i.test(value);
 }
 
 function buildShotSpecificActionDirection(shotName: string, fullRequest: string): string {
@@ -1610,21 +1824,8 @@ function buildShotSpecificActionDirection(shotName: string, fullRequest: string)
 
 function isAccessoryLifestyleCampaignRequest(request: string, outputType: string): boolean {
   const text = `${request} ${outputType}`.toLowerCase();
-  const hasAccessory = hasAnyKeyword(text, [
-    "包",
-    "包包",
-    "手袋",
-    "小包",
-    "毛绒包",
-    "挎包",
-    "单肩包",
-    "托特",
-    "handbag",
-    "bag",
-    "purse",
-    "tote",
-    "accessory",
-  ]);
+  const hasAccessory =
+    /包包|女包|男包|手袋|手包|背包|小包|毛绒包|挎包|单肩包|托特|腋下包|链条包|水桶包|handbag|(?:^|[^a-z])bag(?:$|[^a-z])|purse|tote|accessory/i.test(text);
   const hasLifestyleModel = hasAnyKeyword(text, [
     "模特",
     "model",

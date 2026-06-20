@@ -11,6 +11,11 @@ const shouldSpawnServer = !externalBaseUrl;
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.join(process.cwd(), "test_artifacts", "api-smoke", `agent-plan-only-${stamp}`);
 const reportPath = path.join(outDir, "report.json");
+const distDir = process.env.AGENT_PLAN_ONLY_SMOKE_DIST_DIR ||
+  path.join(".next-smoke", `agent-plan-only-${stamp}`);
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 let server;
 let serverOutput = "";
 
@@ -20,6 +25,8 @@ if (shouldSpawnServer) {
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      NEXT_DIST_DIR: distDir,
+      WATCHPACK_POLLING: process.env.WATCHPACK_POLLING || "true",
       IMAGE_MASTER_ENABLE_MOCK_JOB_RUNNER: "",
       IMAGE_MASTER_ENABLE_MOCK_BATCH: "",
       IMAGE_MASTER_DISABLE_AGENT_PLAN_LLM: "",
@@ -102,6 +109,28 @@ try {
   process.exitCode = 1;
 } finally {
   if (server) server.kill("SIGTERM");
+  if (shouldSpawnServer && process.env.AGENT_PLAN_ONLY_SMOKE_KEEP_DIST !== "1") {
+    fs.rmSync(distDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+  restoreSourceFiles(sourceFileSnapshots);
+}
+
+function snapshotSourceFiles(files) {
+  return files.map((file) => ({
+    file,
+    exists: fs.existsSync(file),
+    contents: fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "",
+  }));
+}
+
+function restoreSourceFiles(snapshots) {
+  for (const snapshot of snapshots) {
+    if (snapshot.exists) {
+      fs.writeFileSync(snapshot.file, snapshot.contents);
+    } else {
+      fs.rmSync(snapshot.file, { force: true });
+    }
+  }
 }
 
 function summarizeScenario(scenario, response, elapsedMs) {
@@ -156,6 +185,15 @@ function validateScenario(report) {
       if (sceneGroups.length !== 1) {
         addIssue(report.id, "matrix_scene", `${item.title} selected ${sceneGroups.length} scene groups`);
       }
+    }
+  }
+  if (report.id === "amazon_no_burn") {
+    const infographic = report.generationMatrix.find((item) => item.itemId === "infographic");
+    if (infographic?.copyMode !== "layout_layer") {
+      addIssue(report.id, "copy_mode", `infographic copy should stay layout_layer, got ${infographic?.copyMode || "missing"}`);
+    }
+    if (infographic?.providerReferenceRoles?.includes("copy")) {
+      addIssue(report.id, "copy_reference", "copy should not be sent as a provider reference image");
     }
   }
 }
@@ -395,7 +433,7 @@ async function waitForServer(url) {
   while (Date.now() - started < 45000) {
     try {
       const response = await fetch(url);
-      if (response.status < 500) return;
+      if (response.status === 200) return;
       lastError = new Error(`status ${response.status}`);
     } catch (error) {
       lastError = error;

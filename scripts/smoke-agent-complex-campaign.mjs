@@ -324,7 +324,7 @@ function validate(report) {
     }
     if (
       expectedSceneId &&
-      job.itemMetadata?.expectedCopyMode !== "metadata_only" &&
+      shouldExpectSceneProvider(job) &&
       !providerAssetIds.has(expectedSceneId)
     ) {
       addIssue(report, "reference_routing", `${job.title} missing expected scene ${expectedSceneId}; got ${JSON.stringify(sceneIds)}`);
@@ -354,6 +354,15 @@ function validate(report) {
       }
     }
   }
+}
+
+function shouldExpectSceneProvider(job) {
+  const expectedItem = job.expectedItem || {};
+  const text = `${job.title || ""} ${expectedItem.type || ""} ${expectedItem.prompt || ""}`.toLowerCase();
+  if (/product_detail|product_macro|product_dimensions|product_steps|material|macro|detail|dimensions|steps|材质|细节|微距|参数|尺寸|步骤/.test(text)) {
+    return false;
+  }
+  return /scene|poster|cover|banner|hero|model_product_scene|product_scene|场景|海报|封面|横幅|主视觉|模特/.test(text);
 }
 
 function addIssue(report, category, message) {

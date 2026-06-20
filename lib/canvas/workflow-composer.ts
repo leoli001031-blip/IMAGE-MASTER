@@ -9,7 +9,10 @@ import {
   type CampaignBible,
   type CampaignShot,
 } from "@/lib/canvas/campaign-planning";
-import type { CopyRenderMode } from "@/lib/canvas/copy-render-policy";
+import {
+  inferCopyRenderModeFromText,
+  type CopyRenderMode,
+} from "@/lib/canvas/copy-render-policy";
 import type {
   Component,
   StandardComponentType,
@@ -112,7 +115,10 @@ function applyWorkflowSkillDefaults(
     ...input,
     platforms: normalizeStringArray(input.platforms, workflowSkill.platforms),
     outputPacks: normalizeStringArray(input.outputPacks, workflowSkill.outputPacks),
-    copyRenderMode: input.copyRenderMode ?? workflowSkill.defaultCopyRenderMode,
+    copyRenderMode:
+      input.copyRenderMode ??
+      inferCopyRenderModeFromText(input.brief) ??
+      workflowSkill.defaultCopyRenderMode,
   };
 }
 

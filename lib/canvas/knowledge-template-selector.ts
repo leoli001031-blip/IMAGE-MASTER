@@ -10,6 +10,7 @@ import {
   type GenerationReferenceContext,
   type GenerationReferenceRole,
 } from "./generation-reference-context";
+import { isReferenceAssetWorkflowIntent } from "./workflow-skill-registry";
 
 export type KnowledgeCandidateSource = "template" | "component";
 export type KnowledgeReferenceMode = "provider_input" | "prompt_only";
@@ -187,16 +188,19 @@ export function selectKnowledgeTemplates(
   const requiredInputRoles = normalizeRoles(input.requiredReferenceRoles);
   const roleSignals = buildRoleSignals(request, context, explicitRoles, requiredInputRoles);
   const referenceAssetRequest = isReferenceAssetKnowledgeRequest(request, context, requiredInputRoles);
+  const conceptProductRequest = isConceptProductKnowledgeRequest(request, context, requiredInputRoles);
   const trace: KnowledgeTraceEntry[] = [];
   const warnings: string[] = [];
 
-  if (referenceAssetRequest && !hasReferenceRole(context, "product") && !requiredInputRoles.includes("product")) {
+  if ((referenceAssetRequest || conceptProductRequest) && !hasReferenceRole(context, "product") && !requiredInputRoles.includes("product")) {
     roleSignals.product = 0;
     trace.push({
       stage: "role_signal_suppressed",
       role: "product",
       source: "request",
-      message: "Reference asset generation should not inherit product SOP from incidental commerce words",
+      message: conceptProductRequest
+        ? "Concept product mockups should not require a real product identity reference"
+        : "Reference asset generation should not inherit product SOP from incidental commerce words",
     });
   }
 
@@ -336,7 +340,18 @@ function isReferenceAssetKnowledgeRequest(
   if (requiredRoles.includes("product") || hasReferenceRole(context, "product")) {
     return false;
   }
-  return /model_asset|character_sheet|scene_asset|style_asset|visual_style|reference_asset|scene_style_asset|模卡|模特资产|场景资产|风格资产|参考资产|素材资产/.test(request);
+  return isReferenceAssetWorkflowIntent(request);
+}
+
+function isConceptProductKnowledgeRequest(
+  request: string,
+  context: GenerationReferenceContext | undefined,
+  requiredRoles: CanvasReferenceRole[]
+): boolean {
+  if (requiredRoles.includes("product") || hasReferenceRole(context, "product")) {
+    return false;
+  }
+  return /concept_product|concept product|mockup|概念商品|概念产品|方向探索|非真实商品|不是真实商品/.test(request);
 }
 
 function selectSopRoles(signals: RoleSignalMap): GenerationReferenceRole[] {

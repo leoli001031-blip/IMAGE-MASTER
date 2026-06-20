@@ -65,7 +65,7 @@ export function buildModelAssetTemplateGenerationPlan(draft: AssetPackDraft): As
       modelAssetMetadata,
       downstreamReferenceMode: "prefer_zone_b_neutral_identity_reference",
       downstreamReferenceRules: [
-        "Use the downstream identity zone for final image generation, not the library display card.",
+        "Use the downstream identity reference zone for final image generation, not the library display card.",
         "Preserve identity anchors only; do not preserve model-card pose, facial expression, background, or lighting.",
         "Final scene lighting and pose instructions override this asset sheet.",
       ],
@@ -84,6 +84,8 @@ export function buildGeneratedModelAssetTemplateMetadata({
   const params = getModelTemplateParams(generationPlan.metadata);
   if (!params) return undefined;
   const fullTemplatePrompt = getFullTemplatePromptSnapshot(generationPlan.metadata);
+  const downstreamReferenceMode = getDownstreamReferenceMode(generationPlan.metadata);
+  const downstreamReferenceRules = getDownstreamReferenceRules(generationPlan.metadata);
   return {
     ...buildModelAssetMetadata(params, {
       imageUrl,
@@ -91,8 +93,8 @@ export function buildGeneratedModelAssetTemplateMetadata({
     }),
     providerPromptMode: generationPlan.metadata.providerPromptMode,
     modelDiversityBrief: generationPlan.metadata.modelDiversityBrief,
-    downstreamReferenceMode: generationPlan.metadata.downstreamReferenceMode,
-    downstreamReferenceRules: generationPlan.metadata.downstreamReferenceRules,
+    ...(downstreamReferenceMode ? { downstreamReferenceMode } : {}),
+    ...(downstreamReferenceRules.length > 0 ? { downstreamReferenceRules } : {}),
     generatedProviderPromptSnapshot: generationPlan.prompt,
   };
 }
@@ -222,10 +224,10 @@ function buildProviderSafeModelPrompt(
     hasIdentityReference
       ? "Keep the candid real-photo feeling from the reference: natural skin texture, soft low-contrast diffuse daylight, gentle expression, and relaxed approachable energy, but refresh the pose and gaze naturally."
       : `${profile.age}-year-old adult ${regionalCue} ${profile.gender} model, ${profile.temperament}, ${profile.hair}, ${profile.makeup}.`,
-    "The sheet must contain two clearly readable zones: Zone A is a small library display card for humans; Zone B is the downstream identity reference that future generations should use.",
+    "The sheet must contain two clearly readable zones: Zone A is a small library display card for humans; Zone B is the downstream identity reference zone that future generations should use.",
     "Zone A: one clean face close-up and one simple full-body view, for browsing the asset in the library.",
     "Zone B: one large neutral 3/4 half-body identity reference, plus three small relaxed pose references: front standing, slight side turn, and seated or walking micro-pose. These are for downstream compositing.",
-    "Every Zone B pose should feel like a photographer is gently guiding the model: relaxed shoulders, small head tilt, natural off-camera gaze, soft smile or calm expression, not a rigid model-card stare.",
+    "Zone B pose rules: the large 3/4 identity reference uses low relaxed shoulders, chin turned 8 degrees toward camera-left, eyes looking just beside the lens, and hands relaxed below the frame. The small front reference puts weight on the left foot with arms loose. The small side-turn reference turns the torso 30 degrees toward camera-right with eyes looking to the frame edge. The small seated or walking micro-pose keeps one knee slightly forward and both hands resting naturally. Each pose has one fixed gaze target, not multiple options.",
     "Use a warm light-gray matte background, simple logo-free neutral clothes, natural proportions, and consistent identity across every panel.",
     "Lighting: soft diffuse daylight, matte ambient wrap, very low contrast, no hard studio key light, no glossy beauty retouching, no separate face spotlight.",
     "Keep it simple and clean: no product, no bag, no selling text, no brand logo, no measurement ruler, no dense contact-sheet grid, no hard studio lighting, no over-designed styling, no distorted anatomy.",
@@ -349,6 +351,19 @@ function getFullTemplatePromptSnapshot(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const snapshot = (value as Record<string, unknown>).fullTemplatePromptSnapshot;
   return typeof snapshot === "string" && snapshot.trim() ? snapshot : undefined;
+}
+
+function getDownstreamReferenceMode(value: unknown): ModelAssetMetadata["downstreamReferenceMode"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const mode = (value as Record<string, unknown>).downstreamReferenceMode;
+  return mode === "prefer_zone_b_neutral_identity_reference" ? mode : undefined;
+}
+
+function getDownstreamReferenceRules(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const rules = (value as Record<string, unknown>).downstreamReferenceRules;
+  if (!Array.isArray(rules)) return [];
+  return rules.flatMap((rule) => (typeof rule === "string" && rule.trim() ? [rule.trim()] : []));
 }
 
 function getModelTemplateParams(value: unknown): CreateModelParams | undefined {

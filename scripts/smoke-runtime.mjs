@@ -14,6 +14,9 @@ export function createSmokeRuntime({
   const distDir = shouldIsolate
     ? path.join(".next-smoke", `${name}-${stamp}`)
     : env.NEXT_DIST_DIR;
+  const sourceFileSnapshots = shouldIsolate
+    ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+    : [];
 
   fs.mkdirSync(dataDir, { recursive: true });
 
@@ -26,6 +29,7 @@ export function createSmokeRuntime({
     serverEnv(extra = {}) {
       return {
         ...env,
+        WATCHPACK_POLLING: env.WATCHPACK_POLLING || "true",
         IMAGE_MASTER_DATA_DIR: dataDir,
         ...(distDir ? { NEXT_DIST_DIR: distDir } : {}),
         ...extra,
@@ -38,6 +42,7 @@ export function createSmokeRuntime({
         fs.rmSync(distDir, { recursive: true, force: true });
       }
       normalizeRootTsconfig();
+      restoreSourceFiles(sourceFileSnapshots);
     },
   };
 }
@@ -83,5 +88,23 @@ function normalizeRootTsconfig() {
     fs.writeFileSync(tsconfigPath, `${JSON.stringify(parsed, null, 2)}\n`);
   } catch {
     // Smoke cleanup should not hide the original smoke result.
+  }
+}
+
+export function snapshotSourceFiles(files) {
+  return files.map((file) => ({
+    file,
+    exists: fs.existsSync(file),
+    contents: fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "",
+  }));
+}
+
+export function restoreSourceFiles(snapshots) {
+  for (const snapshot of snapshots) {
+    if (snapshot.exists) {
+      fs.writeFileSync(snapshot.file, snapshot.contents);
+    } else {
+      fs.rmSync(snapshot.file, { force: true });
+    }
   }
 }

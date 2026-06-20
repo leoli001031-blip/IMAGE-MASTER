@@ -90,6 +90,7 @@ const genericTarget = resolveGenerationOutputAssetTarget({
 });
 assert(genericTarget.assetType === "output", "generic generation output should remain an output reference");
 assert(genericTarget.savedAssetType === "output_reference", "generic generation output should not become a product");
+assert(genericTarget.canvasCategory === "平台", "generic generation output should return to the output/platform tray");
 
 console.log(JSON.stringify({
   providerCalls: 0,

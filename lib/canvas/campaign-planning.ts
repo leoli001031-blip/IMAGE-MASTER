@@ -128,6 +128,31 @@ export function buildCampaignShotList(
   skill: WorkflowSkill
 ): CampaignShot[] {
   const requestedMode = input.copyRenderMode ?? skill.defaultCopyRenderMode;
+  const requestedSlotCounts = parseRequestedCampaignSlotCounts(input.brief, skill.outputSlots);
+  const requestedRatio = parseRequestedCampaignRatio(input.brief);
+  if (requestedSlotCounts.length > 0) {
+    const shots: CampaignShot[] = [];
+    for (const request of requestedSlotCounts) {
+      for (let index = 0; index < request.count && shots.length < skill.fullCount; index += 1) {
+        const slot = index === 0
+          ? request.slot
+          : {
+              ...request.slot,
+              id: `${request.slot.id}-${index + 1}`,
+              label: `${request.slot.label} ${index + 1}`,
+              purpose: `${request.slot.purpose}，按用户要求为同一图组提供不同角度、动作或构图。`,
+            };
+        shots.push(buildCampaignShot({
+          slot: requestedRatio ? { ...slot, ratio: requestedRatio } : slot,
+          index: shots.length,
+          skill,
+          requestedMode,
+        }));
+      }
+    }
+    return shots;
+  }
+
   const requestedCount = parseRequestedCampaignImageCount(input.brief);
   const targetCount = requestedCount
     ? clampCampaignImageCount(requestedCount, skill.fullCount)
@@ -144,7 +169,7 @@ export function buildCampaignShotList(
           purpose: `${baseSlot.purpose}，在同一视觉语言下变化姿势、角度或场景区。`,
         };
     return buildCampaignShot({
-      slot,
+      slot: requestedRatio ? { ...slot, ratio: requestedRatio } : slot,
       index,
       skill,
       requestedMode,
@@ -316,13 +341,14 @@ function referenceRolesForSlot(
   skill: WorkflowSkill
 ): CanvasReferenceRole[] {
   const text = `${slot.id} ${slot.label} ${slot.purpose}`.toLowerCase();
+  const slotIdentity = `${slot.id} ${slot.label}`.toLowerCase();
   const roles = new Set<CanvasReferenceRole>(skill.requiredAssetRoles);
   if (skill.optionalAssetRoles.includes("style")) roles.add("style");
   if (skill.optionalAssetRoles.includes("copy") && allowsTextForSlot(slot, skill)) roles.add("copy");
   if (skill.optionalAssetRoles.includes("scene") && /scene|lifestyle|use|cover|banner|海报|场景|生活|使用|封面|横版|竖版/.test(text)) {
     roles.add("scene");
   }
-  if (skill.optionalAssetRoles.includes("model") && /model|front|side|wear|look|人|模特|展示|上身|穿|手持/.test(text)) {
+  if (skill.optionalAssetRoles.includes("model") && /model|front|side|wear|look|人|模特|真人|人物|上身|穿搭|手持/.test(slotIdentity)) {
     roles.add("model");
   }
   return Array.from(roles);
@@ -330,14 +356,88 @@ function referenceRolesForSlot(
 
 function allowsTextForSlot(slot: WorkflowSkillOutputSlot, skill: WorkflowSkill): boolean {
   if (!skill.allowBurnInCopy) return false;
-  const text = `${slot.id} ${slot.label} ${slot.purpose}`.toLowerCase();
+  const text = `${slot.id} ${slot.label}`.toLowerCase();
   if (/white-main|main|白底|主图/.test(text) && skill.platforms.includes("amazon")) return false;
   return /feature|info|dimension|closing|cover|save|poster|banner|vertical|square|卖点|信息|尺寸|收尾|封面|海报|横版|竖版/.test(text);
+}
+
+function parseRequestedCampaignSlotCounts(
+  brief: string,
+  slots: WorkflowSkillOutputSlot[]
+): Array<{ slot: WorkflowSkillOutputSlot; count: number }> {
+  const text = brief.trim();
+  if (!text) return [];
+  const counts = new Map<string, { slot: WorkflowSkillOutputSlot; count: number }>();
+  const multiSceneCount = parseRequestedMultiSceneImageCount(text);
+
+  for (const slot of slots) {
+    const keywords = getSlotCountKeywords(slot);
+    if (keywords.length === 0) continue;
+    if (multiSceneCount && keywords.some((keyword) => /场景|scene|lifestyle|使用场景/.test(keyword))) {
+      counts.set(slot.id, {
+        slot,
+        count: Math.min(multiSceneCount, 20),
+      });
+      continue;
+    }
+    const keywordPattern = keywords.map(escapeRegExp).join("|");
+    const localGap = "[^，。；、:：,.!?\\n]{0,12}";
+    const patterns = [
+      new RegExp(`([0-9一二两三四五六七八九十]{1,3})\\s*张${localGap}(?:${keywordPattern})`, "i"),
+      new RegExp(`(?:${keywordPattern})${localGap}([0-9一二两三四五六七八九十]{1,3})\\s*张`, "i"),
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      const count = parseCountToken(match?.[1]);
+      if (count > 0) {
+        counts.set(slot.id, {
+          slot,
+          count: Math.min(count, 20),
+        });
+        break;
+      }
+    }
+  }
+
+  return slots
+    .map((slot) => counts.get(slot.id))
+    .filter((item): item is { slot: WorkflowSkillOutputSlot; count: number } => Boolean(item));
+}
+
+function getSlotCountKeywords(slot: WorkflowSkillOutputSlot): string[] {
+  const text = `${slot.id} ${slot.label}`.toLowerCase();
+  const keywords = new Set<string>();
+  const add = (...values: string[]) => values.forEach((value) => keywords.add(value));
+
+  if (/main|hero|主图|主视觉|白底/.test(text)) {
+    add("商品主图", "产品主图", "主图", "主视觉", "白底图", "main", "hero");
+  }
+  if (/feature|卖点|信息|参数/.test(text)) {
+    add("卖点图", "卖点", "信息图", "参数图", "feature");
+  }
+  if (/detail|material|macro|细节|材质|工艺|结构/.test(text)) {
+    add("商品细节", "产品细节", "细节图", "材质图", "特写图", "detail", "material", "macro");
+  }
+  if (/model|front|side|wear|look|模特|真人|人物|展示|上身|穿|手持|正面|侧身|半身/.test(text)) {
+    add("模特展示", "模特图", "真人展示", "真人图", "人物图", "穿搭图", "上身图", "model");
+  }
+  if (/scene|lifestyle|场景|生活|使用|环境|室内|户外/.test(text)) {
+    add("场景图", "生活方式图", "使用场景", "场景", "scene", "lifestyle");
+  }
+  if (/poster|banner|cover|closing|save|海报|横版|竖版|封面|收尾|文案区/.test(text)) {
+    add("带文案海报", "文案海报", "海报图", "海报", "宣传图", "banner", "poster");
+  }
+  return Array.from(keywords).sort((a, b) => b.length - a.length);
 }
 
 function parseRequestedCampaignImageCount(brief: string): number | undefined {
   const text = brief.trim();
   if (!text) return undefined;
+
+  const explicitTotal = text.match(/(?:共|总共|一共|合计)\s*([0-9一二两三四五六七八九十]{1,3})\s*张/);
+  const explicitTotalCount = parseCountToken(explicitTotal?.[1]);
+  if (explicitTotalCount > 0) return explicitTotalCount;
 
   const digitPatterns = [
     /(\d{1,2})\s*(?:张成片|张图|张|幅|图|p|P|images?|pics?|photos?|shots?|outputs?)/i,
@@ -380,6 +480,62 @@ function parseRequestedCampaignImageCount(brief: string): number | undefined {
   const englishMatch = text.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:finished\s+)?(?:images?|photos?|shots?|outputs?)\b/i);
   if (!englishMatch) return undefined;
   return englishDigits[englishMatch[1].toLowerCase()];
+}
+
+function parseRequestedMultiSceneImageCount(text: string): number | undefined {
+  if (!/(场景|scene|lifestyle|室内|户外|商场|厨房|办公室|露营)/i.test(text)) return undefined;
+
+  const explicitTotal = text.match(/(?:共|总共|一共|合计)\s*([0-9一二两三四五六七八九十]{1,3})\s*张/);
+  const explicitTotalCount = parseCountToken(explicitTotal?.[1]);
+  if (explicitTotalCount > 0) return explicitTotalCount;
+
+  const sceneCountMatch = text.match(/([0-9一二两三四五六七八九十]{1,3})\s*个(?:不同)?(?:场景|scene|lifestyle)/i);
+  const perSceneMatch = text.match(/每(?:个|组)?(?:场景|scene|lifestyle)?\s*([0-9一二两三四五六七八九十]{1,3})\s*张/i);
+  const sceneCount = parseCountToken(sceneCountMatch?.[1]);
+  const perSceneCount = parseCountToken(perSceneMatch?.[1]);
+  if (sceneCount > 0 && perSceneCount > 0) return sceneCount * perSceneCount;
+
+  return undefined;
+}
+
+function parseCountToken(value: string | undefined): number {
+  if (!value) return 0;
+  const normalized = value.trim();
+  if (/^\d+$/.test(normalized)) return Number(normalized);
+  return parseChineseCountToken(normalized);
+}
+
+function parseChineseCountToken(value: string): number {
+  const map: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+  if (value === "十") return 10;
+  if (value.startsWith("十")) return 10 + (map[value.slice(1)] ?? 0);
+  if (value.endsWith("十")) return (map[value.slice(0, 1)] ?? 0) * 10;
+  if (value.includes("十")) {
+    const [tens, ones] = value.split("十");
+    return (map[tens] ?? 1) * 10 + (map[ones] ?? 0);
+  }
+  return map[value] ?? 0;
+}
+
+function parseRequestedCampaignRatio(brief: string): string | undefined {
+  const match = brief.match(/(?:^|[^\d])((?:1:1|3:2|4:3|3:4|4:5|5:4|9:16|16:9|2:3|3:5|750:1000))(?:$|[^\d])/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function clampCampaignImageCount(count: number, fullCount: number): number {

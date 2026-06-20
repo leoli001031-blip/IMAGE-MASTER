@@ -83,14 +83,17 @@ try {
 	if (!pending.jobs.every((job) => job.metadata?.itemMetadata?.knowledgeTemplateId === knowledgeTemplateId)) {
 	  throw new Error("Expected pending plan jobs to preserve itemMetadata");
 	}
+  if (!pending.jobs.every((job) => isFiniteNumber(job.metadata?.generationTelemetry?.planJobPrepareMs))) {
+    throw new Error("Expected pending jobs to carry plan preparation telemetry");
+  }
 	assertJobReferenceRouting(pending.jobs[0], {
 	  providerIncludes: ["product"],
-	  providerExcludes: ["style", "copy"],
+	  providerExcludes: ["copy"],
 	  productFocus: "front_main",
 	});
-	assertJobReferenceRouting(pending.jobs[1], {
+  assertJobReferenceRouting(pending.jobs[1], {
 	  providerIncludes: ["product", "model", "scene"],
-	  providerExcludes: ["style", "copy"],
+	  providerExcludes: ["copy"],
 	  productFocus: "model_wear",
 	});
 
@@ -183,6 +186,7 @@ try {
     if (job.metadata?.batchId !== batchId) {
       throw new Error("Expected batch metadata to round-trip through job runner");
     }
+    assertGenerationTelemetry(job);
   }
   const manifestPayload = await requestJson(
     `${baseUrl}/api/export-packs/${encodeURIComponent(batchId)}/manifest`
@@ -340,6 +344,25 @@ function assertJobReferenceRouting(job, { providerIncludes = [], providerExclude
   ) {
     throw new Error(`Expected ${job?.metadata?.planItemTitle} prompt to include product reference focus instruction or provider prompt writer metadata.`);
   }
+}
+
+function assertGenerationTelemetry(job) {
+  const telemetry = job?.metadata?.generationTelemetry;
+  if (!telemetry || typeof telemetry !== "object") {
+    throw new Error(`Expected generation telemetry for job ${job?.id}`);
+  }
+  for (const key of ["planJobPrepareMs", "promptPrepareMs", "referenceReadMs", "providerMs", "storeMs", "totalJobRunMs"]) {
+    if (!isFiniteNumber(telemetry[key])) {
+      throw new Error(`Expected telemetry.${key} number for ${job?.id}: ${JSON.stringify(telemetry)}`);
+    }
+  }
+  if (telemetry.providerRetryCount !== 0) {
+    throw new Error(`Expected mock runner to avoid provider retries: ${JSON.stringify(telemetry)}`);
+  }
+}
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 async function waitForJobsDone(targetWorkflowId, expectedCount) {

@@ -31,6 +31,9 @@ export interface ProviderImagePromptWriterResult {
     mode: "ai_prompt_writer_v1" | "rule_compiled_v1";
     fallbackUsed: boolean;
     fallbackReason?: string;
+    cacheHit?: boolean;
+    durationMs?: number;
+    timeoutMs?: number;
     sourcePromptChars: number;
     promptChars: number;
     promptLanguage: "zh";
@@ -45,6 +48,7 @@ export interface ProviderImagePromptWriterResult {
 
 const providerPromptMaxChars = 1200;
 const defaultDeepSeekPromptWriterMaxTokens = 4096;
+const defaultPromptWriterTimeoutMs = 45000;
 
 /**
  * In-memory cache so the same plan item doesn't re-burn a text LLM call within
@@ -56,10 +60,13 @@ const planPromptCache = new Map<string, string>();
 export async function writeProviderImagePrompt(
   input: ProviderImagePromptWriterInput
 ): Promise<ProviderImagePromptWriterResult> {
+  const startedAt = Date.now();
   const compiled = buildRuleCompiledPrompt(input);
 
   if (!shouldUseAiWriter(input)) {
-    return buildResult(input, compiled, "rule_compiled_v1", false);
+    return buildResult(input, compiled, "rule_compiled_v1", false, undefined, {
+      durationMs: elapsedMs(startedAt),
+    });
   }
 
   // Check plan-level cache for identical shot combos
@@ -69,25 +76,40 @@ export async function writeProviderImagePrompt(
   if (cacheKey) {
     const cached = planPromptCache.get(cacheKey);
     if (cached) {
-      return buildResult(input, cached, "ai_prompt_writer_v1", false);
+      return buildResult(input, cached, "ai_prompt_writer_v1", false, undefined, {
+        cacheHit: true,
+        durationMs: elapsedMs(startedAt),
+      });
     }
   }
 
+  const timeoutMs = getPromptWriterTimeoutMs();
   try {
-    const aiPrompt = await rewritePromptWithTextModel(input, compiled);
+    const aiPrompt = await rewritePromptWithTextModel(input, compiled, timeoutMs);
     const normalized = normalizeProviderPrompt(aiPrompt, providerPromptMaxChars);
     if (!normalized) {
-      return buildResult(input, compiled, "rule_compiled_v1", true, "AI writer returned empty prompt");
+      return buildResult(input, compiled, "rule_compiled_v1", true, "AI writer returned empty prompt", {
+        durationMs: elapsedMs(startedAt),
+        timeoutMs,
+      });
     }
     if (cacheKey) planPromptCache.set(cacheKey, normalized);
-    return buildResult(input, normalized, "ai_prompt_writer_v1", false);
+    return buildResult(input, normalized, "ai_prompt_writer_v1", false, undefined, {
+      cacheHit: false,
+      durationMs: elapsedMs(startedAt),
+      timeoutMs,
+    });
   } catch (error) {
     return buildResult(
       input,
       compiled,
       "rule_compiled_v1",
       true,
-      error instanceof Error ? error.message : "AI prompt writer failed"
+      error instanceof Error ? error.message : "AI prompt writer failed",
+      {
+        durationMs: elapsedMs(startedAt),
+        timeoutMs,
+      }
     );
   }
 }
@@ -179,14 +201,17 @@ function buildRuleCompiledPrompt(input: ProviderImagePromptWriterInput): string 
 
 async function rewritePromptWithTextModel(
   input: ProviderImagePromptWriterInput,
-  compiledPrompt: string
+  compiledPrompt: string,
+  timeoutMs: number
 ): Promise<string> {
   const config = getConfig();
   const apiKey = config.textApiKey || config.apiKey;
-  const baseURL = config.textBaseUrl || config.baseUrl || "https://api.openai.com/v1";
+  const baseURL = config.textBaseUrl || config.baseUrl || "https://slb.apikey.fun/v1";
   if (!apiKey) throw new Error("Text API key not configured");
 
   const provider = createOpenAI({ apiKey, baseURL });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const adapter = input.providerReferenceAdapter ?? buildProviderReferenceAdapter(input.itemReferenceContext);
   const requestPayload = {
     userRequest: getShortText(input.userRequest, 500),
@@ -229,35 +254,45 @@ async function rewritePromptWithTextModel(
     compiledPrompt: getShortText(compiledPrompt, 1200),
   };
 
-  const result = await generateText({
-    model: provider(config.textModel || "gpt-4o"),
-    system: [
-      "你是商业摄影图像提示词写作 Agent。",
-      "你的任务是把用户需求、SOP、参考图角色和当前镜头，重写成一段真正发给图像模型的短提示词。",
-      "不要把 SOP、metadata、参考图说明整段堆进去；只保留对成图有用的规则。",
-      "中文为主，简洁、具体。把模特镜头写成动作处方：头往哪偏、眼睛看哪里、肩颈怎么放、手怎么碰商品、重心压在哪只脚、姿态是什么状态。",
-      "每个动作字段只给一个确定选择，不能写 A 或 B，不能写多个眼神落点。",
-      "如果用户要一组图，必须避免重复动作：同组里的模特镜头不能连续使用同一种低头看扣具/看拉链/手扶商品姿态；当前镜头至少换掉姿态、视线、手部互动中的两项。",
-      "禁止只写抽象词，比如自然抓拍、摄影师现场引导、氛围感；这些必须落成可执行的姿势、眼神和手部指令。",
-      "必须区分参考图角色：商品锁商品，模特只锁身份，场景锁空间光影，风格只锁完成度。",
-      "必须遵守 copyRenderPolicy：mode=burn_in 时，只能把 inImageText 里的短句作为画面可读文字逐字写入 prompt；mode=layout_layer 或 metadata_only 时，禁止让图像模型渲染任何可读标题、卖点、参数、标签或营销文字，只能写预留留白/安全区。",
-      "除非用户明确要求包装设计、标签设计、屏幕界面设计或道具字牌，burn_in 文案只能作为画面版式层放在留白、安全区或海报文字区，不得印在商品本体、包装标签、logo、产品屏幕、显示器壁纸、黑板、招牌、贴纸、卡片、便签、菜单、纸张或其它场景道具上。",
-      "如果 payload 里有 assetInvocationPlan，必须按它决定的 providerInputs 与 promptOnly 素材写提示词。",
-      "输出严格 JSON：{\"prompt\":\"...\"}。prompt 不超过 900 个中文字符。"
-    ].join("\n"),
-    messages: [
-      {
-        role: "user",
-        content: JSON.stringify(requestPayload),
-      },
-    ],
-    temperature: 0.35,
-    maxTokens: getPromptWriterMaxTokens(config.textModel),
-  });
+  try {
+    const result = await generateText({
+      model: provider(config.textModel || "gpt-4o"),
+      system: [
+        "你是商业摄影图像提示词写作 Agent。",
+        "你的任务是把用户需求、SOP、参考图角色和当前镜头，重写成一段真正发给图像模型的短提示词。",
+        "不要把 SOP、metadata、参考图说明整段堆进去；只保留对成图有用的规则。",
+        "中文为主，简洁、具体。把模特镜头写成动作处方：头往哪偏、眼睛看哪里、肩颈怎么放、手怎么碰商品、重心压在哪只脚、姿态是什么状态。",
+        "每个动作字段只给一个确定选择，不能写 A 或 B，不能写多个眼神落点。",
+        "如果用户要一组图，必须避免重复动作：同组里的模特镜头不能连续使用同一种低头看扣具/看拉链/手扶商品姿态；当前镜头至少换掉姿态、视线、手部互动中的两项。",
+        "禁止只写抽象词，比如自然抓拍、摄影师现场引导、氛围感；这些必须落成可执行的姿势、眼神和手部指令。",
+        "必须区分参考图角色：商品锁商品，模特只锁身份，场景锁空间光影，风格只锁完成度。",
+        "必须遵守 copyRenderPolicy：mode=burn_in 时，只能把 inImageText 里的短句作为画面可读文字逐字写入 prompt；mode=layout_layer 或 metadata_only 时，禁止让图像模型渲染任何可读标题、卖点、参数、标签或营销文字，只能写预留留白/安全区。",
+        "除非用户明确要求包装设计、标签设计、屏幕界面设计或道具字牌，burn_in 文案只能作为画面版式层放在留白、安全区或海报文字区，不得印在商品本体、包装标签、logo、产品屏幕、显示器壁纸、黑板、招牌、贴纸、卡片、便签、菜单、纸张或其它场景道具上。",
+        "如果 payload 里有 assetInvocationPlan，必须按它决定的 providerInputs 与 promptOnly 素材写提示词。",
+        "输出严格 JSON：{\"prompt\":\"...\"}。prompt 不超过 900 个中文字符。"
+      ].join("\n"),
+      messages: [
+        {
+          role: "user",
+          content: JSON.stringify(requestPayload),
+        },
+      ],
+      temperature: 0.35,
+      maxTokens: getPromptWriterMaxTokens(config.textModel),
+      abortSignal: controller.signal,
+    });
 
-  const parsed = parsePromptJson(result.text || "");
-  if (!parsed) throw new Error("AI prompt writer returned invalid JSON");
-  return parsed;
+    const parsed = parsePromptJson(result.text || "");
+    if (!parsed) throw new Error("AI prompt writer returned invalid JSON");
+    return parsed;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error(`AI prompt writer timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function getPromptWriterMaxTokens(modelName: string | undefined): number {
@@ -268,12 +303,28 @@ function getPromptWriterMaxTokens(modelName: string | undefined): number {
     : defaultDeepSeekPromptWriterMaxTokens;
 }
 
+function getPromptWriterTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const configured = Number(env.IMAGE_MASTER_PROMPT_WRITER_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured >= 3000
+    ? Math.floor(configured)
+    : defaultPromptWriterTimeoutMs;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError" ||
+    error instanceof Error && /abort|aborted/i.test(error.message);
+}
+
 function buildResult(
   input: ProviderImagePromptWriterInput,
   prompt: string,
   mode: ProviderImagePromptWriterResult["metadata"]["mode"],
   fallbackUsed: boolean,
-  fallbackReason?: string
+  fallbackReason?: string,
+  telemetry?: Pick<
+    ProviderImagePromptWriterResult["metadata"],
+    "cacheHit" | "durationMs" | "timeoutMs"
+  >
 ): ProviderImagePromptWriterResult {
   const adapter = input.providerReferenceAdapter ?? buildProviderReferenceAdapter(input.itemReferenceContext);
   const referenceRoles = Array.from(
@@ -296,6 +347,9 @@ function buildResult(
       mode,
       fallbackUsed,
       fallbackReason,
+      cacheHit: telemetry?.cacheHit,
+      durationMs: telemetry?.durationMs,
+      timeoutMs: telemetry?.timeoutMs,
       sourcePromptChars: input.item.prompt.length,
       promptChars: finalPrompt.length,
       promptLanguage: "zh",
@@ -309,26 +363,71 @@ function buildResult(
   };
 }
 
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
 function applyCopyRenderPolicyGuard(prompt: string, item: GenerationPlanItem): string {
   const policy = item.copyRenderPolicy;
   if (policy?.mode !== "burn_in") return prompt;
   const visibleText = policy.inImageText.map((line) => line.trim()).filter(Boolean).slice(0, 4);
   if (visibleText.length === 0) return prompt;
 
-  let nextPrompt = stripContradictoryNoTextRules(prompt);
+  let nextPrompt = stripUnsafeBurnInPlacementRules(stripContradictoryNoTextRules(prompt));
   const missing = visibleText.filter((line) => !nextPrompt.includes(line));
   const needsPlacementGuard = !/(留白|安全区|文字区|版式层|海报文字区|干净区域|空白区域)/.test(nextPrompt);
-  if (missing.length === 0 && !needsPlacementGuard) return nextPrompt;
 
   const textList = visibleText.map((line) => `「${line}」`).join("、");
   const guard = `画面文字：仅把批准短句${textList}作为可读文字放在留白或安全区，逐字准确，不遮挡商品、人物、手部、logo、包装标签、产品屏幕或道具；除这些短句外不要出现任何其它可读文字。`;
-  return `${nextPrompt.replace(/\s+$/g, "")} ${guard}`;
+  if (missing.length > 0 || needsPlacementGuard || !nextPrompt.includes("仅把批准短句")) {
+    const reservedChars = guard.length + 2;
+    const base = nextPrompt.length + reservedChars > providerPromptMaxChars
+      ? trimToSentenceBoundary(nextPrompt, Math.max(240, providerPromptMaxChars - reservedChars))
+      : nextPrompt;
+    return `${base.replace(/\s+$/g, "")} ${guard}`;
+  }
+  return nextPrompt;
 }
 
 function stripContradictoryNoTextRules(prompt: string): string {
   return prompt
     .replace(/(?:无|没有|不要|不得|不能|禁止|避免|不出现|不渲染|不显示|不生成|不加入|不添加|不写入|不烧入|不烧进).{0,14}(?:文案|文字|标题|卖点|参数|标签|标语|slogan|copy|版式元素)[，。；、 ]*/gi, "")
     .replace(/(?:文案|文字|标题|卖点|参数|标签|标语|slogan|copy|版式元素).{0,14}(?:无|没有|不要|不得|不能|禁止|避免|不出现|不渲染|不显示|不生成|不加入|不添加|不写入|不烧入|不烧进)[，。；、 ]*/gi, "");
+}
+
+function stripUnsafeBurnInPlacementRules(prompt: string): string {
+  const textTerms = "(?:文案|文字|标题|卖点|短句|标语|slogan|copy|headline)";
+  const placeVerbs = "(?:出现在|出現於|印在|写在|寫在|贴在|貼在|放在|放置在|渲染在|烧在|燒在|烧进|燒進|位于|位於|落在|覆盖在|覆蓋在)";
+  const strongPlaceVerbs = "(?:出现在|出現於|印在|写在|寫在|贴在|貼在|渲染在|烧在|燒在|烧进|燒進|位于|位於|落在|覆盖在|覆蓋在)";
+  const productSurfaces = "(?:商品|产品|產品|商品本体|商品本體|产品本体|產品本體|机身|機身|外壳|外殼|音箱|扬声孔|揚聲孔|网孔|網孔|格栅|格柵|旋钮|旋鈕|按钮|按鈕|脚垫|腳墊|底座|包装|包裝|标签|標籤|label|logo|Logo|LOGO|屏幕|显示器|顯示器|道具|纸张|紙張|卡片|便签|便簽|菜单|菜單|贴纸|貼紙)";
+  const unsafeClauses = [
+    new RegExp(`${textTerms}.{0,36}${placeVerbs}.{0,24}${productSurfaces}(?:表面|上|区域|區域)?[，。；、 ]*`, "gi"),
+    new RegExp(`${strongPlaceVerbs}.{0,12}${productSurfaces}(?:表面|上|区域|區域)?[，。；、 ]*`, "gi"),
+    /\b(?:text|headline|copy|slogan).{0,36}(?:on|onto|printed on|written on|placed on).{0,24}(?:product|body|shell|label|logo|screen|packaging|prop)[,.; ]*/gi,
+  ];
+  return stripUnsafeBurnInPlacementSentences(
+    unsafeClauses.reduce((next, pattern) => next.replace(pattern, ""), prompt)
+  );
+}
+
+function stripUnsafeBurnInPlacementSentences(prompt: string): string {
+  return prompt
+    .split(/(?<=[。；;])/)
+    .filter((segment) => !isUnsafeBurnInPlacementSentence(segment))
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isUnsafeBurnInPlacementSentence(segment: string): boolean {
+  if (!/(?:文案|文字|标题|卖点|短句|标语|slogan|copy|headline|版式文字)/i.test(segment)) return false;
+  if (!/(?:商品|产品|商品本体|产品本体|机身|外壳|音箱|扬声孔|网孔|格栅|旋钮|按钮|脚垫|底座|包装|标签|label|logo|屏幕|显示器|道具|纸张|卡片|便签|菜单|贴纸|表面)/i.test(segment)) {
+    return false;
+  }
+  const hasSafeArea = /(?:留白|安全区|文字区|版式层|海报文字区|负空间|干净区域|空白区域)/.test(segment);
+  const hasSafeNegation = /(?:不|不要|不得|不能|避免).{0,16}(?:接触|遮挡|遮盖|覆盖|压|印在|写在|贴在|落在|放在|出现在|渲染在|烧在|商品|产品|机身|外壳|音箱|包装|标签|屏幕|道具|脚垫|底座)/.test(segment);
+  if (hasSafeArea && hasSafeNegation) return false;
+  return /(?:表面|本体|外壳|机身|旋钮|按钮|脚垫|底座|包装|标签|屏幕|道具|纸张|卡片|便签|菜单|贴纸|上)/.test(segment);
 }
 
 function buildReferenceRoleLines(
@@ -349,7 +448,7 @@ function buildReferenceRoleLines(
     lines.push("商品参考只用于锁定商品身份、形状、材质、颜色、五金、肩带/手柄、比例和真实尺度。");
   }
   if (hasRole("model", adapter, context)) {
-    lines.push("模特参考只用于锁定同一人的脸型、五官比例、发型轮廓、身形和气质；不要复制原图表情、姿势和棚拍光。");
+    lines.push("模特参考只用于锁定同一人的脸型、五官比例、发型轮廓、身形和气质；如果参考图是模卡，使用下游身份参考区的身份信息，不复制展示模卡的原图表情、姿势、棚拍光或排版。");
   }
   if (hasRole("scene", adapter, context)) {
     lines.push("场景参考负责空间、透视、光源方向、阴影、环境色和人物/商品的落位关系。");

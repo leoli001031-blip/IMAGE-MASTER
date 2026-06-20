@@ -121,7 +121,7 @@ export function buildGenerationReferencePromptBlock(
     lines.push("- 商品参考：只锁商品身份、形状、颜色、材质、五金/肩带/手柄/结构和比例；不要复制拼版、白底、标签或背景。");
   }
   if (hasReferenceRole(context, "model")) {
-    lines.push("- 模特参考：只锁同一人身份、脸型、发型、年龄感、身形和气质；不要复制模卡表情、固定眼神、棚拍光、站姿或排版。");
+    lines.push("- 模特参考：只锁同一人身份、脸型、发型、年龄感、身形和气质；若素材是模卡，优先理解其中的下游身份参考区，不要复制展示模卡的表情、固定眼神、棚拍光、站姿或排版。");
   }
   if (hasReferenceRole(context, "scene")) {
     lines.push("- 场景参考：负责环境、透视、光源方向、阴影和空间尺度；人物和商品要融入场景。");
@@ -221,7 +221,7 @@ function shouldUseRealWorldCaptureRules(
 }
 
 function hasStrictProductOrGraphicIntent(text: string): boolean {
-  return /(?:white background|pure white|marketplace main|amazon main|listing image|packshot|product sheet|multi-view|detail page|callout|infographic|text overlay|banner|graphic poster|no model|product-only|product only|白底|纯白|主图|亚马逊主图|商品图|静物|无模特|不要模特|无人物|多角度|详情页|参数图|卖点图|信息图|文字海报|横幅|抠图)/i.test(
+  return /(?:white background|pure white|marketplace main|amazon main|listing image|packshot|product sheet|multi-view|detail page|callout|infographic|text overlay|banner|graphic poster|no model|product-only|product only|白底|纯白|主图|亚马逊主图|商品图|静物|无模特|不要模特|不需要模特|不用模特|不带模特|无人物|不要人物|不需要人物|不用人物|不带人物|多角度|详情页|参数图|卖点图|信息图|文字海报|横幅|抠图)/i.test(
     text
   );
 }

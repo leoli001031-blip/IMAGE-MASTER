@@ -118,10 +118,10 @@ export function normalizeStructuredCopyBrief(value: unknown): StructuredCopyBrie
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   const sourceText = getString(record.sourceText);
-  const inImageText = getStringArray(record.inImageText);
-  const sellingPoints = getStringArray(record.sellingPoints);
-  const exportCopy = getStringArray(record.exportCopy);
-  const forbiddenClaims = getStringArray(record.forbiddenClaims);
+  const inImageText = getCleanStringArray(record.inImageText);
+  const sellingPoints = getCleanStringArray(record.sellingPoints);
+  const exportCopy = getCleanStringArray(record.exportCopy);
+  const forbiddenClaims = getCleanStringArray(record.forbiddenClaims);
   if (!sourceText && inImageText.length + sellingPoints.length + exportCopy.length + forbiddenClaims.length === 0) {
     return undefined;
   }
@@ -169,10 +169,16 @@ function splitCopyLines(text: string): string[] {
 }
 
 function stripCopyPrefix(line: string): string {
-  return line
-    .replace(/^\s*[-*•\d.、)）]+/, "")
-    .replace(/^\s*(画面文字|图中文字|封面标题|海报标题|标题|卖点|参数|规格|功能|材质|尺寸|导出文案|正文|描述|详情|笔记|禁止|不要|不能|避免|不允许|不夸大)\s*[:：]\s*/i, "")
-    .trim();
+  let next = line.trim();
+  for (let i = 0; i < 3; i += 1) {
+    const cleaned = next
+      .replace(/^\s*[-*•\d.、)）]+/, "")
+      .replace(/^\s*(文案资产|画面文字|图中文字|封面标题|海报标题|标题|卖点|参数|规格|功能|材质|尺寸|导出文案|正文|描述|详情|笔记|禁止|不要|不能|避免|不允许|不夸大)\s*[:：]\s*/i, "")
+      .trim();
+    if (cleaned === next) break;
+    next = cleaned;
+  }
+  return next;
 }
 
 function buildCopyPromptFragments(buckets: Pick<StructuredCopyBrief, "inImageText" | "sellingPoints" | "exportCopy">): string[] {
@@ -221,4 +227,10 @@ function getString(value: unknown): string {
 function getStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && !!item.trim());
+}
+
+function getCleanStringArray(value: unknown): string[] {
+  return getStringArray(value)
+    .map(stripCopyPrefix)
+    .filter(Boolean);
 }

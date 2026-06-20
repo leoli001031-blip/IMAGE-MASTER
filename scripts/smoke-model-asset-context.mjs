@@ -21,6 +21,7 @@ if (shouldSpawnServer) {
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      WATCHPACK_POLLING: process.env.WATCHPACK_POLLING || "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -51,11 +52,20 @@ try {
   assert(modelTemplate.includes("buildModelAssetMetadata"), "model metadata builder is missing");
   assert(modelTemplate.includes("identityAnchors"), "model identity anchors are missing");
   assert(modelTemplate.includes("Treat the model as a reusable person asset"), "person asset boundary is missing");
+  assert(modelTemplate.includes("downstreamReferenceMode"), "model metadata should expose downstream reference mode");
+  assert(modelTemplate.includes("downstreamReferenceRules"), "model metadata should expose downstream reference rules");
+  assert(modelTemplate.includes("Scene lighting and the current shot's pose instructions override the model asset sheet"), "model metadata should separate identity from downstream pose and lighting");
+
+  const modelAssetPlan = fs.readFileSync(path.join(root, "lib/canvas/model-asset-template-plan.ts"), "utf8");
+  assert(modelAssetPlan.includes("Zone B is the downstream identity reference zone"), "model asset prompt should name the downstream identity zone");
+  assert(modelAssetPlan.includes("Zone B pose rules: the large 3/4 identity reference uses low relaxed shoulders"), "model asset prompt should use concrete downstream identity pose rules");
+  assert(!/feel like a photographer is gently guiding/i.test(modelAssetPlan), "model asset prompt should avoid vague photographer-guidance wording");
 
   const workbench = fs.readFileSync(path.join(root, "components/canvas/visual-workbench.tsx"), "utf8");
   assert(workbench.includes('componentType: "model_asset"'), "canvas model asset type mapping is missing");
   assert(workbench.includes("referenceImages"), "canvas model reference image wiring is missing");
   assert(workbench.includes("identityAnchors"), "canvas model identity context wiring is missing");
+  assert(workbench.includes("downstreamReferenceRules"), "canvas model asset context should carry downstream identity rules");
 
   const script = fs.readFileSync(path.join(root, "scripts/gen-model-sheet.mjs"), "utf8");
   assert(!/sk-[A-Za-z0-9_-]{20,}/.test(script), "model sheet script still contains a hardcoded API key");

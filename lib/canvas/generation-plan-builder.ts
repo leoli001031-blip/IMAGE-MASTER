@@ -30,7 +30,10 @@ import {
   type CampaignBible,
   type CampaignShot,
 } from "@/lib/canvas/campaign-planning";
-import { selectWorkflowSkill } from "@/lib/canvas/workflow-skill-registry";
+import {
+  isReferenceAssetWorkflowIntent,
+  selectWorkflowSkill,
+} from "@/lib/canvas/workflow-skill-registry";
 import type {
   GenerationPlan,
   GenerationPlanDraftRequest,
@@ -195,6 +198,8 @@ function buildKnowledgeUserRequest(
   items: GenerationPlanItem[]
 ): string {
   return [
+    request.projectStarterPrompt,
+    request.projectIntent,
     request.request,
     request.userRequest,
     request.brief,
@@ -213,6 +218,8 @@ function normalizePlanItems(
 ): GenerationPlanItem[] {
   if (!Array.isArray(value)) return [];
   const requestText = [
+    request.projectStarterPrompt,
+    request.projectIntent,
     request.request,
     request.userRequest,
     request.brief,
@@ -246,6 +253,7 @@ function normalizePlanItems(
       metadata,
       campaignShot,
       request,
+      requestText,
       title,
       type,
       prompt,
@@ -254,6 +262,7 @@ function normalizePlanItems(
 	      record,
 	      metadata,
 	      referenceRoles,
+	      requestText,
 	      title,
 	      type,
 	      prompt,
@@ -344,6 +353,8 @@ function buildRequestCampaignPlanning(request: GenerationPlanDraftRequest): {
 
   const planningInput = {
     brief: [
+      request.projectStarterPrompt,
+      request.projectIntent,
       request.request,
       request.userRequest,
       request.brief,
@@ -363,6 +374,8 @@ function buildRequestCampaignPlanning(request: GenerationPlanDraftRequest): {
 
 function hasCommercePlanningSignal(request: GenerationPlanDraftRequest): boolean {
   const text = [
+    request.projectStarterPrompt,
+    request.projectIntent,
     request.request,
     request.userRequest,
     request.brief,
@@ -388,7 +401,7 @@ function isReferenceAssetPlanningRequest(
   if (request.requiredReferenceRoles?.includes("product") || request.productImageBase64) {
     return false;
   }
-  return /model_asset|character_sheet|scene_asset|style_asset|visual_style|reference_asset|scene_style_asset|模卡|模特资产|场景资产|风格资产|参考资产|素材资产/.test(text);
+  return isReferenceAssetWorkflowIntent(text);
 }
 
 function resolveItemReferenceRoles({
@@ -396,6 +409,7 @@ function resolveItemReferenceRoles({
   metadata,
   campaignShot,
   request,
+  requestText,
   title,
   type,
   prompt,
@@ -404,6 +418,7 @@ function resolveItemReferenceRoles({
   metadata: Record<string, unknown>;
   campaignShot?: CampaignShot;
   request: GenerationPlanDraftRequest;
+  requestText: string;
   title: string;
   type: string;
   prompt: string;
@@ -414,7 +429,9 @@ function resolveItemReferenceRoles({
     record.requiredReferenceRoles,
     metadata.requiredReferenceRoles
   );
-  if (explicitRoles) return explicitRoles;
+  const itemLabelText = `${title} ${type}`.toLowerCase();
+  const itemText = `${itemLabelText} ${prompt}`.toLowerCase();
+  if (explicitRoles) return filterReferenceRolesForItemIntent(explicitRoles, itemLabelText);
 
   const inferred = new Set<CanvasReferenceRole>();
   for (const role of campaignShot?.referenceRoles ?? []) inferred.add(role);
@@ -425,8 +442,8 @@ function resolveItemReferenceRoles({
     inferred.add("product");
   }
 
-  const text = `${title} ${type} ${prompt}`.toLowerCase();
-  if (/model|look|wear|front|side|portrait|person|human|模特|人物|穿|上身|展示|街拍|手持/.test(text)) {
+  const text = `${requestText} ${itemText}`.toLowerCase();
+  if (shouldItemUseModelReference(itemText, requestText.toLowerCase())) {
     inferred.add("model");
   }
   if (/scene|lifestyle|street|indoor|outdoor|room|cafe|背景|场景|街拍|室内|室外|生活|空间/.test(text)) {
@@ -435,17 +452,45 @@ function resolveItemReferenceRoles({
   if (/style|campaign|poster|hero|visual|brand|mood|风格|海报|主视觉|品牌|氛围/.test(text)) {
     inferred.add("style");
   }
-  if (/copy|text|headline|feature|info|detail|selling|claim|文案|标题|卖点|详情|信息|参数/.test(text)) {
+  if (/copy|text|headline|feature|info|detail|selling|claim|文案|标题|卖点|详情|信息|参数|烧字|带字|画面文字/.test(itemText)) {
     inferred.add("copy");
   }
 
-  return Array.from(inferred);
+  return filterReferenceRolesForItemIntent(Array.from(inferred), itemText);
+}
+
+function shouldItemUseModelReference(itemText: string, requestText: string): boolean {
+  if (/no model|no person|without model|without person|无模特|无人物|不要模特|不要人物|不需要模特|不需要人物|不用模特|不用人物|不带模特|不带人物|不要使用模特|不要使用人物|无需模特|无需人物|模特不要|人物不要/.test(requestText)) return false;
+  if (isProductOnlyItemText(itemText)) return false;
+  if (/model|look|wear|front|side|portrait|person|human|模特|人物|穿|上身|展示|街拍|手持|佩戴|背着|拿着|坐姿|行走|回眸|侧身/.test(itemText)) {
+    return true;
+  }
+  const isModelFriendlyShot = /cover|poster|hero|scene|lifestyle|封面|海报|主视觉|场景图|街拍|生活方式/.test(itemText);
+  return isModelFriendlyShot &&
+    /model|person|human|同一位|同一个人|模特|人物|真人|女性|男性|甜妹|穿搭/.test(requestText);
+}
+
+function isProductOnlyItemText(text: string): boolean {
+  if (/no model|no person|without model|without person|无模特|无人物|不要模特|不要人物|不需要模特|不需要人物|不用模特|不用人物|不带模特|不带人物|不要使用模特|不要使用人物|无需模特|无需人物|模特不要|人物不要|不包含模特|仅商品|商品静物/.test(text)) {
+    return true;
+  }
+  return /product_detail|product_macro|material|texture|macro|packshot|white|detail|材质|细节|微距|纹理|五金|静物|白底|主图|多角度/.test(text) &&
+    !/model_showcase|模特展示|人物展示|上身|佩戴|背着|拿着|手持|穿搭/.test(text);
+}
+
+function filterReferenceRolesForItemIntent(
+  roles: CanvasReferenceRole[],
+  itemText: string
+): CanvasReferenceRole[] {
+  if (!isProductOnlyItemText(itemText)) return roles;
+  return roles.filter((role) => role !== "model");
 }
 
 function resolveItemProviderReferenceRoles({
   record,
   metadata,
   referenceRoles,
+  requestText,
   title,
   type,
   prompt,
@@ -453,6 +498,7 @@ function resolveItemProviderReferenceRoles({
   record: Record<string, unknown>;
   metadata: Record<string, unknown>;
   referenceRoles: CanvasReferenceRole[];
+  requestText: string;
   title: string;
   type: string;
   prompt: string;
@@ -466,10 +512,13 @@ function resolveItemProviderReferenceRoles({
     record.imageReferenceRoles,
     metadata.imageReferenceRoles
   );
-  const text = `${title} ${type} ${prompt}`.toLowerCase();
+  const text = `${requestText} ${title} ${type} ${prompt}`.toLowerCase();
   if (explicitRoles !== undefined) {
     return filterModelProviderReferenceRoles(
-      explicitRoles.filter((role) => referenceRoles.includes(role)),
+      filterReferenceRolesForItemIntent(
+        explicitRoles.filter((role) => referenceRoles.includes(role)),
+        `${title} ${type}`.toLowerCase()
+      ),
       modelReferenceMode
     );
   }

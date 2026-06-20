@@ -188,16 +188,25 @@ export function buildModelAssetMetadata(
     "Use the same exact adult model identity across all generated images in the group.",
     "Keep facial features, hairstyle, age impression, body proportions, and temperament consistent.",
     "Do not mix this model identity with product, outfit, or scene references.",
+    "For final campaign images, use the downstream identity reference zone rather than treating the full library display card as the scene/pose reference.",
   ];
   const poseRules = [
     "Use functional commercial model poses with full-body or half-body visibility as requested.",
     "Prefer neutral standing, light walking, or natural catalog gestures unless a scene template asks otherwise.",
     "Avoid seductive posing, exaggerated body curves, or identity-changing extreme angles.",
+    "Do not copy the model card's fixed expression, gaze, standing pose, panel layout, or studio lighting into downstream campaign images.",
   ];
   const usageRules = [
     "Suitable for e-commerce model display, social commerce posts, poster visuals, and product detail scenes.",
     "Treat the model as a reusable person asset; product details should come from product references.",
     "Use wardrobe only as neutral baseline unless the image recipe explicitly replaces it.",
+    "When a scene or product plan gives a pose, expression, or lighting direction, that plan overrides the model card pose and light.",
+  ];
+  const downstreamReferenceRules = [
+    "Prefer the downstream identity reference zone for final image generation.",
+    "Preserve identity anchors only: face geometry, facial proportions, hair silhouette, age impression, body proportions, and temperament.",
+    "Do not preserve model-card pose, facial expression, gaze direction, panel layout, background, or lighting.",
+    "Scene lighting and the current shot's pose instructions override the model asset sheet.",
   ];
   const safetyRules = [
     "Adult professional model only.",
@@ -213,6 +222,7 @@ export function buildModelAssetMetadata(
     ...consistencyRules,
     ...poseRules,
     "Keep the model identity independent from product texture, brand, logo, and packaging details.",
+    ...downstreamReferenceRules,
   ];
   const negativeRules = [
     "Do not copy product material into the model face, hair, or skin.",
@@ -225,6 +235,7 @@ export function buildModelAssetMetadata(
     "Avoid baking in white-background studio lighting, strong frontal fill, beauty-dish catchlights, or glossy portrait retouching.",
     "Natural skin tone, stable facial identity, coherent anatomy, and clean subject-background separation.",
     "Model should support the product or scene without overpowering the commercial image objective.",
+    "Downstream outputs should relight the person according to the scene, not according to the model card.",
   ];
   const referenceImages = options.imageUrl ? [options.imageUrl] : [];
 
@@ -244,6 +255,8 @@ export function buildModelAssetMetadata(
     qualityRules,
     referenceImages,
     promptSnapshot: options.promptSnapshot,
+    downstreamReferenceMode: "prefer_zone_b_neutral_identity_reference",
+    downstreamReferenceRules,
   };
 }
 

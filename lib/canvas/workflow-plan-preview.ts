@@ -36,6 +36,7 @@ export interface WorkflowPlanPreviewItem {
   slot: string;
   ratio: string;
   size?: string;
+  copyMode?: string;
   platform?: string;
   componentRefs: string[];
   qualityChecks: string[];
@@ -73,6 +74,16 @@ export interface WorkflowPlanPreviewAgentPlan {
   skillId: string;
   title: string;
   shortLabel: string;
+  compositionMode?: string;
+  summary?: {
+    mode?: string;
+    fallbackUsed?: boolean;
+    fallbackReason?: string;
+    text?: string;
+    itemCount?: number;
+    readyItemCount?: number;
+    blockedItemCount?: number;
+  };
   sampleCount: number;
   fullCount: number;
   requiredAssetRoles: string[];
@@ -95,6 +106,51 @@ export interface WorkflowPlanPreviewAgentPlan {
     ratio: string;
     samplePhase: boolean;
   }>;
+  assetGroups?: WorkflowPlanPreviewAgentAssetGroup[];
+  generationMatrix?: WorkflowPlanPreviewAgentMatrixItem[];
+  missingInputs?: WorkflowPlanPreviewAgentMissingInput[];
+}
+
+export interface WorkflowPlanPreviewAgentAssetGroup {
+  id: string;
+  role: string;
+  title: string;
+  required: boolean;
+  available: boolean;
+  providerUsable: boolean;
+  usage: string;
+  imageCount: number;
+  assetIds?: string[];
+  sourceNodeIds?: string[];
+  componentIds?: string[];
+  notes?: string[];
+}
+
+export interface WorkflowPlanPreviewAgentMatrixItem {
+  id: string;
+  itemId: string;
+  title: string;
+  type: string;
+  ratio?: string;
+  size?: string;
+  skillId?: string;
+  outputSlotId?: string;
+  referenceRoles: string[];
+  providerReferenceRoles: string[];
+  assetGroupIds: string[];
+  copyMode?: string;
+  missingInputIds?: string[];
+  status: "ready" | "blocked";
+  summary: string;
+}
+
+export interface WorkflowPlanPreviewAgentMissingInput {
+  id: string;
+  label: string;
+  role?: string;
+  required: boolean;
+  reason: string;
+  blocking: boolean;
 }
 
 const EDITABLE_NODE_TYPES = new Set<StandardComponentType>([
@@ -233,11 +289,10 @@ function buildPreviewItems({
 }): WorkflowPlanPreviewItem[] {
   const shotList = toRecordArray(recipeParams.shotList);
   const deliverables = toRecordArray(outputParams.deliverables);
-  const count = Math.max(
-    shotList.length,
-    deliverables.length,
-    toPositiveInteger(recipeParams.outputCount, 0)
-  );
+  const recipeOutputCount = toPositiveInteger(recipeParams.outputCount, 0);
+  const count = recipeOutputCount > 0
+    ? recipeOutputCount
+    : Math.max(shotList.length, deliverables.length);
   const qualityTitles = qualityChecks.flatMap((check) => check.checks).slice(0, 6);
   const componentIds = componentRefs.map((ref) => ref.nodeId);
 
@@ -248,6 +303,7 @@ function buildPreviewItems({
     const ratio = toNonEmptyString(shot.ratio, toNonEmptyString(deliverable.ratio, "auto"));
     const intent = toNonEmptyString(shot.intent, toNonEmptyString(recipeParams.purpose, "Generated commerce image"));
     const size = toOptionalString(shot.size) ?? toOptionalString(deliverable.size);
+    const copyMode = toOptionalString(shot.copyMode) ?? toOptionalString(deliverable.copyMode);
 
     return {
       id: `plan_item_${index + 1}`,
@@ -256,6 +312,7 @@ function buildPreviewItems({
       slot,
       ratio,
       ...(size ? { size } : {}),
+      ...(copyMode ? { copyMode } : {}),
       platform: toOptionalString(platformParams.platform),
       componentRefs: componentIds,
       qualityChecks: qualityTitles,

@@ -15,9 +15,6 @@ export async function POST(req: Request) {
 
     const request = body as GenerationPlanDraftRequest & { agentPlanMode?: unknown };
     const draft = buildGenerationPlanDraft(request);
-    if (!draft.ok) {
-      return NextResponse.json(draft, { status: 400 });
-    }
 
     const agentPlan = await buildAgentPlan({
       plan: draft.plan,
@@ -28,9 +25,10 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({
-      ok: true,
+      ok: draft.ok,
       agentPlan: summarizeAgentPlanForResponse(agentPlan),
       estimate: draft.estimate,
+      validation: draft.validation,
       referenceSlots: draft.referenceSlots.map((slot) => ({
         role: slot.role,
         required: slot.required,
@@ -97,6 +95,8 @@ function summarizeAgentMatrixItem(item: AgentPlanGenerationMatrixItem) {
     referenceRoles: item.referenceRoles,
     providerReferenceRoles: item.providerReferenceRoles,
     assetGroupIds: item.assetGroupIds,
+    copyMode: item.copyMode,
+    missingInputIds: item.missingInputIds,
     status: item.status,
     summary: item.summary,
   };

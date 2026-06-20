@@ -105,6 +105,8 @@ export const WORKFLOW_SKILL_REGISTRY: WorkflowSkill[] = [
       "character_sheet",
       "identity_reference",
       "prompt_asset",
+      "concept_product",
+      "concept mockup",
       "素材资产",
       "参考资产",
       "参考素材",
@@ -117,6 +119,9 @@ export const WORKFLOW_SKILL_REGISTRY: WorkflowSkill[] = [
       "身份参考",
       "下游身份参考",
       "拍摄风格参考",
+      "概念商品",
+      "概念产品",
+      "方向探索",
     ],
     platforms: ["asset_library"],
     outputPacks: ["commercial.output_pack.reference_assets"],
@@ -139,6 +144,45 @@ export const WORKFLOW_SKILL_REGISTRY: WorkflowSkill[] = [
       "场景素材应交代空间、透视、光源方向、阴影和可放置商品的区域。",
       "风格素材只描述拍摄语言和完成度，不覆盖未来商品或人物身份。",
       "文案素材必须结构化保存，不默认烧进图片。",
+    ],
+  },
+  {
+    id: "workflow.product_scene.v1",
+    title: "商品场景/静物图组 Agent",
+    shortLabel: "商品场景",
+    description: "生成无人物商品静物、场景图、材质细节和通用商品海报，不套用平台主图规则。",
+    matchTerms: [
+      "product_scene",
+      "product_still",
+      "still life",
+      "lifestyle product",
+      "商品静物",
+      "产品静物",
+      "商品场景",
+      "产品场景",
+      "无人物商品",
+      "无模特商品",
+      "静物图",
+    ],
+    platforms: ["storefront"],
+    outputPacks: ["commercial.output_pack.product_scene"],
+    requiredAssetRoles: ["product"],
+    optionalAssetRoles: ["scene", "style", "copy"],
+    sampleCount: 4,
+    fullCount: 10,
+    defaultCopyRenderMode: "layout_layer",
+    allowBurnInCopy: true,
+    phases: sharedCommercePhases,
+    outputSlots: [
+      { id: "still", label: "商品静物", purpose: "清楚展示商品主体、材质和真实接触阴影", ratio: "3:2", samplePhase: true },
+      { id: "scene", label: "商品场景", purpose: "商品自然放入环境，空间和光影成立", ratio: "3:2", samplePhase: true },
+      { id: "detail", label: "商品细节", purpose: "展示材质、五金、结构或功能证据", ratio: "4:5", samplePhase: true },
+      { id: "poster", label: "商品海报", purpose: "保留画面安全区，可按需烧短文案", ratio: "4:5", samplePhase: true },
+    ],
+    qaRules: [
+      "无人物/无模特请求不得调用模特资产或模特展示槽位。",
+      "商品身份、结构、比例、颜色和材质必须来自真实商品参考。",
+      "场景只负责空间、光影和接触阴影，不改商品。",
     ],
   },
   {
@@ -315,6 +359,10 @@ function scoreWorkflowSkill(
   input: SelectWorkflowSkillInput
 ): number {
   let score = 0;
+  const explicitNoModelIntent = hasExplicitNoModelIntent(text);
+  if (skill.id === "workflow.model_showcase.v1" && explicitNoModelIntent) {
+    return -20;
+  }
   if (skill.id === "workflow.reference_asset.v1" && isReferenceAssetWorkflowIntent(text)) {
     score += 30;
   }
@@ -329,9 +377,44 @@ function scoreWorkflowSkill(
   }
   const productModelSceneIntent = detectProductModelSceneIntent(text);
   const multiChannelCommerceIntent = detectMultiChannelCommerceIntent(text);
+  const explicitPlatformWorkflowIntent = detectExplicitPlatformWorkflowIntent(text);
+  const mixedCommercePackIntent = detectMixedCommercePackIntent(text);
+  const productOnlyCommerceIntent =
+    explicitNoModelIntent &&
+    productModelSceneIntent.hasProduct &&
+    !explicitPlatformWorkflowIntent;
+  if (
+    explicitNoModelIntent &&
+    productModelSceneIntent.hasProduct &&
+    productModelSceneIntent.hasScene &&
+    skill.id === "workflow.product_scene.v1"
+  ) {
+    score += 12;
+  }
+  if (productOnlyCommerceIntent) {
+    if (skill.id === "workflow.product_scene.v1") score += 18;
+    if (skill.id === "workflow.taobao_detail.v1") score -= 12;
+    if (skill.id === "workflow.model_showcase.v1") score -= 20;
+  }
+  if (
+    !explicitPlatformWorkflowIntent &&
+    productModelSceneIntent.hasProduct &&
+    productModelSceneIntent.hasScene &&
+    !productModelSceneIntent.hasModel
+  ) {
+    if (skill.id === "workflow.product_scene.v1") score += 16;
+    if (skill.id === "workflow.poster_campaign.v1" && !hasExplicitPosterCampaignIntent(text)) score -= 12;
+    if (skill.id === "workflow.taobao_detail.v1") score -= 6;
+  }
   if (productModelSceneIntent.hasProduct && productModelSceneIntent.hasModel) {
     if (skill.id === "workflow.model_showcase.v1") {
-      score += multiChannelCommerceIntent ? 2 : productModelSceneIntent.hasScene ? 14 : 10;
+      score += explicitPlatformWorkflowIntent && !hasExplicitModelShowcaseIntent(text)
+        ? 1
+        : multiChannelCommerceIntent
+          ? 2
+          : productModelSceneIntent.hasScene
+            ? 14
+            : 10;
     }
     if (
       skill.id === "workflow.poster_campaign.v1" &&
@@ -341,24 +424,77 @@ function scoreWorkflowSkill(
       score -= 8;
     }
   }
+  if (mixedCommercePackIntent) {
+    if (
+      !explicitPlatformWorkflowIntent &&
+      productModelSceneIntent.hasProduct &&
+      productModelSceneIntent.hasScene &&
+      !productModelSceneIntent.hasModel &&
+      skill.id === "workflow.product_scene.v1"
+    ) {
+      score += 14;
+    }
+    if (skill.id === "workflow.taobao_detail.v1") score += explicitPlatformWorkflowIntent ? 14 : 10;
+    if (skill.id === "workflow.poster_campaign.v1") score += 6;
+    if (skill.id === "workflow.model_showcase.v1" && !isModelOnlyPackIntent(text)) score -= 16;
+  }
   if (input.copyRenderMode === "burn_in" && skill.allowBurnInCopy) score += 1;
   if (multiChannelCommerceIntent && skill.id === "workflow.taobao_detail.v1") score += 6;
   return score;
 }
 
 function detectMultiChannelCommerceIntent(text: string): boolean {
-  let signals = 0;
-  if (/淘宝|天猫|taobao|tmall|详情页|商品详情|卖点图|主图/.test(text)) signals += 1;
-  if (/小红书|种草|封面|笔记|xiaohongshu|rednote/.test(text)) signals += 1;
-  if (/海报|主海报|主视觉|poster|campaign|banner/.test(text)) signals += 1;
-  if (/材质|细节|特写|detail|macro|texture/.test(text)) signals += 1;
-  return signals >= 2;
+  let channels = 0;
+  if (/淘宝|天猫|taobao|tmall|详情页|商品详情|卖点图|主图/.test(text)) channels += 1;
+  if (/amazon|亚马逊|listing|asin|跨境/.test(text)) channels += 1;
+  if (/小红书|种草|笔记|xiaohongshu|rednote/.test(text)) channels += 1;
+  if (hasExplicitPosterCampaignIntent(text)) channels += 1;
+
+  return channels >= 2 || /跨平台|多平台|全渠道|多渠道/.test(text);
+}
+
+function detectExplicitPlatformWorkflowIntent(text: string): boolean {
+  return /淘宝|天猫|taobao|tmall|详情页|商品详情|amazon|亚马逊|listing|asin|小红书|种草|笔记|xiaohongshu|rednote/.test(text) ||
+    hasExplicitPosterCampaignIntent(text);
+}
+
+function detectMixedCommercePackIntent(text: string): boolean {
+  if (!/(商品|产品|product)/.test(text)) return false;
+  let deliverables = 0;
+  if (/主图|商品主图|产品主图|main image|hero/.test(text)) deliverables += 1;
+  if (/场景图|客厅|卧室|室内|户外|街拍|生活方式|lifestyle|scene/.test(text)) deliverables += 1;
+  if (/模特|真人|人物|拿着|手持|佩戴|model|person/.test(text)) deliverables += 1;
+  if (/海报|banner|宣传图|活动图|poster/.test(text)) deliverables += 1;
+  if (/细节|特写|卖点|详情|detail|feature/.test(text)) deliverables += 1;
+  return deliverables >= 3;
+}
+
+function hasExplicitModelShowcaseIntent(text: string): boolean {
+  return /\b(model_showcase|model\s+display|lookbook|try[-\s]?on)\b/.test(text) ||
+    /(模特展示|真人展示|上身图|试穿|穿搭图|lookbook)/.test(text);
+}
+
+function isModelOnlyPackIntent(text: string): boolean {
+  return hasExplicitModelShowcaseIntent(text) &&
+    !/(主图|商品主图|产品主图|海报|banner|宣传图|细节|特写|卖点|详情|detail|feature)/.test(text);
 }
 
 export function isReferenceAssetWorkflowIntent(text: string): boolean {
   const normalized = text.toLowerCase();
-  return /\b(reference_asset|scene_asset|style_asset|visual_style|model_asset|character_sheet|identity_reference|prompt_asset)\b/.test(normalized) ||
-    /(素材资产|参考资产|参考素材|场景资产|风格资产|模特资产|文案资产|知识资产|模卡|身份参考|下游身份参考|拍摄风格参考)/.test(normalized);
+  if (/\b(reference_asset|scene_asset|style_asset|visual_style|model_asset|character_sheet|identity_reference|prompt_asset|concept_product|concept\s+mockup)\b/.test(normalized)) {
+    return true;
+  }
+
+  const assetTarget = /(素材资产|参考资产|参考素材|场景资产|风格资产|模特资产|文案资产|知识资产|模卡|身份参考|下游身份参考|拍摄风格参考|概念商品|概念产品|方向探索)/;
+  if (!assetTarget.test(normalized)) return false;
+
+  const assetCreationIntent = new RegExp(
+    "(生成|创建|新建|做|制作|产出|保存|整理|补一个|来一个).{0,16}" + assetTarget.source + "|" +
+    assetTarget.source + ".{0,16}(生成|创建|新建|做|制作|产出|保存|整理)"
+  );
+  const finalDeliverableIntent = /(真实生成|成片|宣传图|主图|详情页|商品详情|商品图|产品图|海报|banner|场景图|模特展示|图组|投放|输出)/;
+
+  return assetCreationIntent.test(normalized) && !finalDeliverableIntent.test(normalized);
 }
 
 function detectProductModelSceneIntent(text: string): {
@@ -366,17 +502,29 @@ function detectProductModelSceneIntent(text: string): {
   hasModel: boolean;
   hasScene: boolean;
 } {
+  const modelIntentText = stripNegativeModelIntent(text);
   return {
     hasProduct:
       /\b(product|bag|handbag|purse|plush|phone|camera|watch|shoes?|clothing|dress|coat|jacket|sneaker)\b/.test(text) ||
       /(商品|产品|包|女包|手袋|毛绒|手机|相机|手表|鞋|服装|衣服|外套|羽绒服)/.test(text),
     hasModel:
-      /\b(model|wearing|wear|holding|carry|carrying|showcase|lookbook|portrait|person|woman|man)\b/.test(text) ||
-      /(模特|穿着|上身|背着|拿着|手拿|手持|展示|真人|人物|女性|男性)/.test(text),
+      /\b(model|wearing|wear|holding|carry|carrying|showcase|lookbook|portrait|person|woman|man)\b/.test(modelIntentText) ||
+      /(模特|穿着|上身|背着|拿着|手拿|手持|真人|人物|女性|男性|真人展示|模特展示|人物展示|上身展示|背着展示|佩戴展示)/.test(modelIntentText),
     hasScene:
       /\b(scene|location|street|cafe|interior|outdoor|indoor|shop|mall|home|room|corner|seated)\b/.test(text) ||
       /(场景|实景|街拍|街头|室内|户外|咖啡|商场|花店|家居|房间|雪山|坐姿)/.test(text),
   };
+}
+
+function stripNegativeModelIntent(text: string): string {
+  return text.replace(
+    /no model|no person|without model|without person|product[-_ ]?only|纯商品图?|只要商品图?|商品静物|无模特|无人物|不要模特|不要人物|不需要模特|不需要人物|不用模特|不用人物|不带模特|不带人物|不要使用模特|不要使用人物|无需模特|无需人物|模特不要|人物不要/g,
+    " "
+  );
+}
+
+function hasExplicitNoModelIntent(text: string): boolean {
+  return /no model|no person|without model|without person|product[-_ ]?only|纯商品图?|只要商品图?|商品静物|无模特|无人物|不要模特|不要人物|不需要模特|不需要人物|不用模特|不用人物|不带模特|不带人物|不要使用模特|不要使用人物|无需模特|无需人物|模特不要|人物不要/.test(text);
 }
 
 function hasExplicitPosterCampaignIntent(text: string): boolean {

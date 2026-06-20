@@ -48,6 +48,7 @@ export async function POST(req: Request) {
     }
 
     const request = body as GenerationPlanDraftRequest;
+    const agentPlanMode = getString(body.agentPlanMode);
     const draft = buildGenerationPlanDraft(request);
     if (!draft.ok) {
       return NextResponse.json(draft, { status: 400 });
@@ -58,6 +59,7 @@ export async function POST(req: Request) {
       request,
       referenceContext: draft.plan.referenceContext,
       sopExecutionPlan: draft.plan.sopExecutionPlan,
+      mode: agentPlanMode === "deterministic" ? "deterministic" : undefined,
     });
     const productReferenceGuard = classifyProductReference(draft.plan.referenceContext);
     const productGuardIssues = buildProductGuardIssues(agentPlan, productReferenceGuard);
@@ -189,6 +191,10 @@ function getPlanJobPreparationConcurrency(itemCount: number): number {
   return Math.max(1, Math.min(configured, itemCount, 8));
 }
 
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -290,6 +296,7 @@ function summarizeJobMetadataForResponse(metadata: GenerationJob["metadata"]): G
     "agentPlanSummary",
     "agentAssetGroupIds",
     "providerPromptWriter",
+    "generationTelemetry",
     "approvedProviderCallLimit",
     "approvedAt",
     "providerCallBudgetId",
@@ -383,11 +390,13 @@ function buildProductGuardIssues(
   productReferenceGuard: ProductReferenceGuardResult
 ): string[] {
   if (productReferenceGuard.hasProviderUsableRealProductImage) return [];
-  const productProviderItems = agentPlan.generationMatrix.filter((item) =>
-    item.providerReferenceRoles.includes("product")
+  const productIdentityItems = agentPlan.generationMatrix.filter((item) =>
+    item.providerReferenceRoles.includes("product") ||
+    item.referenceRoles.includes("product") ||
+    item.assetGroupIds.some((id) => id.startsWith("asset.product."))
   );
-  if (productProviderItems.length === 0) return [];
-  return productProviderItems.map((item) =>
+  if (productIdentityItems.length === 0) return [];
+  return productIdentityItems.map((item) =>
     `${item.title} 需要锁定真实商品，但当前商品参考是 ${productReferenceGuard.kind}。`
   );
 }
@@ -407,19 +416,23 @@ async function createPlanJob({
   request: Record<string, unknown>;
   approvalMetadata: Record<string, unknown>;
 }): Promise<GenerationJob> {
+  const jobPrepareStartedAt = Date.now();
   const userRequest = getString(request.request) ?? getString(request.userRequest) ?? getString(request.brief);
   const agentMatrixItem = findAgentMatrixItem(plan.agentPlan, item, index);
   const agentRoutedItem = applyAgentMatrixToItem(item, agentMatrixItem, plan.agentPlan);
   const deferPromptPreparation = request.enqueue === true;
   let activeItem: GenerationPlanItem = agentRoutedItem;
   let assetInvocationPlan: Awaited<ReturnType<typeof planAssetInvocation>> | undefined;
+  let assetInvocationMs = 0;
   if (!deferPromptPreparation) {
+    const assetInvocationStartedAt = Date.now();
     assetInvocationPlan = await planAssetInvocation({
       item: agentRoutedItem,
       referenceContext: plan.referenceContext,
       userRequest,
       sopExecutionPlan: plan.sopExecutionPlan,
     });
+    assetInvocationMs = elapsedMs(assetInvocationStartedAt);
     activeItem = {
       ...agentRoutedItem,
       referenceRoles: assetInvocationPlan.referenceRoles,
@@ -440,10 +453,31 @@ async function createPlanJob({
     activeItem.referenceRoles,
     activeItem.providerReferenceRoles
   );
+  const activeAgentAssetGroupIds = getActiveAgentAssetGroupIds(
+    plan.agentPlan,
+    agentMatrixItem,
+    activeItem.referenceRoles ?? []
+  );
+  const activeAgentMatrixItem = agentMatrixItem
+    ? {
+        ...agentMatrixItem,
+        referenceRoles: activeItem.referenceRoles ?? [],
+        providerReferenceRoles: activeItem.providerReferenceRoles ?? [],
+        assetGroupIds: activeAgentAssetGroupIds,
+      }
+    : undefined;
+  activeItem = {
+    ...activeItem,
+    metadata: {
+      ...activeItem.metadata,
+      ...(activeAgentMatrixItem ? { agentMatrixItem: summarizeAgentMatrixItem(activeAgentMatrixItem) } : {}),
+      agentAssetGroupIds: activeAgentAssetGroupIds,
+    },
+  };
   const itemReferenceContext = applyAgentMatrixReferenceSelection(
     roleFilteredReferenceContext,
     plan.agentPlan,
-    agentMatrixItem,
+    activeAgentMatrixItem,
     activeItem
   );
   const itemProductReferenceGuard = classifyProductReference(itemReferenceContext);
@@ -458,6 +492,7 @@ async function createPlanJob({
   }
   const providerReferenceAdapter = buildProviderReferenceAdapter(itemReferenceContext);
   const referenceImageUrl = getPrimaryProviderReferenceUrl(itemReferenceContext);
+  const promptPrepareStartedAt = Date.now();
   const providerPrompt = deferPromptPreparation
     ? {
         prompt: activeItem.prompt || activeItem.title,
@@ -485,6 +520,7 @@ async function createPlanJob({
         sopExecutionPlan: plan.sopExecutionPlan,
         planId: plan.planId,
       });
+  const promptPrepareMs = elapsedMs(promptPrepareStartedAt);
   const metadata = {
     source: "generation-plan-run",
     planId: plan.planId,
@@ -538,12 +574,12 @@ async function createPlanJob({
       activeRoles: activeItem.referenceRoles ?? [],
       providerInputRoles: activeItem.providerReferenceRoles ?? [],
       plannerMode: assetInvocationPlan?.mode ?? "deferred_job_runner_v1",
-      agentMatrixItemId: agentMatrixItem?.id,
-      agentAssetGroupIds: agentMatrixItem?.assetGroupIds ?? [],
+      agentMatrixItemId: activeAgentMatrixItem?.id,
+      agentAssetGroupIds: activeAgentAssetGroupIds,
     },
-    agentMatrixItem: agentMatrixItem ? summarizeAgentMatrixItem(agentMatrixItem) : undefined,
+    agentMatrixItem: activeAgentMatrixItem ? summarizeAgentMatrixItem(activeAgentMatrixItem) : undefined,
     agentPlanSummary: plan.agentPlan?.summary,
-    agentAssetGroupIds: agentMatrixItem?.assetGroupIds ?? [],
+    agentAssetGroupIds: activeAgentAssetGroupIds,
     ...(assetInvocationPlan
       ? {
           assetInvocationPlan,
@@ -568,6 +604,15 @@ async function createPlanJob({
     providerReferenceStrategy: providerReferenceAdapter.strategy,
     providerReferenceAdapter,
     providerPromptWriter: providerPrompt.metadata,
+    generationTelemetry: {
+      planJobPrepareMs: elapsedMs(jobPrepareStartedAt),
+      assetInvocationMs,
+      promptPrepareMs,
+      promptWriterMode: providerPrompt.metadata.mode,
+      promptWriterFallbackUsed: providerPrompt.metadata.fallbackUsed,
+      promptWriterCacheHit: "cacheHit" in providerPrompt.metadata && providerPrompt.metadata.cacheHit === true,
+      deferredPromptPreparation: deferPromptPreparation,
+    },
     promptOnlyReferenceImages: providerReferenceAdapter.promptOnlyImages,
     usesProviderReference: !!referenceImageUrl,
     usesProductReference: providerReferenceAdapter.primaryImage?.role === "product",
@@ -616,8 +661,8 @@ function applyAgentMatrixToItem(
   if (!matrixItem) return item;
   return {
     ...item,
-    referenceRoles: matrixItem.referenceRoles.length ? matrixItem.referenceRoles : item.referenceRoles,
-    providerReferenceRoles: matrixItem.providerReferenceRoles.length
+    referenceRoles: matrixItem.referenceRoles?.length ? matrixItem.referenceRoles : item.referenceRoles,
+    providerReferenceRoles: matrixItem.providerReferenceRoles?.length
       ? matrixItem.providerReferenceRoles
       : item.providerReferenceRoles,
     metadata: {
@@ -627,6 +672,20 @@ function applyAgentMatrixToItem(
       agentAssetGroupIds: matrixItem.assetGroupIds,
     },
   };
+}
+
+function getActiveAgentAssetGroupIds(
+  agentPlan: AgentPlan | undefined,
+  matrixItem: AgentPlanGenerationMatrixItem | undefined,
+  referenceRoles: readonly string[]
+): string[] {
+  if (!agentPlan || !matrixItem?.assetGroupIds.length) return [];
+  const activeRoles = new Set(referenceRoles);
+  const roleById = new Map(agentPlan.assetGroups.map((group) => [group.id, group.role]));
+  return matrixItem.assetGroupIds.filter((id) => {
+    const role = roleById.get(id);
+    return role ? activeRoles.has(role) : false;
+  });
 }
 
 function applyAgentMatrixReferenceSelection(

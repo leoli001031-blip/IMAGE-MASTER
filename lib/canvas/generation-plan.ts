@@ -162,6 +162,8 @@ export interface GenerationPlanDraftRequest {
   request?: string;
   userRequest?: string;
   brief?: string;
+  projectStarterPrompt?: string;
+  projectIntent?: string;
   campaignBible?: unknown;
   shotList?: unknown;
   templateCandidates?: unknown;

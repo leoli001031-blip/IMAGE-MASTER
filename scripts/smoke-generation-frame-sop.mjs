@@ -92,12 +92,91 @@ const knowledgeDecision = resolveGenerationFrameRunRule({
 });
 assert(knowledgeDecision.canRun === true, "knowledge cards should not require images");
 
+const chineseSingleShotPlans = buildGenerationFramePlanSpecs({
+  request: "生成一张横版咖啡桌商品图，画面安全区烧字「soft day out」，不要人物",
+  outputType: "custom_template",
+  frameLabel: "图组生成框",
+});
+assert(chineseSingleShotPlans.length === 1, "single explicit request should create one plan");
+assert(chineseSingleShotPlans[0].ratio === "3:2", "Chinese horizontal request should set 3:2 ratio");
+assert(chineseSingleShotPlans[0].size === "1536x1024", "Chinese horizontal request should set landscape size");
+assert(chineseSingleShotPlans[0].copyRenderMode === "burn_in", "Chinese burn-in request should render text");
+assert(chineseSingleShotPlans[0].copyText === "画面文字：soft day out", "Chinese quoted burn-in text should be extracted");
+
+const mixedTextPlans = buildGenerationFramePlanSpecs({
+  request: "生成4张成片：1 白底主图 1:1 无字；2 横版海报 3:2 画面安全区烧字「fresh」；3 材质特写 1:1 无字；4 小红书封面 4:5 画面安全区烧字「ritual」。",
+  outputType: "custom_template",
+  frameLabel: "图组生成框",
+});
+assert(mixedTextPlans.length === 4, "mixed text request should create four plans");
+assert(!mixedTextPlans[0].copyText, "explicit no-text first shot should not inherit global copy");
+assert(mixedTextPlans[0].copyRenderMode === "metadata_only", "explicit no-text first shot should stay metadata-only");
+assert(mixedTextPlans[0].textAllowed === false, "explicit no-text first shot should forbid text");
+assert(mixedTextPlans[1].copyText === "画面文字：fresh", "second shot should keep its own burn-in copy");
+assert(mixedTextPlans[1].copyRenderMode === "burn_in", "second shot should burn its own copy");
+assert(!mixedTextPlans[2].copyText, "explicit no-text detail shot should not inherit prior copy");
+assert(mixedTextPlans[2].copyRenderMode === "metadata_only", "explicit no-text detail shot should stay metadata-only");
+assert(mixedTextPlans[3].copyText === "画面文字：ritual", "fourth shot should keep its own burn-in copy");
+
+const countedCampaignPlans = buildGenerationFramePlanSpecs({
+  request: "做一组完整的小红书+淘宝宣传图组，共 10 张。需要：1 张小红书封面海报 2:3 带字；3 张模特展示图 2:3，必须是同一个模特，但每张姿势完全不同：分别安排站立侧身回头、边走边看向橱窗、坐在花店外椅子上低头整理包；2 张商品静物场景图 3:2；2 张材质/五金细节图 4:5；2 张详情页卖点海报 4:5 带短文案。",
+  outputType: "custom_template",
+  frameLabel: "图组生成框",
+  maxItems: 10,
+});
+assert(countedCampaignPlans.length === 10, "counted campaign request should expand to ten plans");
+assert(countedCampaignPlans.filter((plan) => plan.title.includes("模特展示图")).length === 3, "three model shots should be separate plans");
+assert(countedCampaignPlans.some((plan) => plan.title.includes("边走边看向橱窗")), "model shot variants should preserve distinct pose directions");
+assert(countedCampaignPlans.filter((plan) => plan.title.includes("商品静物场景图")).length === 2, "two still-life shots should be separate plans");
+assert(countedCampaignPlans.filter((plan) => plan.title.includes("材质/五金细节图")).length === 2, "two detail shots should be separate plans");
+assert(countedCampaignPlans.filter((plan) => plan.copyRenderMode === "burn_in").length === 3, "cover plus two short-copy detail posters should burn text");
+
+const multilineCampaignPlans = buildGenerationFramePlanSpecs({
+  request: `基于当前商品和模特做一套宣传图，共 14 张。
+需要：
+1 张小红书封面海报 2:3 带字；
+4 张模特展示图 2:3，必须是同一个模特但姿势不同：分别安排站立侧身回头、边走边看向橱窗、坐在椅子上整理包扣、半蹲在花桶旁挑花；
+2 张街拍生活场景图 3:2，有模特但姿势不同；
+2 张商品静物场景图 3:2，无人物、无模特；
+2 张材质/五金细节图 4:5，无人物、无模特；
+3 张详情页卖点海报 4:5 带短文案。`,
+  outputType: "custom_template",
+  frameLabel: "图组生成框",
+  maxItems: 20,
+});
+assert(multilineCampaignPlans.length === 14, "multiline campaign should expand past ten plans");
+assert(multilineCampaignPlans.filter((plan) => plan.title.includes("模特展示图")).length === 4, "four model shots should be separate plans");
+assert(multilineCampaignPlans.some((plan) => plan.title.includes("半蹲在花桶旁挑花")), "fourth model pose should survive parsing");
+assert(multilineCampaignPlans.filter((plan) => plan.title.includes("商品静物场景图")).every((plan) => plan.modelRequired === false), "still-life shots must not require model");
+assert(multilineCampaignPlans.filter((plan) => plan.title.includes("材质/五金细节图")).every((plan) => plan.modelRequired === false), "detail shots must not require model");
+assert(multilineCampaignPlans.filter((plan) => plan.copyRenderMode === "burn_in").length === 4, "cover plus three detail posters should burn text");
+
 console.log(JSON.stringify({
   providerCalls: 0,
   productPlanIds: productPlans.map((plan) => plan.id),
   modelPlanIds: modelPlans.map((plan) => plan.id),
   scenePlanIds: scenePlans.map((plan) => plan.id),
   stylePlanIds: stylePlans.map((plan) => plan.id),
+  chineseSingleShot: {
+    ratio: chineseSingleShotPlans[0].ratio,
+    size: chineseSingleShotPlans[0].size,
+    copyRenderMode: chineseSingleShotPlans[0].copyRenderMode,
+    copyText: chineseSingleShotPlans[0].copyText,
+  },
+  mixedTextPlans: mixedTextPlans.map((plan) => ({
+    title: plan.title,
+    copyRenderMode: plan.copyRenderMode,
+    copyText: plan.copyText,
+    textAllowed: plan.textAllowed,
+  })),
+  countedCampaignPlans: countedCampaignPlans.map((plan) => ({
+    title: plan.title,
+    ratio: plan.ratio,
+    copyRenderMode: plan.copyRenderMode,
+    modelRequired: plan.modelRequired,
+  })),
+  multilineCampaignCount: multilineCampaignPlans.length,
+  multilineCampaignBurnInCount: multilineCampaignPlans.filter((plan) => plan.copyRenderMode === "burn_in").length,
   decisions: {
     productEmpty: emptyProductDecision.canRun,
     modelTextOnly: modelTextDecision.canRun,
