@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
   Background,
-  Controls,
   MarkerType,
   ReactFlow,
   ReactFlowProvider,
@@ -17,6 +17,7 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import {
+  AlertCircle,
   Archive,
   Bot,
   ChevronLeft,
@@ -43,6 +44,7 @@ import {
   SquareStack,
   Trash2,
   Upload,
+  Wand2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
@@ -62,11 +64,9 @@ import {
   type ProductionResultItem,
 } from "@/components/canvas/production-side-panel";
 import {
-  canvasAssets,
   canvasFactoryItems,
   canvasIconMap,
   canvasLibraryCategories,
-  initialCanvasNodes,
   type CanvasAsset,
   type CanvasFactoryItem,
   type CanvasWorkbenchEdge,
@@ -77,7 +77,6 @@ import {
   canConnectCanvasNodes,
   getConnectionLabel,
   getConnectionValidationMessage,
-  getCanvasNodeSemanticType,
 } from "@/lib/canvas/connection-rules";
 import {
   exportPackRules,
@@ -140,9 +139,41 @@ import {
 } from "@/lib/canvas/generation-frame";
 import { resolveGenerationFrameRunRule } from "@/lib/canvas/generation-frame-action-registry";
 import { resolveGenerationOutputAssetTarget } from "@/lib/canvas/generation-output-asset-target";
-import { buildStructuredCopyBrief } from "@/lib/canvas/copy-brief";
+import { buildStructuredCopyBrief, normalizeStructuredCopyBrief } from "@/lib/canvas/copy-brief";
 import { WorkflowNode } from "@/components/canvas/workflow-node";
 import type { CanvasFlowNode } from "@/components/canvas/workflow-node";
+import {
+  OutputPreviewModal,
+  type OutputPreviewAssetInvocationDecision,
+  type OutputPreviewCopyRenderPolicy,
+  type OutputPreviewLockSummaryItem,
+  type OutputPreviewVisualQaSummary,
+} from "@/components/canvas/output-preview-modal";
+import { useWorkbenchJobs } from "@/components/canvas/hooks/useWorkbenchJobs";
+import {
+  createArtifactResultNode,
+  getArtifactReviewStatus,
+  getArtifactReviewStatusLabel,
+  getArtifactVisualQaSummary,
+  getArtifactVisualQaStatusLabel,
+  getArtifactPreviewUrl,
+  getArtifactReconcileSignature,
+  getArtifactResultNodeArtifactId,
+  getArtifactResultNodeId,
+  getArtifactResultWallFocusNodeIds,
+  getArtifactStatusLabel,
+  getCanvasVisibleArtifacts,
+  getStageArtifactSignature,
+  isArtifactLinkedToNode,
+  isArtifactResultCanvasNode,
+  isHiddenArtifactResultNode,
+  mapArtifactToGenerationFrameOutput,
+  reconcileArtifactResultNodes,
+  type ArtifactReviewStatus,
+  type ArtifactVisualQaIssue,
+  type ArtifactVisualQaStatus,
+  type PersistedGeneratedArtifact,
+} from "@/components/canvas/canvas-result-nodes";
 import type { AIModel, GenerationJob } from "@/lib/types";
 import { buildAutoModelAssetName } from "@/lib/canvas/asset-auto-naming";
 import type {
@@ -155,6 +186,10 @@ import type {
 import type {
   EditableParameterField,
   WorkflowPlanPreview,
+  WorkflowPlanPreviewAgentAssetGroup,
+  WorkflowPlanPreviewAgentMatrixItem,
+  WorkflowPlanPreviewAgentMissingInput,
+  WorkflowPlanPreviewItem,
 } from "@/lib/canvas/workflow-plan-preview";
 
 const assetStatusLabel: Record<CanvasAsset["status"], string> = {
@@ -227,8 +262,21 @@ const quickWorkflowPresets = [
   },
 ];
 
+type CanvasAgentPrimaryMode = "create_frame" | "plan_frame" | "generate_frame" | "global_plan";
+type ResultReviewFilter = "all" | "approved" | "needs_redo" | "failed" | "qa_risk";
+
+const resultReviewFilterOptions: Array<{ id: ResultReviewFilter; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "approved", label: "只看可用" },
+  { id: "needs_redo", label: "只看建议重做" },
+  { id: "failed", label: "只看失败" },
+  { id: "qa_risk", label: "只看 QA 风险" },
+];
+
 const defaultAgentSampleOutputCount = 6;
-const maxAgentSampleOutputCount = 10;
+const maxAgentSampleOutputCount = 20;
+const maxAutoVisualQaArtifactsPerBatch = 8;
+const autoVisualQaFreshWindowMs = 5 * 60 * 1000;
 
 function clampAgentSampleOutputCount(value: number): number {
   if (!Number.isFinite(value)) return defaultAgentSampleOutputCount;
@@ -239,6 +287,22 @@ function parseRequestedAgentSampleCount(brief: string): number | undefined {
   const text = brief.trim();
   if (!text) return undefined;
 
+  const multiSceneCount = parseRequestedMultiSceneSampleCount(text);
+  if (multiSceneCount) {
+    return clampAgentSampleOutputCount(multiSceneCount + parseRequestedAdditionalDeliverableSampleCount(text));
+  }
+
+  return parseRequestedStandaloneAgentSampleCount(text);
+}
+
+function parseRequestedAdditionalDeliverableSampleCount(brief: string): number {
+  return getFallbackExplicitPosterCount(brief);
+}
+
+function parseRequestedStandaloneAgentSampleCount(brief: string): number | undefined {
+  const text = brief.trim();
+  if (!text) return undefined;
+
   const digitPatterns = [
     /(?:生成|出|做|来|要|需要|create|generate|make)?\s*(\d{1,2})\s*(?:张成片|张图|张|幅|图|p|P|pics?|photos?|shots?|outputs?)/i,
     /(\d{1,2})\s+(?:finished\s+)?(?:images?|photos?|shots?|outputs?)/i,
@@ -246,7 +310,9 @@ function parseRequestedAgentSampleCount(brief: string): number | undefined {
   ];
   for (const pattern of digitPatterns) {
     const match = text.match(pattern);
-    if (match) return clampAgentSampleOutputCount(Number(match[1]));
+    if (match && !isRelativeAgentSampleCountMatch(text, match.index ?? 0)) {
+      return clampAgentSampleOutputCount(Number(match[1]));
+    }
   }
 
   const chineseDigits: Record<string, number> = {
@@ -263,7 +329,9 @@ function parseRequestedAgentSampleCount(brief: string): number | undefined {
     十: 10,
   };
   const chineseMatch = text.match(/([一二两三四五六七八九十])\s*(?:张成片|张图|张|幅|图|成片|最终图|完成图)/);
-  if (chineseMatch) return clampAgentSampleOutputCount(chineseDigits[chineseMatch[1]] ?? defaultAgentSampleOutputCount);
+  if (chineseMatch && !isRelativeAgentSampleCountMatch(text, chineseMatch.index ?? 0)) {
+    return clampAgentSampleOutputCount(chineseDigits[chineseMatch[1]] ?? defaultAgentSampleOutputCount);
+  }
 
   const englishDigits: Record<string, number> = {
     one: 1,
@@ -281,6 +349,26 @@ function parseRequestedAgentSampleCount(brief: string): number | undefined {
   if (englishMatch) return clampAgentSampleOutputCount(englishDigits[englishMatch[1].toLowerCase()]);
 
   return undefined;
+}
+
+function isRelativeAgentSampleCountMatch(text: string, matchIndex: number): boolean {
+  const prefix = text.slice(Math.max(0, matchIndex - 6), matchIndex);
+  return /(多|少|加|减|增|删|补|保持|增加|减少|删除|去掉|再加|各|每个|每场景|场景各)$/.test(prefix);
+}
+
+function parseRequestedMultiSceneSampleCount(brief: string): number | undefined {
+  const compact = brief.replace(/\s+/g, "");
+  const hasPerSceneCount = /(?:每个|每个场景|每场景|场景各|各)[0-9一二两三四五六七八九十]+张/.test(compact);
+  if (!hasPerSceneCount || !hasFallbackSceneExpansionIntent(brief)) return undefined;
+  const perSceneCount = getFallbackPerSceneCount(brief);
+  if (perSceneCount <= 0) return undefined;
+  const sceneNames = extractFallbackSceneNames(brief);
+  const namedSceneCount = sceneNames.length > 0 && sceneNames[0] !== "多场景" ? sceneNames.length : 0;
+  const declaredSceneCount = parseAgentPlanEditCount(compact.match(/([0-9一二两三四五六七八九十]+)个?场景/)?.[1]);
+  const sceneCount = namedSceneCount || declaredSceneCount;
+  if (sceneCount <= 0) return undefined;
+  const total = sceneCount * perSceneCount;
+  return total > 0 && total <= maxAgentSampleOutputCount ? total : undefined;
 }
 
 function resolveAgentSampleOutputCount(
@@ -304,58 +392,69 @@ const drawerToolOptions = [
     label: "批量导入",
     description: "商品参数和商品组件",
     icon: Upload,
+    group: "advanced",
   },
   {
     id: "review",
     label: "审核",
     description: "人工过审和备注",
     icon: ListChecks,
+    group: "advanced",
   },
   {
     id: "diagnostics",
     label: "诊断",
     description: "Provider 和队列健康",
     icon: CircleDot,
+    group: "advanced",
   },
   {
     id: "projects",
     label: "项目",
     description: "项目、活动、批次",
     icon: Layers3,
+    group: "primary",
   },
   {
     id: "export",
     label: "交付包",
     description: "规格、ZIP、QA 明细",
     icon: PackageCheck,
+    group: "advanced",
   },
   {
     id: "queue",
     label: "任务队列",
     description: "运行、取消、重试",
     icon: Play,
+    group: "advanced",
   },
   {
     id: "outputs",
     label: "输出",
     description: "全部产物筛选",
     icon: ImageIcon,
+    group: "primary",
   },
   {
     id: "templates",
     label: "模板",
     description: "工作流模板和计划预览",
     icon: SquareStack,
+    group: "advanced",
   },
   {
     id: "factory",
     label: "组件工厂",
     description: "AI 生成可拖拽组件",
     icon: Sparkles,
+    group: "advanced",
   },
 ] as const;
 
 type DrawerToolId = (typeof drawerToolOptions)[number]["id"];
+const drawerPrimaryToolOptions = drawerToolOptions.filter((tool) => tool.group === "primary");
+const drawerAdvancedToolOptions = drawerToolOptions.filter((tool) => tool.group === "advanced");
 
 type ApiFetchResponse = Pick<Response, "ok" | "status" | "statusText" | "json" | "text">;
 
@@ -431,7 +530,7 @@ const canvasNodeTypes = {
   canvasWorkflow: WorkflowNode,
 };
 
-type AssetPackCategory = "product_asset" | "model_asset" | "scene_asset" | "style_asset";
+type AssetPackCategory = "product_asset" | "model_asset" | "scene_asset" | "style_asset" | "copy_asset";
 
 interface AssetPackReferenceImageDraft {
   title: string;
@@ -495,16 +594,21 @@ const assetPackCategoryOptions: Array<{
     label: "风格资产",
     hint: "色彩、光线、材质、构图和统一视觉规则",
   },
+  {
+    id: "copy_asset",
+    label: "文案资产",
+    hint: "画面文字、卖点参数、禁止声明和导出文案，供 Agent 判断是否进图",
+  },
 ];
 
-const VISUAL_NODE_LAYOUT_VERSION = 1;
+const VISUAL_NODE_LAYOUT_VERSION = 3;
+const LAST_CANVAS_WORKFLOW_STORAGE_KEY = "image-master:last-canvas-workflow-id";
 const visualNodeDefaultPositions: Record<string, { x: number; y: number }> = {
-  product: { x: 30, y: 170 },
-  brief: { x: 380, y: 105 },
-  model: { x: 690, y: 0 },
-  detail: { x: 690, y: 320 },
-  platform: { x: 1040, y: 140 },
-  review: { x: 1040, y: 475 },
+  brief: { x: 2040, y: 170 },
+  model: { x: 2380, y: 170 },
+  detail: { x: 2380, y: 520 },
+  platform: { x: 2720, y: 170 },
+  review: { x: 2720, y: 520 },
 };
 
 type LineGenerationActionId =
@@ -531,10 +635,10 @@ interface LineGenerationAction {
 
 const productAssetGenerationAction: LineGenerationAction = {
   id: "product_asset",
-  title: "商品框",
+  title: "商品资产",
   description: "上传多张商品图，生成一张可复用的白底多视角商品资产",
   iconName: "product",
-  label: "商品框",
+  label: "商品资产",
   caption: "多张商品图合成一张白底多视角资产",
   metrics: ["商品", "多图", "白底多视角"],
   edgeLabel: "生成商品资产",
@@ -548,7 +652,7 @@ const lineGenerationActions: LineGenerationAction[] = [
     title: "商品图",
     description: "用当前素材生成商品主图、白底图或基础参考",
     iconName: "product",
-    label: "商品图生成框",
+    label: "商品图组",
     caption: "当前素材会作为商品参考，不再重复要求上传商品图",
     metrics: ["商品参考", "1-4 张", "可复用"],
     edgeLabel: "生成商品图",
@@ -559,7 +663,7 @@ const lineGenerationActions: LineGenerationAction[] = [
     title: "模特",
     description: "生成可复用的人物参考资产",
     iconName: "model",
-    label: "模特生成框",
+    label: "模特资产",
     caption: "从模特预设或一句话需求生成模特参考",
     metrics: ["模特预设", "参考图", "可复用"],
     edgeLabel: "生成模特",
@@ -570,8 +674,8 @@ const lineGenerationActions: LineGenerationAction[] = [
     title: "场景",
     description: "生成可复用的商业场景资产",
     iconName: "scene",
-    label: "场景生成框",
-    caption: "生成主场景和空间约束，供后续图组复用",
+    label: "场景资产",
+    caption: "生成主场景和空间约束，供后续 Agent 调用",
     metrics: ["场景", "空间锚点", "可复用"],
     edgeLabel: "生成场景",
     outputType: "scene_asset",
@@ -582,7 +686,7 @@ const lineGenerationActions: LineGenerationAction[] = [
     title: "风格",
     description: "生成统一视觉语言、光线和构图规则",
     iconName: "style",
-    label: "风格生成框",
+    label: "风格资产",
     caption: "把审美方向整理成可复用风格资产",
     metrics: ["风格", "光线", "构图"],
     edgeLabel: "生成风格",
@@ -591,10 +695,10 @@ const lineGenerationActions: LineGenerationAction[] = [
   },
   {
     id: "custom_template",
-    title: "图组",
+    title: "商业图组",
     description: "把素材和一句需求交给 Agent 拆成图组",
     iconName: "ai",
-    label: "图组生成框",
+    label: "商业图组",
     caption: "拖进素材，说一句需求，Agent 拆成图组",
     metrics: ["素材", "一句话", "图组"],
     edgeLabel: "生成图组",
@@ -607,9 +711,31 @@ function getLineGenerationAction(actionId: LineGenerationActionId): LineGenerati
   return lineGenerationActions.find((item) => item.id === actionId);
 }
 
-function getGenerationActionCreatedMessage(action: LineGenerationAction, prefix: string): string {
-  const label = action.label || action.title;
-  return `${prefix}${label.endsWith("框") ? label : `${label}生成框`}`;
+function buildLineActionAgentBrief(action: LineGenerationAction, sourceLabel: string): string {
+  const source = `以「${sourceLabel}」作为参考`;
+  if (action.id === "product_image") {
+    return `${source}，规划一组商品图：白底主图、多角度展示、材质细节和可用于电商详情页的基础图。`;
+  }
+  if (action.id === "model_asset") {
+    return `${source}，规划一个可复用模特资产：保持人物身份特征，生成自然、低棚拍感、适合后续商业图合成的参考图。`;
+  }
+  if (action.id === "scene_asset") {
+    return `${source}，规划一个可复用场景资产：交代空间关系、光源方向、透视和适合产品/模特入镜的位置。`;
+  }
+  if (action.id === "style_asset") {
+    return `${source}，整理成可复用拍摄风格：摄影语言、色调、光线、构图和商业完成度要统一。`;
+  }
+  if (action.id === "knowledge_asset") {
+    return `${source}，整理成可复用知识/文案资产，拆分画面文字、卖点参数、禁止声明和导出文案。`;
+  }
+  return `${source}，让 Agent 规划一组商业图：判断用途、比例、强参考、弱参考、文案是否进图，以及需要生成多少张。`;
+}
+
+function cleanGenerationFrameDisplayLabel(label: string): string {
+  return label
+    .replace(/图组生成框/g, "图组")
+    .replace(/生成框/g, "图组")
+    .trim();
 }
 
 interface PersistedAsset {
@@ -649,24 +775,6 @@ interface PersistedWorkflowTemplate {
   }>;
   edges: CanvasWorkbenchEdge[];
   metadata?: Record<string, unknown>;
-}
-
-interface PersistedGeneratedArtifact {
-  id: string;
-  workflowId?: string;
-  nodeId?: string;
-  jobId?: string;
-  assetId?: string;
-  type: string;
-  title: string;
-  status: string;
-  url: string;
-  prompt: string;
-  provider: string;
-  model: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
 }
 
 interface PersistedGenerationJob extends GenerationJob {
@@ -880,6 +988,10 @@ interface GenerationFrameOutputActionDetail {
   urls?: string[];
   title?: string;
   status?: string;
+  reviewStatus?: ArtifactReviewStatus;
+  artifactIds?: string[];
+  group?: string;
+  note?: string;
 }
 
 interface GenerationOutputPreview {
@@ -900,6 +1012,103 @@ interface GenerationOutputPreviewItem {
   provider?: string;
   model?: string;
   error?: string;
+  reviewStatus?: ArtifactReviewStatus;
+}
+
+interface AgentImageEditTarget {
+  url: string;
+  title: string;
+  outputId?: string;
+  artifactId?: string;
+  jobId?: string;
+  nodeId?: string;
+  status?: string;
+  prompt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface AgentConversationMessage {
+  id: string;
+  role: "user" | "agent" | "system";
+  title?: string;
+  text: string;
+  tone?: "default" | "progress" | "success" | "warn";
+}
+
+interface AgentPlanGroup {
+  id: string;
+  title: string;
+  count: number;
+  ratios: string[];
+  copyModes: string[];
+  providerRoles: string[];
+  promptOnlyRoles: string[];
+  assetTitles: string[];
+  artifactIds?: string[];
+  status: "ready" | "blocked";
+  summary?: string;
+  reason?: string;
+  missingHints?: string[];
+}
+
+interface AgentPlanDiff {
+  summary: string;
+  scopeSummary?: string;
+  preservedSummary?: string;
+  nextAction?: string;
+  additions: string[];
+  removals: string[];
+  countChanges: string[];
+  copyChanges: string[];
+  otherChanges: string[];
+}
+
+interface AgentQaSummaryItem {
+  label: string;
+  text: string;
+  tone?: "default" | "warn" | "success";
+}
+
+type AgentReviewSuggestionAction =
+  | "approve"
+  | "mark_needs_redo"
+  | "reject"
+  | "redo"
+  | "edit"
+  | "copy"
+  | "group_edit"
+  | "group_redo";
+
+interface AgentExecutableReviewSuggestion {
+  id: string;
+  title: string;
+  body: string;
+  tone?: "default" | "warn" | "success";
+  artifactId?: string;
+  jobId?: string;
+  groupTitle?: string;
+  artifactIds?: string[];
+  editBrief?: string;
+  actions: AgentReviewSuggestionAction[];
+}
+
+interface AgentGapHintItem {
+  label: string;
+  text: string;
+  tone?: "default" | "warn";
+}
+
+interface AgentPlanEnrichmentResult {
+  preview: WorkflowPlanPreview;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+}
+
+interface AgentProgressStep {
+  id: string;
+  label: string;
+  status: "done" | "active" | "pending";
+  detail?: string;
 }
 
 const assetTypeCategory: Record<string, CanvasLibraryCategory> = {
@@ -959,7 +1168,7 @@ export function VisualWorkbench() {
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [showStatusDrawer, setShowStatusDrawer] = useState(false);
   const [activeBottomPanel, setActiveBottomPanel] = useState<"assets" | null>(null);
-  const [assetLibraryGeneratorOpen, setAssetLibraryGeneratorOpen] = useState(false);
+  const [assetLibraryFocusItemId, setAssetLibraryFocusItemId] = useState<string | undefined>();
   const [assetFavoritesOnly, setAssetFavoritesOnly] = useState(false);
   const [persistedAssets, setPersistedAssets] = useState<CanvasAsset[]>([]);
   const [modelAssets, setModelAssets] = useState<CanvasAsset[]>([]);
@@ -980,13 +1189,25 @@ export function VisualWorkbench() {
   const [assetPackDraft, setAssetPackDraft] = useState<AssetPackDraft | null>(null);
   const [generatingAssetPack, setGeneratingAssetPack] = useState(false);
   const [savingAssetPack, setSavingAssetPack] = useState(false);
-  const [jobs, setJobs] = useState<PersistedGenerationJob[]>([]);
-  const [queueSnapshot, setQueueSnapshot] = useState<PersistedJobQueueSnapshot | null>(null);
   const [projects, setProjects] = useState<PersistedProjectDetails[]>([]);
   const [components, setComponents] = useState<PersistedComponent[]>([]);
   const [workflowTemplates, setWorkflowTemplates] = useState<PersistedWorkflowTemplate[]>([]);
-  const [artifacts, setArtifacts] = useState<PersistedGeneratedArtifact[]>([]);
+  const {
+    jobs,
+    setJobs,
+    queueSnapshot,
+    setQueueSnapshot,
+    artifacts,
+    setArtifacts,
+    hasActiveJob: hasActiveBackgroundJob,
+    refreshJobs,
+    refreshQueue,
+    refreshArtifacts,
+  } = useWorkbenchJobs({ workflowId });
   const [outputPreview, setOutputPreview] = useState<GenerationOutputPreview | null>(null);
+  const [agentImageEditTarget, setAgentImageEditTarget] = useState<AgentImageEditTarget | null>(null);
+  const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false);
+  const [resultReviewFilter, setResultReviewFilter] = useState<ResultReviewFilter>("all");
   const [hiddenArtifactNodeIds, setHiddenArtifactNodeIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
@@ -998,12 +1219,11 @@ export function VisualWorkbench() {
   const [assetMessage, setAssetMessage] = useState("");
   const [assetPackMessage, setAssetPackMessage] = useState("");
   const [composeBrief, setComposeBrief] = useState("");
+  const [agentLastUserBrief, setAgentLastUserBrief] = useState("");
   const [composeMessage, setComposeMessage] = useState("");
-  const copyBurnInRequested = useMemo(
-    () => hasExplicitCopyBurnInRequest(composeBrief),
-    [composeBrief]
-  );
   const [workflowPlanPreview, setWorkflowPlanPreview] = useState<WorkflowPlanPreview | null>(null);
+  const [appliedWorkflowPlanPreview, setAppliedWorkflowPlanPreview] = useState<WorkflowPlanPreview | null>(null);
+  const [agentPlanDiff, setAgentPlanDiff] = useState<AgentPlanDiff | null>(null);
   const [pendingWorkflowDraft, setPendingWorkflowDraft] = useState<WorkflowComposeDraft | null>(null);
   const [productImportText, setProductImportText] = useState("");
   const [productImportPreview, setProductImportPreview] = useState<ProductImportPreview | null>(null);
@@ -1020,16 +1240,29 @@ export function VisualWorkbench() {
   const [archivingBatchId, setArchivingBatchId] = useState<string | null>(null);
   const [templateMessage, setTemplateMessage] = useState("");
   const [artifactMessage, setArtifactMessage] = useState("");
+  const [visualQaReviewingArtifactId, setVisualQaReviewingArtifactId] = useState<string | null>(null);
   const [exportPackMessage, setExportPackMessage] = useState("");
   const [focusRequest, setFocusRequest] = useState<CanvasFocusRequest | null>(null);
   const focusRequestCounter = useRef(0);
   const agentProductInputRef = useRef<HTMLInputElement>(null);
   const stageNodesCacheRef = useRef<{ signature: string; nodes: CanvasWorkbenchNode[] } | null>(null);
   const artifactReconcileSignatureRef = useRef("");
-  const jobsListSignatureRef = useRef("");
-  const artifactsListSignatureRef = useRef("");
   const loadedProjectCanvasRef = useRef("");
   const canvasMutationVersionRef = useRef(0);
+  const appliedProjectStarterPromptRef = useRef("");
+  const autoVisualQaInitializedRef = useRef(false);
+  const autoVisualQaSeenArtifactIdsRef = useRef<Set<string>>(new Set());
+  const autoVisualQaPreJobArtifactIdsRef = useRef<Set<string>>(new Set());
+  const autoVisualQaSubmittedArtifactIdsRef = useRef<Set<string>>(new Set());
+  const previousActiveVisibleJobCountRef = useRef(0);
+
+  useEffect(() => {
+    autoVisualQaInitializedRef.current = false;
+    autoVisualQaSeenArtifactIdsRef.current = new Set();
+    autoVisualQaPreJobArtifactIdsRef.current = new Set();
+    autoVisualQaSubmittedArtifactIdsRef.current = new Set();
+    previousActiveVisibleJobCountRef.current = 0;
+  }, [workflowId]);
 
   const requestCanvasFocus = useCallback((nodeIds: string[]) => {
     const cleanNodeIds = Array.from(new Set(nodeIds.filter(Boolean)));
@@ -1051,41 +1284,39 @@ export function VisualWorkbench() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showStatusDrawer]);
 
-  useEffect(() => {
-    let alive = true;
+  const refreshAssetLibrary = useCallback(async () => {
+    const [assetsResult, modelsResult] = await Promise.allSettled([
+      apiFetch("/api/assets", { cache: "no-store" }),
+      apiFetch("/api/models", { cache: "no-store" }),
+    ]);
 
-    async function loadRealAssets() {
-      const [assetsResult, modelsResult] = await Promise.allSettled([
-        apiFetch("/api/assets", { cache: "no-store" }),
-        apiFetch("/api/models", { cache: "no-store" }),
-      ]);
-
-      if (!alive) return;
-
-      if (assetsResult.status === "fulfilled" && assetsResult.value.ok) {
-        const payload = await assetsResult.value.json();
-        const list = Array.isArray(payload) ? payload : payload.assets;
-        if (Array.isArray(list)) {
-          setPersistedAssets(list.map(mapPersistedAssetToCanvas).filter(Boolean) as CanvasAsset[]);
-        }
-      }
-
-      if (modelsResult.status === "fulfilled" && modelsResult.value.ok) {
-        const models = await modelsResult.value.json();
-        if (Array.isArray(models)) {
-          setModelAssets(models.filter((model) => model.imageUrl).map(mapModelToCanvasAsset));
-        }
+    if (assetsResult.status === "fulfilled" && assetsResult.value.ok) {
+      const payload = await assetsResult.value.json();
+      const list = Array.isArray(payload) ? payload : payload.assets;
+      if (Array.isArray(list)) {
+        setPersistedAssets(list.map(mapPersistedAssetToCanvas).filter(Boolean) as CanvasAsset[]);
       }
     }
 
-    loadRealAssets().catch(() => {
+    if (modelsResult.status === "fulfilled" && modelsResult.value.ok) {
+      const models = await modelsResult.value.json();
+      if (Array.isArray(models)) {
+        setModelAssets(models.filter((model) => model.imageUrl).map(mapModelToCanvasAsset));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    refreshAssetLibrary().catch(() => {
       if (alive) setAssetMessage("真实资产暂时未接入，正在使用示例资产");
     });
 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refreshAssetLibrary]);
 
   useEffect(() => {
     let alive = true;
@@ -1133,42 +1364,6 @@ export function VisualWorkbench() {
     return () => {
       alive = false;
     };
-  }, []);
-
-  const refreshArtifacts = useCallback(async () => {
-    const artifacts = await fetchPersistedArtifacts(workflowId);
-    const signature = getPersistedArtifactListSignature(artifacts);
-    setArtifacts((current) => {
-      if (artifactsListSignatureRef.current === signature) return current;
-      if (getPersistedArtifactListSignature(current) === signature) {
-        artifactsListSignatureRef.current = signature;
-        return current;
-      }
-      artifactsListSignatureRef.current = signature;
-      return artifacts;
-    });
-    return artifacts;
-  }, [workflowId]);
-
-  const refreshJobs = useCallback(async () => {
-    const jobs = await fetchPersistedJobs(workflowId);
-    const signature = getPersistedJobListSignature(jobs);
-    setJobs((current) => {
-      if (jobsListSignatureRef.current === signature) return current;
-      if (getPersistedJobListSignature(current) === signature) {
-        jobsListSignatureRef.current = signature;
-        return current;
-      }
-      jobsListSignatureRef.current = signature;
-      return jobs;
-    });
-    return jobs;
-  }, [workflowId]);
-
-  const refreshQueue = useCallback(async () => {
-    const queue = await fetchPersistedJobQueueSnapshot();
-    setQueueSnapshot(queue);
-    return queue;
   }, []);
 
   const refreshProjects = useCallback(async () => {
@@ -1225,24 +1420,13 @@ export function VisualWorkbench() {
   }, [refreshProjects]);
 
   useEffect(() => {
-    let alive = true;
-
-    refreshArtifacts().catch(() => {
-      if (alive) setArtifactMessage("");
-    });
-
-    return () => {
-      alive = false;
-    };
-  }, [refreshArtifacts]);
-
-  useEffect(() => {
-    if (artifacts.length === 0 || canvasNodes.length === 0) return;
+    if (canvasNodes.length === 0) return;
+    const canvasArtifacts = getCanvasVisibleArtifacts(artifacts, canvasNodes);
 
     const signature = getArtifactReconcileSignature(
       canvasNodes,
       canvasEdges,
-      artifacts,
+      canvasArtifacts,
       hiddenArtifactNodeIds
     );
     if (signature === artifactReconcileSignatureRef.current) return;
@@ -1250,58 +1434,54 @@ export function VisualWorkbench() {
     const reconciled = reconcileArtifactResultNodes(
       canvasNodes,
       canvasEdges,
-      artifacts,
-      hiddenArtifactNodeIds
+      canvasArtifacts,
+      hiddenArtifactNodeIds,
+      withNodeArtifact
     );
     artifactReconcileSignatureRef.current = getArtifactReconcileSignature(
       reconciled.nodes,
       reconciled.edges,
-      artifacts,
+      canvasArtifacts,
       hiddenArtifactNodeIds
     );
-    if (reconciled.nodes !== canvasNodes) setCanvasNodes(reconciled.nodes);
+    if (reconciled.nodes !== canvasNodes) {
+      setCanvasNodes(reconciled.nodes);
+      const resultWallFocusNodeIds = getArtifactResultWallFocusNodeIds(reconciled.nodes, 8);
+      requestCanvasFocus(resultWallFocusNodeIds.length
+        ? resultWallFocusNodeIds
+        : canvasArtifacts.map(getArtifactResultNodeId).slice(0, 8)
+      );
+    }
     if (reconciled.edges !== canvasEdges) setCanvasEdges(reconciled.edges);
-  }, [artifacts, canvasEdges, canvasNodes, hiddenArtifactNodeIds]);
-
-  useEffect(() => {
-    let alive = true;
-
-    refreshJobs().catch(() => {
-      if (alive) setJobMessage("");
-    });
-    refreshQueue().catch(() => {
-      if (alive) setQueueSnapshot(null);
-    });
-
-    return () => {
-      alive = false;
-    };
-  }, [refreshJobs, refreshQueue]);
-
-  const hasActiveBackgroundJob = jobs.some(isActiveBackgroundJob);
+  }, [artifacts, canvasEdges, canvasNodes, hiddenArtifactNodeIds, requestCanvasFocus]);
 
   useEffect(() => {
     if (!hasActiveBackgroundJob) return;
+    if (workflowMessage === "正在按当前图组创建任务") {
+      setWorkflowMessage("任务已创建，正在生成");
+    }
+    if (composeMessage.startsWith("正在为") && composeMessage.includes("创建任务")) {
+      setComposeMessage("任务已创建，生成结果会回填到画布");
+    }
+  }, [composeMessage, hasActiveBackgroundJob, workflowMessage]);
 
-    let alive = true;
-    const intervalId = window.setInterval(() => {
-      void Promise.allSettled([refreshJobs(), refreshArtifacts()]).then(() => {
-        void refreshQueue();
-        if (alive) setJobMessage((message) => message || "任务生成中，正在等待产物回填");
-      });
-    }, 2500);
-
-    return () => {
-      alive = false;
-      window.clearInterval(intervalId);
-    };
-  }, [hasActiveBackgroundJob, refreshArtifacts, refreshJobs, refreshQueue]);
+  useEffect(() => {
+    if (!hasActiveBackgroundJob) return;
+    setJobMessage((message) => message || "任务生成中，正在等待产物回填");
+  }, [hasActiveBackgroundJob]);
 
   useEffect(() => {
     let alive = true;
     const loadMutationVersion = canvasMutationVersionRef.current;
+    const hasCanvasContentAtLoad = canvasNodes.length > 0 || canvasEdges.length > 0;
 
     async function loadSavedWorkflow() {
+      const search = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : undefined;
+      const shouldRestore = search?.get("restore") === "1";
+      const lastWorkflowId = readLastCanvasWorkflowId();
+
       if (activeProjectId) {
         if (loadedProjectCanvasRef.current === activeProjectId) return;
         workflowIdRef.current = null;
@@ -1317,38 +1497,56 @@ export function VisualWorkbench() {
         loadedProjectCanvasRef.current = activeProjectId;
 
         if (!projectWorkflowId) {
-          if (canvasMutationVersionRef.current !== loadMutationVersion) {
-            setWorkflowMessage("当前项目还没有保存画布，已保留本地编辑");
+          if (shouldRestore) {
+            setWorkflowMessage("当前项目还没有保存画布，正在恢复最近画布");
+          } else {
+            if (canvasMutationVersionRef.current !== loadMutationVersion && hasCanvasContentAtLoad) {
+              setWorkflowMessage("当前项目还没有保存画布，已保留本地编辑");
+              return;
+            }
+            setWorkflowId(null);
+            workflowIdRef.current = null;
+            setHiddenArtifactNodeIds([]);
+            setCanvasNodes([]);
+            setCanvasEdges([]);
+            setWorkflowMessage("当前项目还没有保存画布");
             return;
           }
-          setWorkflowId(null);
-          workflowIdRef.current = null;
-          setHiddenArtifactNodeIds([]);
-          setCanvasNodes([]);
-          setCanvasEdges([]);
-          setWorkflowMessage("当前项目还没有保存画布");
+        } else {
+          const workflowResponse = await apiFetch(`/api/workflows/${encodeURIComponent(projectWorkflowId)}`, {
+            cache: "no-store",
+          });
+          if (!workflowResponse.ok || !alive) {
+            setWorkflowMessage("项目画布读取失败，可重新保存当前画布");
+            return;
+          }
+          const workflow = await workflowResponse.json();
+          if (canvasMutationVersionRef.current !== loadMutationVersion && hasCanvasContentAtLoad) {
+            setWorkflowMessage("项目画布已在本地修改，未覆盖当前编辑");
+            return;
+          }
+          restoreWorkflowToCanvas(workflow);
+          setWorkflowMessage("已恢复项目画布");
           return;
         }
+      }
 
-        const workflowResponse = await apiFetch(`/api/workflows/${encodeURIComponent(projectWorkflowId)}`, {
-          cache: "no-store",
-        });
-        if (!workflowResponse.ok || !alive) {
-          setWorkflowMessage("项目画布读取失败，可重新保存当前画布");
-          return;
-        }
-        const workflow = await workflowResponse.json();
-        if (canvasMutationVersionRef.current !== loadMutationVersion) {
-          setWorkflowMessage("项目画布已在本地修改，未覆盖当前编辑");
-          return;
-        }
-        restoreWorkflowToCanvas(workflow);
-        setWorkflowMessage("已恢复项目画布");
+      if (!shouldRestore) {
+        setWorkflowMessage("");
         return;
       }
 
-      if (typeof window !== "undefined") {
-        const shouldRestore = new URLSearchParams(window.location.search).get("restore") === "1";
+      if (lastWorkflowId) {
+        const workflowResponse = await apiFetch(`/api/workflows/${encodeURIComponent(lastWorkflowId)}`, {
+          cache: "no-store",
+        });
+        if (workflowResponse.ok && alive) {
+          const workflow = await workflowResponse.json();
+          restoreWorkflowToCanvas(workflow);
+          setWorkflowMessage("已恢复当前画布");
+          return;
+        }
+        clearLastCanvasWorkflowId();
         if (!shouldRestore) {
           setWorkflowMessage("");
           return;
@@ -1388,6 +1586,7 @@ export function VisualWorkbench() {
           (edge) => restoredNodeIds.has(edge.source) && restoredNodeIds.has(edge.target)
         )
       );
+      requestCanvasFocus(getArtifactResultWallFocusNodeIds(restoredNodes, 8));
     }
 
     loadSavedWorkflow().catch(() => {
@@ -1397,16 +1596,37 @@ export function VisualWorkbench() {
     return () => {
       alive = false;
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, requestCanvasFocus]);
 
   const allAssets = useMemo(
-    () => [...persistedAssets, ...modelAssets, ...canvasAssets],
-    [canvasAssets, persistedAssets, modelAssets]
+    () => [...persistedAssets, ...modelAssets],
+    [persistedAssets, modelAssets]
   );
   const activeProject = useMemo(
     () => (activeProjectId ? projects.find((project) => project.id === activeProjectId) : undefined),
     [activeProjectId, projects]
   );
+  const activeProjectStarterPrompt = useMemo(
+    () => getStringValue(activeProject?.metadata?.agentStarterPrompt),
+    [activeProject]
+  );
+  useEffect(() => {
+    if (!activeProjectId || !activeProjectStarterPrompt) return;
+    if (composeBrief.trim() || workflowPlanPreview || agentImageEditTarget) return;
+
+    const promptKey = `${activeProjectId}:${activeProjectStarterPrompt}`;
+    if (appliedProjectStarterPromptRef.current === promptKey) return;
+
+    appliedProjectStarterPromptRef.current = promptKey;
+    setComposeBrief(activeProjectStarterPrompt);
+    setComposeMessage("已带入项目模板需求；上传素材后可让 Agent 规划。");
+  }, [
+    activeProjectId,
+    activeProjectStarterPrompt,
+    agentImageEditTarget,
+    composeBrief,
+    workflowPlanPreview,
+  ]);
   const activeCampaignId = useMemo(() => {
     if (!activeProject) return "";
     const metadataCampaignId = getStringValue(activeProject.metadata?.activeCampaignId);
@@ -1447,8 +1667,33 @@ export function VisualWorkbench() {
     return nodes;
   }, [artifacts, jobs, rawStageNodes]);
   const stageEdges = canvasNodes.length > 0 ? canvasEdges : [];
-  const selectedNode =
-    stageNodes.find((node) => node.id === selectedNodeId) ?? stageNodes[0];
+  const visibleArtifacts = useMemo(
+    () => getCanvasVisibleArtifacts(artifacts, stageNodes),
+    [artifacts, stageNodes]
+  );
+  const resultArtifactById = useMemo(
+    () => new Map(visibleArtifacts.map((artifact) => [artifact.id, artifact])),
+    [visibleArtifacts]
+  );
+  const resultReviewFilterCounts = useMemo(
+    () => buildResultReviewFilterCounts(visibleArtifacts),
+    [visibleArtifacts]
+  );
+  const canvasStageNodes = useMemo(
+    () =>
+      stageNodes
+        .filter((node) => !isGenerationFrameNode(node))
+        .filter((node) => isCanvasNodeVisibleForResultReviewFilter(node, resultReviewFilter, resultArtifactById))
+        .map((node) => withResultReviewFilterContext(node, resultReviewFilter, resultArtifactById)),
+    [resultArtifactById, resultReviewFilter, stageNodes]
+  );
+  const canvasStageEdges = useMemo(() => {
+    if (canvasStageNodes.length === stageNodes.length) return stageEdges;
+    const visibleNodeIds = new Set(canvasStageNodes.map((node) => node.id));
+    return stageEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  }, [canvasStageNodes, stageEdges, stageNodes.length]);
+  const selectedCanvasNode = canvasStageNodes.find((node) => node.id === selectedNodeId);
+  const selectedNode = selectedCanvasNode ?? canvasStageNodes[0] ?? stageNodes[0];
   const visibleFrameOutputCount = useMemo(
     () =>
       stageNodes
@@ -1458,23 +1703,36 @@ export function VisualWorkbench() {
         .length,
     [stageNodes]
   );
-  const visibleArtifactOutputCount = useMemo(() => {
-    const frameNodeIds = new Set(
-      stageNodes
-        .filter(isGenerationFrameNode)
-        .map((node) => node.id)
-    );
-    if (frameNodeIds.size === 0) return 0;
-    return artifacts.filter((artifact) => {
-      if (!artifact.url) return false;
-      const frameNodeId =
-        artifact.nodeId ||
-        getStringValue(artifact.metadata.frameNodeId) ||
-        getStringValue(artifact.metadata.sourceNodeId);
-      return !!frameNodeId && frameNodeIds.has(frameNodeId);
-    }).length;
-  }, [artifacts, stageNodes]);
+  const visibleArtifactOutputCount = visibleArtifacts.length;
   const visibleOutputCount = Math.max(visibleFrameOutputCount, visibleArtifactOutputCount);
+  useEffect(() => {
+    if (visibleOutputCount === 0) {
+      setAgentPanelCollapsed(false);
+      return;
+    }
+    if (workflowPlanPreview || agentImageEditTarget || composeBrief.trim() || composeMessage) return;
+    setAgentPanelCollapsed(true);
+  }, [agentImageEditTarget, composeBrief, composeMessage, visibleOutputCount, workflowPlanPreview]);
+  useEffect(() => {
+    if (workflowPlanPreview || agentImageEditTarget || composeBrief.trim() || composeMessage || composingWorkflow) {
+      setAgentPanelCollapsed(false);
+    }
+  }, [agentImageEditTarget, composeBrief, composeMessage, composingWorkflow, workflowPlanPreview]);
+  const activeVisibleJobCount = useMemo(
+    () => {
+      const artifactJobIds = new Set(
+        artifacts
+          .map((artifact) => artifact.jobId)
+          .filter((jobId): jobId is string => typeof jobId === "string" && !!jobId)
+      );
+      return jobs.filter((job) =>
+        isActiveBackgroundJob(job) &&
+        (!workflowId || job.workflowId === workflowId) &&
+        !artifactJobIds.has(job.id)
+      ).length;
+    },
+    [artifacts, jobs, workflowId]
+  );
   const visibleAssets = useMemo(
     () =>
       [...persistedAssets, ...modelAssets].filter(
@@ -1493,7 +1751,7 @@ export function VisualWorkbench() {
     () => getCanvasProductWorkflowContext(canvasNodes),
     [canvasNodes]
   );
-  const activeComposeProductTitle = activeProductComponent?.title ?? canvasProductWorkflowContext?.title ?? "";
+  const activeComposeProductTitle = canvasProductWorkflowContext?.title ?? activeProductComponent?.title ?? "";
   const hasAppliedAgentWorkflow = useMemo(
     () => hasWorkflowComposePlan(canvasNodes),
     [canvasNodes]
@@ -1502,7 +1760,31 @@ export function VisualWorkbench() {
     () => Boolean(findCanvasProductReferenceNode(canvasNodes)),
     [canvasNodes]
   );
-  const agentSampleOutputCount = resolveAgentSampleOutputCount(composeBrief, workflowPlanPreview);
+  const agentSampleOutputCount = resolveAgentSampleOutputCount(
+    composeBrief,
+    workflowPlanPreview ?? appliedWorkflowPlanPreview
+  );
+  const generationFrameNodes = useMemo(
+    () => stageNodes.filter(isGenerationFrameNode),
+    [stageNodes]
+  );
+  const activeAgentGenerationFrameNode = undefined;
+  const activeAgentGenerationFrameTitle =
+    cleanGenerationFrameDisplayLabel(
+      activeAgentGenerationFrameNode?.data.label || (activeAgentGenerationFrameNode ? "当前任务" : "")
+    );
+  const activeAgentGenerationFramePrompt = activeAgentGenerationFrameNode
+    ? getGenerationFramePrompt(activeAgentGenerationFrameNode)
+    : "";
+  const activeAgentGenerationFrameHasSameBrief =
+    Boolean(activeAgentGenerationFrameNode) &&
+    Boolean(composeBrief.trim()) &&
+    activeAgentGenerationFramePrompt.trim() === composeBrief.trim();
+  const agentPrimaryMode: CanvasAgentPrimaryMode = activeAgentGenerationFrameNode
+    ? activeAgentGenerationFrameHasSameBrief
+      ? "generate_frame"
+      : "plan_frame"
+    : "create_frame";
 
   const captureSnapshot = useCallback(
     (): CanvasSnapshot => ({
@@ -1557,7 +1839,7 @@ export function VisualWorkbench() {
 
       if (targetFrameId) {
         handleBindAssetToGenerationFrame(created, targetFrameId);
-        setAssetMessage("已放入框，满意后可保存到全局资产库");
+        setAssetMessage("素材已作为 Agent 参考，满意后可保存到全局资产库");
       } else if (category === "商品") {
         const productPlaceholder = findCanvasProductPlaceholderNode(canvasNodes);
         if (productPlaceholder) {
@@ -1572,7 +1854,7 @@ export function VisualWorkbench() {
           setWorkflowMessage("商品图已接入当前计划，可以生成样张");
           setComposeMessage("商品图已接入，可以生成样张");
         } else {
-          const nodePosition = canvasPosition ?? getNextLibraryInsertPosition(canvasNodes, selectedNode);
+          const nodePosition = canvasPosition ?? getNextLibraryInsertPosition(canvasNodes, selectedNode, category);
           const node = createNodeFromAsset(created, nodePosition, canvasNodes.length);
           pushHistorySnapshot();
           setCanvasNodes((nodes) => [...nodes, node]);
@@ -1582,7 +1864,7 @@ export function VisualWorkbench() {
           setWorkflowMessage("素材已放到画布；右键节点可保存到全局资产库");
         }
       } else {
-        const nodePosition = canvasPosition ?? getNextLibraryInsertPosition(canvasNodes, selectedNode);
+        const nodePosition = canvasPosition ?? getNextLibraryInsertPosition(canvasNodes, selectedNode, category);
         const node = createNodeFromAsset(created, nodePosition, canvasNodes.length);
         pushHistorySnapshot();
         setCanvasNodes((nodes) => [...nodes, node]);
@@ -1639,27 +1921,6 @@ export function VisualWorkbench() {
     setAssetPackReferenceUploads((items) => items.filter((item) => item.id !== uploadId));
   };
 
-  const handleUseTrayItemAsAssetPackReference = (item: AssetTrayItem) => {
-    if (!item.previewUrl) {
-      setAssetPackMessage("这个素材还没有可用预览图，不能作为参考");
-      return;
-    }
-
-    const referenceLabel = getAssetPackReferenceUploadLabel(assetPackCategory);
-    setAssetPackReferenceUploads((items) => [
-      ...items,
-      {
-        id: `asset-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: item.title || referenceLabel,
-        dataUrl: item.previewUrl,
-        size: 0,
-        source: "asset" as const,
-      },
-    ].slice(0, 12));
-    setActiveCategory(mapAssetPackCategoryToLibraryCategory(assetPackCategory));
-    setAssetPackMessage(`已把「${item.title}」加入${referenceLabel}`);
-  };
-
   const getEffectiveAssetPackRequest = () => {
     const request = assetPackRequest.trim();
     if (request) return request;
@@ -1670,6 +1931,7 @@ export function VisualWorkbench() {
   };
 
   const getCurrentAssetPackSourceImages = (category: AssetPackCategory, productAsset: CanvasAsset | undefined) => {
+    if (category === "copy_asset") return [];
     if (assetPackReferenceUploads.length > 0) {
       return buildAssetPackReferenceSourceImages(assetPackReferenceUploads, category);
     }
@@ -1687,6 +1949,12 @@ export function VisualWorkbench() {
     setAssetPackMessage("正在生成参考资产...");
 
     try {
+      if (assetPackCategory === "copy_asset") {
+        const draft = createCopyAssetPackDraft(request);
+        setAssetPackDraft(draft);
+        setAssetPackMessage("文案资产已结构化，满意后可保存");
+        return;
+      }
       const draft = await createAssetPackDraft(
         assetPackCategory,
         request,
@@ -1716,7 +1984,11 @@ export function VisualWorkbench() {
       setAssetPackDraft(null);
       setAssetPackRequest("");
       setAssetPackReferenceUploads([]);
-      setAssetPackMessage(result.createdComponent ? "已保存，可直接拖入生成框" : "已保存到全局资产库");
+      await refreshAssetLibrary();
+      if (result.createdAsset) {
+        setAssetLibraryFocusItemId(`asset:${result.createdAsset.id}`);
+      }
+      setAssetPackMessage(result.createdComponent ? "已保存，可拖到画布供 Agent 使用" : "已保存到全局资产库");
     } catch (error) {
       console.error("Failed to save asset pack:", error);
       setAssetPackMessage(error instanceof Error ? error.message : "保存失败");
@@ -1732,6 +2004,19 @@ export function VisualWorkbench() {
       return;
     }
     const sourceImages = getCurrentAssetPackSourceImages(assetPackCategory, latestProductAsset);
+    if (assetPackCategory === "copy_asset") {
+      setGeneratingAssetPack(true);
+      setAssetPackDraft(null);
+      setAssetPackMessage("正在整理文案资产...");
+      try {
+        const draft = createCopyAssetPackDraft(request);
+        setAssetPackDraft(draft);
+        setAssetPackMessage("文案资产已结构化，满意后可保存");
+      } finally {
+        setGeneratingAssetPack(false);
+      }
+      return;
+    }
     if (assetPackCategory === "product_asset" && sourceImages.length === 0) {
       setAssetPackMessage("先上传或拖入真实商品图；纯文字只能做概念商品，不能当原物品多角度参考");
       return;
@@ -1776,6 +2061,40 @@ export function VisualWorkbench() {
       throw new Error(typeof payload.error === "string" ? payload.error : "asset pack dry-run failed");
     }
     return normalizeAssetPackDraft(payload, category, request);
+  };
+
+  const createCopyAssetPackDraft = (request: string): AssetPackDraft => {
+    const copyBrief = buildStructuredCopyBrief(request);
+    const titleSeed =
+      copyBrief.inImageText[0] ||
+      copyBrief.sellingPoints[0] ||
+      copyBrief.exportCopy[0] ||
+      request;
+    const title = `文案资产 · ${titleSeed.slice(0, 18)}`;
+
+    return {
+      id: `copy-asset-pack-${Date.now()}`,
+      category: "copy_asset",
+      title,
+      description: request,
+      status: "ready",
+      referenceImages: [],
+      invariants: copyBrief.constraints,
+      allowedVariations: copyBrief.exportCopy,
+      negativeRules: copyBrief.negativeRules,
+      qualityRules: copyBrief.qualityRules,
+      promptFragments: copyBrief.promptFragments,
+      parameters: {
+        text: request,
+        copyText: request,
+        copyBrief,
+        inImageText: copyBrief.inImageText,
+        sellingPoints: copyBrief.sellingPoints,
+        exportCopy: copyBrief.exportCopy,
+        forbiddenClaims: copyBrief.forbiddenClaims,
+      },
+      providerUsablePrimaryReference: "",
+    };
   };
 
   const generateAssetPackWithReference = async (
@@ -1850,6 +2169,17 @@ export function VisualWorkbench() {
       ? (assetPayload.asset ?? assetPayload).id
       : "";
     let createdComponent: PersistedComponent | null = null;
+
+    if (draft.category === "copy_asset") {
+      if (createdAsset) {
+        setPersistedAssets((assets) => [
+          createdAsset,
+          ...assets.filter((asset) => asset.id !== createdAsset.id),
+        ]);
+      }
+      setActiveCategory("文案");
+      return { createdAsset, createdComponent };
+    }
 
     const componentResponse = await apiFetch("/api/components", {
       method: "POST",
@@ -1972,7 +2302,11 @@ export function VisualWorkbench() {
     }
   };
 
-  async function saveWorkflowSnapshot(options: { silent?: boolean } = {}): Promise<string | null> {
+  async function saveWorkflowSnapshot(options: {
+    silent?: boolean;
+    nodes?: CanvasWorkbenchNode[];
+    edges?: CanvasWorkbenchEdge[];
+  } = {}): Promise<string | null> {
     if (!options.silent) {
       setSavingWorkflow(true);
       setWorkflowMessage("正在保存画布...");
@@ -1984,8 +2318,8 @@ export function VisualWorkbench() {
         description: activeProject
           ? "项目内保存的空间化生成工作台"
           : "由画布原型保存的低代码生图流程",
-        nodes: canvasNodes,
-        edges: canvasEdges,
+        nodes: options.nodes ?? canvasNodes,
+        edges: options.edges ?? canvasEdges,
         metadata: {
           kind: "canvas-workbench",
           projectId: activeProjectId || undefined,
@@ -2009,6 +2343,7 @@ export function VisualWorkbench() {
       const savedWorkflowId = saved.id ?? saved.workflow?.id ?? currentWorkflowId ?? null;
       setWorkflowId(savedWorkflowId);
       workflowIdRef.current = savedWorkflowId;
+      if (savedWorkflowId) writeLastCanvasWorkflowId(savedWorkflowId);
 
       if (activeProjectId && savedWorkflowId) {
         await linkWorkflowToProjectCanvas(activeProjectId, savedWorkflowId);
@@ -2084,6 +2419,7 @@ export function VisualWorkbench() {
       setComposeMessage(options.message ?? `${draft.title} · ${draft.nodes.length} 节点 / ${edges.length} 连线`);
       if (options.productMessage) setProductImportMessage(options.productMessage);
       setWorkflowPlanPreview(null);
+      setAppliedWorkflowPlanPreview(null);
       setPendingWorkflowDraft(null);
     },
     [pushHistorySnapshot, requestCanvasFocus]
@@ -2092,9 +2428,12 @@ export function VisualWorkbench() {
   const runWorkflowCompose = async (
     brief: string,
     productComponent?: PersistedComponent | null,
-    source: "compose" | "product-import" = "compose"
+    source: "compose" | "product-import" = "compose",
+    userDisplayBrief = brief
   ) => {
     setComposingWorkflow(true);
+    setAgentLastUserBrief(userDisplayBrief.trim());
+    setAgentPlanDiff(null);
     setComposeMessage("正在生成工作流草案...");
     if (source === "product-import") setProductImportMessage("正在按导入商品生成工作流...");
 
@@ -2102,15 +2441,31 @@ export function VisualWorkbench() {
       const productContext = productComponent
         ? getProductComponentWorkflowContext(productComponent)
         : canvasProductWorkflowContext;
+      const shouldUseProjectStarterContext = source === "product-import";
+      const structuredProjectStarterPrompt = shouldUseProjectStarterContext
+        ? activeProjectStarterPrompt || undefined
+        : undefined;
+      const effectiveBrief = shouldUseProjectStarterContext
+        ? buildProjectAwareAgentBrief({
+            projectStarterPrompt: structuredProjectStarterPrompt,
+            userBrief: brief,
+          })
+        : brief.trim();
+      const copyRenderMode = inferAgentCopyRenderMode(
+        effectiveBrief,
+        hasExplicitCopyBurnInRequest(effectiveBrief)
+      );
       const response = await apiFetch("/api/workflow-compose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          brief,
+          brief: effectiveBrief,
+          projectStarterPrompt: structuredProjectStarterPrompt,
+          projectIntent: structuredProjectStarterPrompt,
           productTitle: productContext?.title,
           productDescription: productContext?.description,
           componentIds: productComponent ? [productComponent.id] : undefined,
-          copyRenderMode: copyBurnInRequested ? "burn_in" : "layout_layer",
+          copyRenderMode,
           previewPlan: true,
           saveWorkflow: false,
         }),
@@ -2121,15 +2476,47 @@ export function VisualWorkbench() {
       const draft = mapWorkflowComposeDraft(payload.workflowDraft);
       if (!draft || draft.nodes.length === 0) throw new Error("invalid workflow draft");
       const planPreview = mapWorkflowPlanPreview(payload.planPreview);
+      const enrichment = planPreview
+          ? await enrichWorkflowPlanPreviewWithAgentPlan({
+            preview: planPreview,
+            draft,
+            brief: effectiveBrief,
+            userBrief: brief,
+            projectStarterPrompt: structuredProjectStarterPrompt,
+            copyRenderMode,
+            referenceContext: buildCanvasAgentPlanningReferenceContext({
+              nodes: canvasNodes,
+              components,
+              assets: allAssets,
+            }),
+          })
+        : null;
+      const enrichedPlanPreview = enrichment?.preview ?? null;
+      const effectiveDraft =
+        planPreview &&
+        enrichedPlanPreview &&
+        enrichedPlanPreview.items.length !== planPreview.items.length &&
+        enrichedPlanPreview.agentPlan?.generationMatrix
+          ? applyEditedPlanItemsToWorkflowDraft(
+              draft,
+              enrichedPlanPreview.items,
+              enrichedPlanPreview.agentPlan.generationMatrix
+            )
+          : draft;
 
-      setPendingWorkflowDraft(draft);
-      setWorkflowPlanPreview(planPreview);
+      setAppliedWorkflowPlanPreview(null);
+      setPendingWorkflowDraft(effectiveDraft);
+      setWorkflowPlanPreview(enrichedPlanPreview);
       setWorkflowMessage("已生成计划预览，确认后应用到画布");
       setComposeMessage(
-        planPreview
-          ? `${planPreview.title} · ${planPreview.estimatedCount} 张计划图`
+        enrichedPlanPreview
+          ? enrichment?.fallbackUsed
+            ? `${enrichedPlanPreview.title} · ${enrichedPlanPreview.estimatedCount} 张基础计划图 · ${enrichment.fallbackReason || "Agent 深度规划暂不可用"}`
+            : `${enrichedPlanPreview.title} · ${enrichedPlanPreview.estimatedCount} 张计划图`
           : `${draft.title} · ${draft.nodes.length} 节点草案`
       );
+      setAgentLastUserBrief(userDisplayBrief.trim());
+      setComposeBrief("");
       if (source === "product-import") {
         setProductImportMessage(`已按 ${productContext?.title || "导入商品"} 生成计划预览`);
       }
@@ -2152,8 +2539,23 @@ export function VisualWorkbench() {
     const draft = existingProductNode
       ? bindExistingProductReferenceToWorkflowDraft(pendingWorkflowDraft, existingProductNode)
       : pendingWorkflowDraft;
+    const preservedReferenceNodes = getCanvasReferenceNodesToPreserveForWorkflowApply(canvasNodes, draft);
+    const preservedIds = new Set(preservedReferenceNodes.map((node) => node.id));
+    const mergedDraft = preservedReferenceNodes.length > 0
+      ? {
+          ...draft,
+          nodes: [...preservedReferenceNodes, ...draft.nodes],
+          edges: [
+            ...canvasEdges.filter(
+              (edge) => preservedIds.has(edge.source) && preservedIds.has(edge.target)
+            ),
+            ...draft.edges,
+          ],
+        }
+      : draft;
 
-    applyWorkflowDraftToCanvas(draft, {
+    const appliedPlan = workflowPlanPreview;
+    applyWorkflowDraftToCanvas(mergedDraft, {
       message: existingProductNode
         ? "计划已放好，可以生成样张"
         : "计划已放好，下一步导入商品图",
@@ -2161,11 +2563,15 @@ export function VisualWorkbench() {
         ? "计划已接入当前商品图，可以生成样张"
         : "计划已放好，先补商品图",
     });
-  }, [applyWorkflowDraftToCanvas, canvasNodes, pendingWorkflowDraft]);
+    setAppliedWorkflowPlanPreview(appliedPlan);
+    setComposeBrief("");
+  }, [applyWorkflowDraftToCanvas, canvasNodes, pendingWorkflowDraft, workflowPlanPreview]);
 
   const handleDismissWorkflowPlan = useCallback(() => {
     setWorkflowPlanPreview(null);
+    setAppliedWorkflowPlanPreview(null);
     setPendingWorkflowDraft(null);
+    setAgentPlanDiff(null);
     setComposeMessage("已关闭计划预览");
   }, []);
 
@@ -2177,14 +2583,392 @@ export function VisualWorkbench() {
     []
   );
 
+  const handleRunAgentImageRevision = async () => {
+    const target = agentImageEditTarget;
+    const brief = composeBrief.trim();
+    if (!target?.url) {
+      setComposeMessage("先点一张要修改的图");
+      return;
+    }
+    if (!brief) {
+      setComposeMessage("说一下这张图要怎么改");
+      return;
+    }
+
+    setComposingWorkflow(true);
+    setAgentLastUserBrief(brief);
+    setComposeMessage(`正在基于「${target.title}」创建修改任务...`);
+    setJobMessage("正在创建图片修改任务...");
+
+    try {
+      const sourceNode = target.nodeId
+        ? canvasNodes.find((node) => node.id === target.nodeId)
+        : undefined;
+      const sourceBatchId =
+        getStringValue(sourceNode?.data.generationFrameActiveBatchId);
+      const batchId = sourceBatchId || `agent_revision_${Date.now()}`;
+      const referenceContext = buildAgentImageRevisionReferenceContext(target);
+      const providerReferenceAdapter = buildProviderReferenceAdapter(referenceContext);
+      const prompt = buildAgentImageRevisionPrompt(target, brief);
+      const revisionAssetInvocationPlan = buildAgentImageRevisionAssetInvocationPlan(referenceContext);
+      let workflowIdForJob = workflowIdRef.current ?? workflowId;
+      try {
+        workflowIdForJob = (await saveWorkflowSnapshot({
+          silent: true,
+          nodes: canvasNodes,
+          edges: canvasEdges,
+        })) ?? workflowIdForJob;
+      } catch {
+        setWorkflowMessage("画布自动保存失败，本次修改结果可能不会在刷新后恢复");
+      }
+
+      const response = await apiFetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workflowId: workflowIdForJob ?? undefined,
+          nodeId: target.nodeId,
+          status: "pending",
+          prompt,
+          metadata: {
+            source: "agent-image-revision",
+            frameNodeId: target.nodeId,
+            batchId,
+            batchTitle: "图片再修改",
+            batchIndex: 1,
+            batchTotal: 1,
+            planItemTitle: `${target.title} 再修改`,
+            planItemType: "image_revision",
+            useCase: "image_revision",
+            imageType: "image_revision",
+            size: "1536x1024",
+            projectId: activeProjectId || undefined,
+            campaignId: activeCampaignId || undefined,
+            projectSource: activeProjectId ? "canvas-project" : undefined,
+            approvedProviderCallLimit: 1,
+            referenceContext,
+            referenceImages: referenceContext.images,
+            providerReferenceAdapter,
+            assetInvocationPlan: revisionAssetInvocationPlan,
+            assetInvocationPlanner: {
+              mode: "agent_image_revision_v1",
+              fallbackUsed: false,
+            },
+            originalPrompt: target.prompt,
+            originalRatio: getAgentRevisionRatioText(target.metadata ?? {}),
+            originalCopyRenderPolicy: compactCopyRenderPolicyForAsset(target.metadata?.copyRenderPolicy),
+            originalVisualQa: getAgentRevisionVisualQaText(target),
+            revisionScope: {
+              mode: "single_image",
+              preserveOtherGroups: true,
+            },
+            providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+            providerReferenceStrategy: providerReferenceAdapter.strategy,
+            providerReferenceCount: providerReferenceAdapter.providerUsableImages.length,
+            providerReferenceImageUrls: providerReferenceAdapter.providerUsableImages.map((image) => image.url),
+            usesProviderReference: providerReferenceAdapter.providerUsableImages.length > 0,
+            revisionSource: {
+              outputId: target.outputId,
+              artifactId: target.artifactId,
+              jobId: target.jobId,
+              nodeId: target.nodeId,
+              title: target.title,
+              url: target.url,
+            },
+            userRequest: brief,
+          },
+        }),
+      });
+      const createdPayload = await response.json();
+      const createdJob = mapPersistedJob(createdPayload);
+      if (!response.ok || !createdJob) throw new Error("revision job creation failed");
+      setJobs((items) => [createdJob, ...items.filter((item) => item.id !== createdJob.id)]);
+
+      const runResponse = await apiFetch(`/api/jobs/${encodeURIComponent(createdJob.id)}/run`, {
+        method: "POST",
+      });
+      const runPayload = await runResponse.json();
+      const queuedJob = mapPersistedJob(runPayload.job) ?? createdJob;
+      if (!runResponse.ok) throw new Error(getStringValue(runPayload.error) || "revision job run failed");
+
+      setJobs((items) => [queuedJob, ...items.filter((item) => item.id !== queuedJob.id)]);
+      setWorkflowMessage("已提交这张图的修改任务，结果会回填到画布");
+      setComposeMessage(buildAgentImageRevisionMessage(target, brief));
+      setComposeBrief("");
+      void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue(), refreshProjects()]);
+    } catch (error) {
+      console.error("Failed to run image revision:", error);
+      setComposeMessage("图片修改任务创建失败，请稍后重试");
+      setJobMessage("图片修改任务创建失败");
+    } finally {
+      setComposingWorkflow(false);
+    }
+  };
+
+  const handleRunAgentResultGroupRevision = async (
+    group: AgentPlanGroup,
+    userBrief: string,
+    groupArtifacts: PersistedGeneratedArtifact[]
+  ) => {
+    const brief = userBrief.trim();
+    const targets = groupArtifacts
+      .filter((artifact) => artifact.url)
+      .map((artifact): AgentImageEditTarget => ({
+        url: artifact.url,
+        title: artifact.title,
+        artifactId: artifact.id,
+        jobId: artifact.jobId,
+        nodeId: artifact.nodeId,
+        status: artifact.status,
+        prompt: artifact.prompt,
+        metadata: artifact.metadata,
+      }));
+
+    if (!brief) {
+      setComposeMessage("说一下这组要怎么改");
+      return;
+    }
+    if (targets.length === 0) {
+      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, 0, 0));
+      setAgentLastUserBrief(brief);
+      setComposeMessage(`已选中「${group.title}」，但没有找到可重做的成片。可以先点单张图确认结果是否还在画布里。`);
+      return;
+    }
+
+    setComposingWorkflow(true);
+    setAgentLastUserBrief(brief);
+    setComposeMessage(`正在为「${group.title}」创建 ${targets.length} 张分组修改任务...`);
+    setJobMessage("正在创建分组修改任务...");
+
+    const batchId = `agent_group_revision_${Date.now()}`;
+    let workflowIdForJob = workflowIdRef.current ?? workflowId;
+    try {
+      workflowIdForJob = (await saveWorkflowSnapshot({
+        silent: true,
+        nodes: canvasNodes,
+        edges: canvasEdges,
+      })) ?? workflowIdForJob;
+    } catch {
+      setWorkflowMessage("画布自动保存失败，本次分组修改结果可能不会在刷新后恢复");
+    }
+
+    const queuedJobs: PersistedGenerationJob[] = [];
+    let failedCount = 0;
+
+    for (const [index, target] of targets.entries()) {
+      try {
+        const referenceContext = buildAgentImageRevisionReferenceContext(target);
+        const providerReferenceAdapter = buildProviderReferenceAdapter(referenceContext);
+        const groupContextPrompt = buildAgentGroupRevisionPromptContext(group, targets, target);
+        const prompt = [
+          buildAgentImageRevisionPrompt(target, brief),
+          groupContextPrompt,
+        ].filter(Boolean).join("\n\n");
+        const revisionAssetInvocationPlan = buildAgentImageRevisionAssetInvocationPlan(referenceContext);
+
+        const response = await apiFetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workflowId: workflowIdForJob ?? undefined,
+            nodeId: target.nodeId,
+            status: "pending",
+            prompt,
+            metadata: {
+              source: "agent-result-group-revision",
+              frameNodeId: target.nodeId,
+              batchId,
+              batchTitle: `${group.title}分组修改`,
+              batchIndex: index + 1,
+              batchTotal: targets.length,
+              planItemTitle: `${target.title} 分组再修改`,
+              planItemType: "group_image_revision",
+              useCase: "group_image_revision",
+              imageType: "group_image_revision",
+              size: "1536x1024",
+              projectId: activeProjectId || undefined,
+              campaignId: activeCampaignId || undefined,
+              projectSource: activeProjectId ? "canvas-project" : undefined,
+              approvedProviderCallLimit: 1,
+              referenceContext,
+              referenceImages: referenceContext.images,
+              providerReferenceAdapter,
+              assetInvocationPlan: revisionAssetInvocationPlan,
+              assetInvocationPlanner: {
+                mode: "agent_group_revision_v1",
+                fallbackUsed: false,
+              },
+              originalPrompt: target.prompt,
+              originalRatio: getAgentRevisionRatioText(target.metadata ?? {}),
+              originalCopyRenderPolicy: compactCopyRenderPolicyForAsset(target.metadata?.copyRenderPolicy),
+              originalVisualQa: getAgentRevisionVisualQaText(target),
+              providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+              providerReferenceStrategy: providerReferenceAdapter.strategy,
+              providerReferenceCount: providerReferenceAdapter.providerUsableImages.length,
+              providerReferenceImageUrls: providerReferenceAdapter.providerUsableImages.map((image) => image.url),
+              usesProviderReference: providerReferenceAdapter.providerUsableImages.length > 0,
+              revisionGroup: {
+                title: group.title,
+                count: group.count,
+                ratios: group.ratios,
+                providerRoles: group.providerRoles,
+                promptOnlyRoles: group.promptOnlyRoles,
+                copyModes: group.copyModes,
+                artifactIds: group.artifactIds,
+              },
+              revisionScope: {
+                mode: "group_only",
+                targetGroup: group.title,
+                targetCount: targets.length,
+                preserveOtherGroups: true,
+                context: groupContextPrompt,
+              },
+              revisionSource: {
+                artifactId: target.artifactId,
+                jobId: target.jobId,
+                nodeId: target.nodeId,
+                title: target.title,
+                url: target.url,
+              },
+              userRequest: brief,
+            },
+          }),
+        });
+        const createdPayload = await response.json();
+        const createdJob = mapPersistedJob(createdPayload);
+        if (!response.ok || !createdJob) throw new Error("group revision job creation failed");
+
+        const runResponse = await apiFetch(`/api/jobs/${encodeURIComponent(createdJob.id)}/run`, {
+          method: "POST",
+        });
+        const runPayload = await runResponse.json();
+        const queuedJob = mapPersistedJob(runPayload.job) ?? createdJob;
+        if (!runResponse.ok) throw new Error(getStringValue(runPayload.error) || "group revision job run failed");
+        queuedJobs.push(queuedJob);
+      } catch (error) {
+        failedCount += 1;
+        console.error("Failed to run result group revision item:", error);
+      }
+    }
+
+    if (queuedJobs.length > 0) {
+      setJobs((items) => [
+        ...queuedJobs,
+        ...items.filter((item) => !queuedJobs.some((job) => job.id === item.id)),
+      ]);
+      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, targets.length, queuedJobs.length));
+      setWorkflowMessage(`已提交「${group.title}」分组修改任务`);
+      setComposeMessage(buildAgentResultGroupRevisionMessage(group, brief, targets.length, queuedJobs.length, failedCount));
+      setComposeBrief("");
+      void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue(), refreshProjects()]);
+    } else {
+      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, targets.length, 0));
+      setComposeMessage(`「${group.title}」分组修改任务创建失败，没有任务提交成功。`);
+      setJobMessage("分组修改任务创建失败");
+    }
+    setComposingWorkflow(false);
+  };
+
   const handleComposeWorkflow = async () => {
+    if (agentImageEditTarget) {
+      await handleRunAgentImageRevision();
+      return;
+    }
+
     const brief = composeBrief.trim();
     if (!brief) {
       setComposeMessage("先输入一个需求 brief");
       return;
     }
 
-    await runWorkflowCompose(brief, activeProductComponent);
+    if (workflowPlanPreview) {
+      const planEdit = applyAgentNaturalLanguagePlanEdit({
+        preview: workflowPlanPreview,
+        draft: pendingWorkflowDraft,
+        userBrief: brief,
+      });
+      if (planEdit.changed) {
+        setWorkflowPlanPreview(planEdit.preview);
+        if (planEdit.draft) setPendingWorkflowDraft(planEdit.draft);
+        setAgentPlanDiff(planEdit.diff ?? null);
+        setAgentLastUserBrief(brief);
+        setComposeBrief("");
+        setComposeMessage(planEdit.message);
+        setWorkflowMessage("已按你的话调整计划");
+        return;
+      }
+
+      await runWorkflowCompose(
+        buildAgentPlanRevisionBrief(workflowPlanPreview, brief),
+        canvasProductWorkflowContext ? null : activeProductComponent,
+        "compose",
+        brief
+      );
+      return;
+    }
+
+    if (activeAgentGenerationFrameNode) {
+      const updatedNode = applyPromptToGenerationFrameNode(activeAgentGenerationFrameNode, brief);
+      pushHistorySnapshot();
+      setCanvasNodes((nodes) =>
+        nodes.some((node) => node.id === updatedNode.id)
+          ? nodes.map((node) => (node.id === updatedNode.id ? updatedNode : node))
+          : [...nodes, updatedNode]
+      );
+      setWorkflowPlanPreview(null);
+      setPendingWorkflowDraft(null);
+      if (!activeAgentGenerationFrameHasSameBrief) {
+        setWorkflowMessage("已把右上角需求写入当前任务");
+        setComposeMessage("已更新当前任务，再点一次开始生成");
+        return;
+      }
+
+      setWorkflowMessage("正在创建生成任务");
+      setComposeMessage(`正在为「${cleanGenerationFrameDisplayLabel(updatedNode.data.label || "当前任务")}」创建任务...`);
+      await handleCreateJobForNode(updatedNode);
+      return;
+    }
+
+    await runWorkflowCompose(brief, canvasProductWorkflowContext ? null : activeProductComponent, "compose", brief);
+  };
+
+  const handleEditWorkflowPlanFromAgent = async (visiblePreview?: WorkflowPlanPreview | null) => {
+    const brief = composeBrief.trim();
+    const activePreview = visiblePreview ?? workflowPlanPreview;
+    if (!brief || !activePreview) {
+      setComposeMessage("当前计划还没准备好，稍后再试");
+      return;
+    }
+
+    const planEdit = applyAgentNaturalLanguagePlanEdit({
+      preview: activePreview,
+      draft: pendingWorkflowDraft,
+      userBrief: brief,
+    });
+    const effectivePlanEdit = planEdit.changed
+      ? planEdit
+      : applyAgentNaturalLanguagePlanEditFallbackOnly({
+          preview: activePreview,
+          draft: pendingWorkflowDraft,
+          userBrief: brief,
+        });
+    if (effectivePlanEdit.changed) {
+      setWorkflowPlanPreview(effectivePlanEdit.preview);
+      if (effectivePlanEdit.draft) setPendingWorkflowDraft(effectivePlanEdit.draft);
+      setAgentPlanDiff(effectivePlanEdit.diff ?? null);
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(effectivePlanEdit.message);
+      setWorkflowMessage("已按你的话调整计划");
+      return;
+    }
+
+    await runWorkflowCompose(
+      buildAgentPlanRevisionBrief(activePreview, brief),
+      canvasProductWorkflowContext ? null : activeProductComponent,
+      "compose",
+      brief
+    );
   };
 
   const handleComposeImportedProductWorkflow = async () => {
@@ -2326,15 +3110,27 @@ export function VisualWorkbench() {
           userRequest: getStringValue(node.data.generationUserRequest) ?? frameState.prompt,
         });
         if (!runDecision.canRun) {
-          setJobMessage(runDecision.message ?? "生成框缺少运行输入");
+          setJobMessage(runDecision.message ?? "任务缺少运行输入");
           return;
         }
-        const workflowIdForJob = activeProjectId
-          ? await saveWorkflowSnapshot({ silent: true })
-          : (workflowIdRef.current ?? workflowId);
-        const planPrompt = buildJobPromptFromNode(node, nodeProductAsset, referenceContext);
         const batchId = `frame_batch_${node.id}_${Date.now()}`;
-        const planItems = buildGenerationFramePlanItems(node, planPrompt);
+        const runNode = prepareGenerationFrameNodeForNewBatch(node, batchId);
+        const nodesForJob = canvasNodes.some((item) => item.id === runNode.id)
+          ? canvasNodes.map((item) => (item.id === runNode.id ? runNode : item))
+          : [...canvasNodes, runNode];
+        setCanvasNodes(nodesForJob);
+        let workflowIdForJob = workflowIdRef.current ?? workflowId;
+        try {
+          workflowIdForJob = (await saveWorkflowSnapshot({
+            silent: true,
+            nodes: nodesForJob,
+            edges: canvasEdges,
+          })) ?? workflowIdForJob;
+        } catch {
+          setWorkflowMessage("画布自动保存失败，本次结果可能不会在刷新后恢复");
+        }
+        const planPrompt = buildJobPromptFromNode(runNode, nodeProductAsset, referenceContext);
+        const planItems = buildGenerationFramePlanItems(runNode, planPrompt);
         const confirmedProviderCallLimit = planItems.length;
         const generationUserRequest = getStringValue(node.data.generationUserRequest) ?? frameState.prompt ?? "";
         const generationOutputType = getStringValue(node.data.generationOutputType) ?? frameState.outputType ?? "canvas_generation_frame";
@@ -2345,7 +3141,7 @@ export function VisualWorkbench() {
             workflowId: workflowIdForJob,
             projectId: activeProjectId || undefined,
             campaignId: activeCampaignId || undefined,
-            frameNodeId: node.id,
+            frameNodeId: runNode.id,
             batchId,
             batchTitle: `${node.data.label} 图组`,
             request: generationUserRequest,
@@ -2364,7 +3160,7 @@ export function VisualWorkbench() {
                 ...scopedBaseMetadata,
                 ...item.metadata,
                 batchId,
-                frameNodeId: node.id,
+                frameNodeId: runNode.id,
               },
             })),
           }),
@@ -2399,9 +3195,12 @@ export function VisualWorkbench() {
           ...items.filter((item) => !visibleCreatedJobs.some((created) => created.id === item.id)),
         ]);
         const agentPlanText = getStringValue(payload.plan?.agentPlan?.summary?.text);
-        setJobMessage(agentPlanText
+        const createdMessage = agentPlanText
           ? `开始生成 ${createdJobs.length} 张图 · ${agentPlanText}`
-          : `开始生成 ${createdJobs.length} 张图`);
+          : `开始生成 ${createdJobs.length} 张图`;
+        setJobMessage(createdMessage);
+        setWorkflowMessage(`已创建 ${createdJobs.length} 张图，结果会自动回填到画布`);
+        setComposeMessage(createdMessage);
         void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue(), refreshProjects()]);
         return;
       }
@@ -2461,7 +3260,12 @@ export function VisualWorkbench() {
       }
     } catch (error) {
       console.error("Failed to create canvas job:", error);
-      setJobMessage("任务创建失败，请稍后重试");
+      const message = error instanceof Error && error.message.trim()
+        ? error.message
+        : "任务创建失败，请稍后重试";
+      setJobMessage(message);
+      setWorkflowMessage(message);
+      setComposeMessage(message);
     } finally {
       setCreatingJobForNodeId(null);
     }
@@ -2481,12 +3285,21 @@ export function VisualWorkbench() {
       return;
     }
 
-    const cleanBrief = composeBrief.trim();
-    const sampleOutputCount = resolveAgentSampleOutputCount(composeBrief, workflowPlanPreview);
+    const userBrief = composeBrief.trim();
+    const structuredProjectStarterPrompt = userBrief ? undefined : activeProjectStarterPrompt || undefined;
+    const cleanBrief = userBrief || structuredProjectStarterPrompt || "";
+    const explicitSampleBurnIn = hasExplicitCopyBurnInRequest(cleanBrief);
+    const sampleOutputCount = resolveAgentSampleOutputCount(
+      composeBrief,
+      workflowPlanPreview ?? appliedWorkflowPlanPreview
+    );
     const agentSampleOutputType = "custom_template";
+    const sampleGuidance = explicitSampleBurnIn
+      ? `先生成 ${sampleOutputCount} 张样张用于确认方向。用户已明确要求文案进图，短文案必须烧进画面安全区。`
+      : `先生成 ${sampleOutputCount} 张样张用于确认方向。文案默认作为可编辑图层，除非明确要求，不直接烧进图片。`;
     const generationRequest = [
       cleanBrief || "给当前商品生成一组淘宝商品样张，包含主图海报、卖点图、细节图和生活场景图。",
-      `先生成 ${sampleOutputCount} 张样张用于确认方向。文案默认作为可编辑图层，除非明确要求，不直接烧进图片。`,
+      sampleGuidance,
     ].join("\n");
     const framePosition = findAvailableGenerationFramePosition(canvasNodes, {
       anchorNode: productNode,
@@ -2501,21 +3314,27 @@ export function VisualWorkbench() {
       index: canvasNodes.length,
       position: framePosition,
     });
-    const generationFrame = bindNodeToGenerationFrameSlot(
+    const sampleReferenceNodes = getAgentSampleReferenceNodes(canvasNodes, {
+      productNode,
+    });
+    const generationFrame = sampleReferenceNodes.reduce(
+      (frame, referenceNode) =>
+        bindNodeToGenerationFrameSlot(frame, referenceNode.node, {
+          role: referenceNode.role,
+          updatedAt: now,
+        }),
       {
         ...migrateLegacyGenerationFrameData(baseFrameNode.data, baseFrameNode.id),
         prompt: generationRequest,
         outputType: agentSampleOutputType,
         updatedAt: now,
-      },
-      productNode,
-      { role: "product", updatedAt: now }
+      }
     );
     const frameNode: CanvasWorkbenchNode = {
       ...baseFrameNode,
       data: {
         ...baseFrameNode.data,
-        label: "样张生成框",
+        label: "样张图组",
         caption: "已接入商品图，先出少量样张确认方向。",
         source: "agent-sample",
         generationOutputType: agentSampleOutputType,
@@ -2527,25 +3346,36 @@ export function VisualWorkbench() {
         ),
       },
     };
-    const frameEdge: CanvasWorkbenchEdge = {
-      id: `${productNode.id}-${frameNode.id}`,
-      source: productNode.id,
+    const frameEdges: CanvasWorkbenchEdge[] = sampleReferenceNodes.map(({ node, role }) => ({
+      id: `${node.id}-${frameNode.id}`,
+      source: node.id,
       target: frameNode.id,
-      label: "生成样张",
+      label: role === "product" ? "生成样张" : getAgentReferenceEdgeLabel(role),
       animated: true,
-    };
+    }));
     const nextNodes = [...canvasNodes, frameNode];
-    const nextEdges = [...canvasEdges, frameEdge];
+    const nextEdges = [...canvasEdges, ...frameEdges];
 
     pushHistorySnapshot();
     setCanvasNodes(nextNodes);
     setCanvasEdges(nextEdges);
-    setSelectedNodeId(frameNode.id);
-    requestCanvasFocus([productNode.id, frameNode.id]);
+    setSelectedNodeId(productNode.id);
+    requestCanvasFocus([productNode.id, ...sampleReferenceNodes.map(({ node }) => node.id)]);
     setGeneratingAgentSample(true);
     setJobMessage(`正在创建 ${sampleOutputCount} 张样张任务...`);
 
     try {
+      let workflowIdForJob = workflowIdRef.current ?? workflowId;
+      try {
+        workflowIdForJob = (await saveWorkflowSnapshot({
+          silent: true,
+          nodes: nextNodes,
+          edges: nextEdges,
+        })) ?? workflowIdForJob;
+      } catch {
+        setWorkflowMessage("画布自动保存失败，本次结果可能不会在刷新后恢复");
+      }
+
       const referenceContext = buildCanvasGenerationReferenceContext({
         targetNode: frameNode,
         nodes: nextNodes,
@@ -2560,12 +3390,38 @@ export function VisualWorkbench() {
         userRequest: generationRequest,
       });
       if (!runDecision.canRun) {
-        setJobMessage(runDecision.message ?? "生成框缺少运行输入");
+        setJobMessage(runDecision.message ?? "任务缺少运行输入");
         return;
       }
 
+      const sampleCopyRenderMode = inferAgentCopyRenderMode(
+        cleanBrief || generationRequest,
+        explicitSampleBurnIn
+      );
+      const requestCopyRenderMode = sampleCopyRenderMode === "burn_in"
+        ? "metadata_only"
+        : sampleCopyRenderMode;
+      const referenceCopyText = sampleCopyRenderMode === "burn_in"
+        ? getPreferredBurnInCopyTextFromReferenceContext(referenceContext)
+        : undefined;
+      const sampleCopyText = sampleCopyRenderMode === "burn_in"
+        ? extractAgentBurnInCopyText(cleanBrief || generationRequest)
+        : undefined;
       const planPrompt = buildJobPromptFromNode(frameNode, undefined, referenceContext);
-      const planItems = buildGenerationFramePlanItems(frameNode, planPrompt).slice(0, sampleOutputCount);
+      const allowSampleBurnIn = sampleCopyRenderMode === "burn_in";
+      const planItems = buildGenerationFramePlanItems(frameNode, planPrompt)
+        .slice(0, sampleOutputCount)
+        .map((item) => {
+          const itemCopyText = allowSampleBurnIn
+            ? referenceCopyText ?? item.copyText ?? (item.textAllowed ? sampleCopyText : undefined)
+            : undefined;
+          return {
+            ...item,
+            textAllowed: allowSampleBurnIn ? item.textAllowed || Boolean(itemCopyText) : false,
+            copyText: itemCopyText,
+            copyRenderMode: allowSampleBurnIn && itemCopyText ? "burn_in" : sampleCopyRenderMode,
+          };
+        });
       const batchId = `agent_sample_${frameNode.id}_${Date.now()}`;
       const baseMetadata = {
         ...buildBaseJobMetadata(frameNode, undefined, referenceContext),
@@ -2581,20 +3437,25 @@ export function VisualWorkbench() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workflowId,
+          workflowId: workflowIdForJob,
           projectId: activeProjectId || undefined,
           campaignId: activeCampaignId || undefined,
           frameNodeId: frameNode.id,
           batchId,
           batchTitle: "Agent 样张",
           request: generationRequest,
-          userRequest: generationRequest,
+          userRequest: userBrief || generationRequest,
+          brief: generationRequest,
+          projectStarterPrompt: structuredProjectStarterPrompt,
+          projectIntent: structuredProjectStarterPrompt,
           outputType: agentSampleOutputType,
+          copyRenderMode: requestCopyRenderMode,
           requiredReferenceRoles: runDecision.requiredReferenceRoles,
           referenceContext,
           referenceImages: referenceContext.images,
           style: agentSampleOutputType,
           modelIds: [],
+          agentPlanMode: "deterministic",
           enqueue: true,
           confirmedProviderCallLimit: planItems.length,
           items: planItems.map((item) => ({
@@ -2821,13 +3682,57 @@ export function VisualWorkbench() {
 
       setJobMessage(
         payload.retry?.usesProductReference
-          ? "失败图片已带商品参考图重试完成"
-          : "失败图片已按纯文生图重试完成"
+          ? "当前图片已带商品参考图重做完成"
+          : "当前图片已按原 prompt 重做完成"
       );
       void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue(), refreshProjects()]);
     } catch (error) {
       console.error("Failed to retry image job:", error);
-      setJobMessage(error instanceof Error ? error.message : "失败图片重试失败，请稍后重试");
+      setJobMessage(error instanceof Error ? error.message : "当前图片重做失败，请稍后重试");
+    } finally {
+      setRunningJobId(null);
+    }
+  };
+
+  const handleRerunImageJob = async (job: PersistedGenerationJob) => {
+    setRunningJobId(job.id);
+    setJobMessage("正在带原参考图再做一版...");
+
+    try {
+      const response = await apiFetch(`/api/jobs/${encodeURIComponent(job.id)}/rerun`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `${getJobNodeLabel(job)} 再做一版`,
+          note: "Created from canvas image detail with original references",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      const payloadRecord = isPlainRecord(payload) ? payload : undefined;
+      const queueResult = isPlainRecord(payloadRecord?.queueResult) ? payloadRecord.queueResult : undefined;
+      const created = mapPersistedJob(payloadRecord?.job ?? queueResult?.job ?? payload);
+
+      if (created) {
+        setJobs((items) =>
+          items.some((item) => item.id === created.id)
+            ? items.map((item) => (item.id === created.id ? created : item))
+            : [created, ...items]
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(getStringValue(payloadRecord?.error) || "image rerun failed");
+      }
+
+      setJobMessage(
+        payloadRecord?.queued
+          ? "已带原参考图加入队列"
+          : "已创建再做一版任务"
+      );
+      void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue(), refreshProjects()]);
+    } catch (error) {
+      console.error("Failed to rerun canvas image job:", error);
+      setJobMessage(error instanceof Error ? error.message : "再做一版失败，请稍后重试");
     } finally {
       setRunningJobId(null);
     }
@@ -3032,31 +3937,8 @@ export function VisualWorkbench() {
           const sourceNode = artifact.nodeId
             ? nodes.find((node) => node.id === artifact.nodeId)
             : undefined;
-          return [...nodes, createArtifactResultNode(artifact, sourceNode, nodes.length)];
-        });
-        setCanvasEdges((edges) => {
-          if (!artifact.nodeId) return edges;
-
-          const sourceNode = canvasNodes.find((node) => node.id === artifact.nodeId);
-          if (!sourceNode) return edges;
-
-          const edgeId = getArtifactResultEdgeId(sourceNode.id, artifact);
-          if (edges.some((edge) => edge.id === edgeId || (
-            edge.source === sourceNode.id && edge.target === resultNodeId
-          ))) {
-            return edges;
-          }
-
-          return [
-            ...edges,
-            {
-              id: edgeId,
-              source: sourceNode.id,
-              target: resultNodeId,
-              label: "输出产物",
-              animated: false,
-            },
-          ];
+          const resultIndex = nodes.filter(isArtifactResultCanvasNode).length;
+          return [...nodes, createArtifactResultNode(artifact, sourceNode, resultIndex)];
         });
         setSelectedNodeId(resultNodeId);
         requestCanvasFocus([resultNodeId]);
@@ -3087,7 +3969,7 @@ export function VisualWorkbench() {
       const job =
         (detail.jobId ? jobById.get(detail.jobId) : undefined) ??
         (artifact?.jobId ? jobById.get(artifact.jobId) : undefined);
-      const url = detail.url || artifact?.url;
+      const url = artifact?.url || detail.url;
       if (!url) {
         setArtifactMessage("这张图还没有可查看的大图");
         return;
@@ -3133,6 +4015,7 @@ export function VisualWorkbench() {
             provider: outputArtifact?.provider || getStringValue(metadata.provider),
             model: outputArtifact?.model || getStringValue(metadata.model),
             error: outputJob?.error || getStringValue(metadata.error) || getProviderDiagnosticSummary(metadata),
+            reviewStatus: outputArtifact ? getArtifactReviewStatus(outputArtifact) : getOutputPreviewReviewStatus(metadata, output.status),
           };
         })
         .filter((item): item is GenerationOutputPreviewItem => Boolean(item));
@@ -3150,6 +4033,7 @@ export function VisualWorkbench() {
         provider: artifact?.provider || getStringValue(fallbackMetadata.provider),
         model: artifact?.model || getStringValue(fallbackMetadata.model),
         error: job?.error || getStringValue(fallbackMetadata.error) || getProviderDiagnosticSummary(fallbackMetadata),
+        reviewStatus: artifact ? getArtifactReviewStatus(artifact) : getOutputPreviewReviewStatus(fallbackMetadata, detail.status),
       };
       const items = frameItems.length > 0 ? frameItems : [fallbackItem];
       const index = Math.max(
@@ -3174,15 +4058,22 @@ export function VisualWorkbench() {
       const artifact =
         (detail.artifactId ? artifacts.find((item) => item.id === detail.artifactId) : undefined) ??
         (detail.jobId ? artifacts.find((item) => item.jobId === detail.jobId) : undefined);
-      const url = detail.url || artifact?.url;
+      const job = artifact?.jobId
+        ? jobs.find((item) => item.id === artifact.jobId)
+        : detail.jobId
+          ? jobs.find((item) => item.id === detail.jobId)
+          : undefined;
+      const url = artifact?.url || detail.url;
       if (!url) {
         setArtifactMessage("这张图还没有可保存的图片");
         return;
       }
-      const artifactMetadata = getRecordValue(artifact?.metadata);
+      const artifactMetadata = mergeGenerationOutputPreviewMetadata({ artifact, job });
+      const outputPrompt = getGenerationOutputPreviewPrompt({ artifact, job, metadata: artifactMetadata });
       const sourceNodeId =
         detail.nodeId ||
         artifact?.nodeId ||
+        job?.nodeId ||
         getStringValue(artifactMetadata.frameNodeId) ||
         getStringValue(artifactMetadata.sourceNodeId);
       const sourceNode = sourceNodeId
@@ -3226,6 +4117,12 @@ export function VisualWorkbench() {
               sourceNodeLabel: sourceNode?.data.label,
               previewUrl: url,
               referenceUrl: url,
+              ...buildSavedGenerationOutputTraceMetadata({
+                metadata: artifactMetadata,
+                artifact,
+                job,
+                prompt: outputPrompt,
+              }),
               outputId: detail.outputId,
               artifactId: artifact?.id ?? detail.artifactId,
               jobId: artifact?.jobId ?? detail.jobId,
@@ -3240,14 +4137,212 @@ export function VisualWorkbench() {
 
         setPersistedAssets((items) => [asset, ...items.filter((item) => item.id !== asset.id)]);
         setActiveCategory(asset.category);
+        setAssetFavoritesOnly(false);
+        setActiveBottomPanel("assets");
+        setAssetLibraryFocusItemId(`asset:${asset.id}`);
         setArtifactMessage(saveTarget.message);
       } catch (error) {
         console.error("Failed to save generation output as asset:", error);
         setArtifactMessage("保存失败，请稍后重试");
       }
     },
-    [artifacts, canvasNodes]
+    [artifacts, canvasNodes, jobs]
   );
+
+  const handleSetArtifactReviewStatus = useCallback(
+    async (artifactId: string, status: ArtifactReviewStatus, note?: string) => {
+      const artifact = artifacts.find((item) => item.id === artifactId);
+      if (!artifact) {
+        setArtifactMessage("没有找到这张结果图");
+        return;
+      }
+      const label = getArtifactReviewStatusLabel(status);
+      const reviewState = {
+        status,
+        label,
+        note: note || "",
+        source: "canvas-review",
+        updatedAt: new Date().toISOString(),
+      };
+
+      setArtifacts((items) =>
+        items.map((item) =>
+          item.id === artifactId
+            ? { ...item, metadata: { ...item.metadata, reviewState }, updatedAt: reviewState.updatedAt }
+            : item
+        )
+      );
+      setOutputPreview((preview) =>
+        preview
+          ? {
+              ...preview,
+              items: preview.items.map((item) =>
+                item.artifactId === artifactId
+                  ? {
+                      ...item,
+                      reviewStatus: status,
+                      metadata: { ...(item.metadata ?? {}), reviewState },
+                    }
+                  : item
+              ),
+            }
+          : preview
+      );
+      setArtifactMessage(`已标记「${artifact.title}」为${label}`);
+
+      try {
+        const response = await apiFetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reviewState }),
+        });
+        const payload = await response.json().catch(() => null);
+        const updatedArtifact = mapPersistedArtifact(payload);
+        if (!response.ok || !updatedArtifact) throw new Error("artifact review update failed");
+        setArtifacts((items) =>
+          items.map((item) => (item.id === updatedArtifact.id ? updatedArtifact : item))
+        );
+      } catch (error) {
+        console.error("Failed to update artifact review state:", error);
+        setArtifactMessage("挑图状态保存失败，刷新后可能丢失");
+        void refreshArtifacts();
+      }
+    },
+    [artifacts, refreshArtifacts, setArtifacts]
+  );
+
+  const handleSetArtifactGroupReviewStatus = useCallback(
+    async (artifactIds: string[], status: ArtifactReviewStatus, note?: string) => {
+      const ids = Array.from(new Set(artifactIds.filter(Boolean)));
+      if (ids.length === 0) {
+        setArtifactMessage("这组没有可标记的图片");
+        return;
+      }
+      for (const id of ids) {
+        await handleSetArtifactReviewStatus(id, status, note);
+      }
+      setArtifactMessage(`已批量标记 ${ids.length} 张为${getArtifactReviewStatusLabel(status)}`);
+    },
+    [handleSetArtifactReviewStatus]
+  );
+
+  const handleRunArtifactVisualQa = useCallback(
+    async (artifactId: string) => {
+      const artifact = artifacts.find((item) => item.id === artifactId);
+      if (!artifact) {
+        setArtifactMessage("没有找到这张结果图");
+        return;
+      }
+
+      setVisualQaReviewingArtifactId(artifactId);
+      setArtifactMessage(`正在审核「${artifact.title}」`);
+      try {
+        const response = await apiFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/visual-qa`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => null);
+        const updatedArtifact = mapPersistedArtifact(
+          payload && typeof payload === "object" && !Array.isArray(payload)
+            ? (payload as { artifact?: unknown }).artifact
+            : null
+        );
+        if (!response.ok || !updatedArtifact) throw new Error("artifact visual qa failed");
+
+        setArtifacts((items) =>
+          items.map((item) => (item.id === updatedArtifact.id ? updatedArtifact : item))
+        );
+        setOutputPreview((preview) =>
+          preview
+            ? {
+                ...preview,
+                items: preview.items.map((item) =>
+                  item.artifactId === updatedArtifact.id
+                    ? {
+                        ...item,
+                        metadata: updatedArtifact.metadata,
+                        prompt: updatedArtifact.prompt || item.prompt,
+                        provider: updatedArtifact.provider || item.provider,
+                        model: updatedArtifact.model || item.model,
+                      }
+                    : item
+                ),
+              }
+            : preview
+        );
+        setArtifactMessage(`已完成「${updatedArtifact.title}」视觉 QA`);
+      } catch (error) {
+        console.error("Failed to run artifact visual QA:", error);
+        setArtifactMessage("视觉 QA 失败，请稍后重试");
+        void refreshArtifacts();
+      } finally {
+        setVisualQaReviewingArtifactId((current) => (current === artifactId ? null : current));
+      }
+    },
+    [artifacts, refreshArtifacts, setArtifacts]
+  );
+
+  useEffect(() => {
+    const visibleIds = new Set(visibleArtifacts.map((artifact) => artifact.id));
+    const previousActiveCount = previousActiveVisibleJobCountRef.current;
+
+    if (activeVisibleJobCount > 0) {
+      autoVisualQaPreJobArtifactIdsRef.current = visibleIds;
+      if (visibleArtifacts.length > 0 && !autoVisualQaInitializedRef.current) {
+        autoVisualQaSeenArtifactIdsRef.current = visibleIds;
+        autoVisualQaInitializedRef.current = true;
+      }
+      previousActiveVisibleJobCountRef.current = activeVisibleJobCount;
+      return;
+    }
+
+    let candidates: PersistedGeneratedArtifact[] = [];
+    if (!autoVisualQaInitializedRef.current && previousActiveCount === 0 && visibleArtifacts.length > 0) {
+      autoVisualQaSeenArtifactIdsRef.current = visibleIds;
+      autoVisualQaPreJobArtifactIdsRef.current = visibleIds;
+      autoVisualQaInitializedRef.current = true;
+      previousActiveVisibleJobCountRef.current = activeVisibleJobCount;
+      candidates = visibleArtifacts.filter(isFreshAutoVisualQaCandidate);
+    } else {
+      const justFinishedJobs = previousActiveCount > 0 && activeVisibleJobCount === 0;
+      const baselineIds = justFinishedJobs
+        ? autoVisualQaPreJobArtifactIdsRef.current
+        : autoVisualQaSeenArtifactIdsRef.current;
+      candidates = visibleArtifacts.filter((artifact) => !baselineIds.has(artifact.id));
+    }
+
+    candidates = candidates
+      .filter(isAutoVisualQaCandidate)
+      .filter((artifact) => !autoVisualQaSubmittedArtifactIdsRef.current.has(artifact.id))
+      .slice(0, maxAutoVisualQaArtifactsPerBatch);
+
+    for (const id of visibleIds) {
+      autoVisualQaSeenArtifactIdsRef.current.add(id);
+    }
+    previousActiveVisibleJobCountRef.current = activeVisibleJobCount;
+
+    if (candidates.length === 0) return;
+    for (const artifact of candidates) {
+      autoVisualQaSubmittedArtifactIdsRef.current.add(artifact.id);
+    }
+
+    let cancelled = false;
+    void (async () => {
+      setArtifactMessage(`Agent 正在自动审核 ${candidates.length} 张新结果`);
+      for (const artifact of candidates) {
+        if (cancelled) return;
+        await handleRunArtifactVisualQa(artifact.id);
+      }
+      if (!cancelled) {
+        setArtifactMessage(`Agent 已自动审核 ${candidates.length} 张新结果`);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeVisibleJobCount, handleRunArtifactVisualQa, visibleArtifacts]);
 
   useEffect(() => {
     const readDetail = (event: Event): GenerationFrameOutputActionDetail | undefined => {
@@ -3262,30 +4357,99 @@ export function VisualWorkbench() {
       handleOpenGenerationOutputPreview(detail);
     };
 
+    const handleEdit = (event: Event) => {
+      const detail = readDetail(event);
+      const artifact =
+        (detail?.artifactId ? artifacts.find((item) => item.id === detail.artifactId) : undefined) ??
+        (detail?.jobId ? artifacts.find((item) => item.jobId === detail.jobId) : undefined);
+      const job = artifact?.jobId
+        ? jobs.find((item) => item.id === artifact.jobId)
+        : detail?.jobId
+          ? jobs.find((item) => item.id === detail.jobId)
+          : undefined;
+      const url = artifact?.url || detail?.url;
+      if (!detail || !url) {
+        setComposeMessage("这张图还没有可修改的大图");
+        return;
+      }
+      const metadata = mergeGenerationOutputPreviewMetadata({ artifact, job });
+      const target: AgentImageEditTarget = {
+        url,
+        title: detail.title || artifact?.title || "生成图片",
+        outputId: detail.outputId,
+        artifactId: artifact?.id ?? detail.artifactId,
+        jobId: artifact?.jobId ?? detail.jobId,
+        nodeId: artifact?.nodeId ?? detail.nodeId,
+        status: detail.status || artifact?.status,
+        prompt: getGenerationOutputPreviewPrompt({ artifact, job, metadata }),
+        metadata,
+      };
+      setOutputPreview(null);
+      setAgentImageEditTarget(target);
+      setAgentPanelCollapsed(false);
+      setComposeBrief("");
+      if (target.nodeId) setSelectedNodeId(target.nodeId);
+      setWorkflowPlanPreview(null);
+      setPendingWorkflowDraft(null);
+      setComposeMessage(`已选中「${target.title}」，直接说要怎么改`);
+    };
+
+    const resolveRetryJob = async (jobId: string): Promise<PersistedGenerationJob | null> => {
+      const existingJob = jobs.find((item) => item.id === jobId);
+      if (existingJob) return existingJob;
+      const fetchedJob = await fetchPersistedJobById(jobId);
+      if (fetchedJob) {
+        setJobs((items) =>
+          items.some((item) => item.id === fetchedJob.id)
+            ? items.map((item) => (item.id === fetchedJob.id ? fetchedJob : item))
+            : [fetchedJob, ...items]
+        );
+      }
+      return fetchedJob;
+    };
+
     const handleRetry = (event: Event) => {
       const detail = readDetail(event);
       if (!detail?.jobId) {
         setJobMessage("这张图还没有可重做的任务");
         return;
       }
-      const job = jobs.find((item) => item.id === detail.jobId);
-      if (!job) {
-        setJobMessage("没有找到这张图的任务");
-        return;
-      }
-      void (canRetryImageJob(job) ? handleRetryImageJob(job) : handleRetryJob(job));
+      void (async () => {
+        const job = await resolveRetryJob(detail.jobId as string);
+        if (!job) {
+          setJobMessage("没有找到这张图的任务");
+          return;
+        }
+        if (canRetryImageJob(job)) {
+          void handleRetryImageJob(job);
+          return;
+        }
+        if (canRerunImageJob(job)) {
+          void handleRerunImageJob(job);
+          return;
+        }
+        if (canRetryJob(job)) {
+          void handleRetryJob(job);
+          return;
+        }
+        setJobMessage("这张图暂时不能重做");
+      })();
     };
 
     const handleRetryAll = (event: Event) => {
       const detail = readDetail(event);
       const jobIds = detail?.jobIds?.filter((value): value is string => typeof value === "string" && !!value.trim()) ?? [];
-      const retryJobs = jobs.filter((job) => jobIds.includes(job.id) && (canRetryImageJob(job) || canRetryJob(job)));
-      if (retryJobs.length === 0) {
-        setJobMessage("当前图组没有可重做的失败图片");
-        return;
-      }
-      setJobMessage(`开始按顺序重做 ${retryJobs.length} 张失败图片`);
       void (async () => {
+        const retryJobs: PersistedGenerationJob[] = [];
+        for (const jobId of jobIds) {
+          const job = await resolveRetryJob(jobId);
+          if (job && (canRetryImageJob(job) || canRetryJob(job))) retryJobs.push(job);
+        }
+        if (retryJobs.length === 0) {
+          setJobMessage("当前任务没有可重做图片");
+          return;
+        }
+        setJobMessage(`开始按顺序重做 ${retryJobs.length} 张图片`);
         for (const job of retryJobs) {
           if (canRetryImageJob(job)) {
             await handleRetryImageJob(job);
@@ -3294,6 +4458,41 @@ export function VisualWorkbench() {
           }
         }
       })();
+    };
+
+    const handleReviewState = (event: Event) => {
+      const detail = readDetail(event);
+      const reviewStatus = normalizeArtifactReviewStatus(detail?.reviewStatus ?? detail?.status);
+      if (!detail?.artifactId || !reviewStatus) {
+        setArtifactMessage("这张图暂时不能标记挑图状态");
+        return;
+      }
+      void handleSetArtifactReviewStatus(detail.artifactId, reviewStatus, detail.note);
+    };
+
+    const handleGroupReviewState = (event: Event) => {
+      const detail = readDetail(event);
+      const reviewStatus = normalizeArtifactReviewStatus(detail?.reviewStatus ?? detail?.status);
+      const artifactIds = detail?.artifactIds?.filter((value): value is string => typeof value === "string" && !!value.trim()) ?? [];
+      if (artifactIds.length === 0 || !reviewStatus) {
+        setArtifactMessage("这组暂时不能标记挑图状态");
+        return;
+      }
+      void handleSetArtifactGroupReviewStatus(artifactIds, reviewStatus, detail?.note);
+    };
+
+    const handleGroupRetry = (event: Event) => {
+      const detail = readDetail(event);
+      const artifactIds = detail?.artifactIds?.filter((value): value is string => typeof value === "string" && !!value.trim()) ?? [];
+      const jobIds = artifactIds
+        .map((artifactId) => artifacts.find((artifact) => artifact.id === artifactId)?.jobId)
+        .filter((value): value is string => typeof value === "string" && !!value.trim());
+      if (jobIds.length === 0) {
+        setJobMessage("这组没有可重跑的任务");
+        return;
+      }
+      setComposeMessage(`按原上下文重做「${detail?.group || "当前图组"}」；其他已保留图片不受影响。`);
+      handleRetryAll(new CustomEvent("image-master:generation-frame-output-retry-all", { detail: { jobIds } }));
     };
 
     const handleSave = (event: Event) => {
@@ -3344,15 +4543,23 @@ export function VisualWorkbench() {
     };
 
     window.addEventListener("image-master:generation-frame-output-open", handleOpen);
+    window.addEventListener("image-master:generation-frame-output-edit", handleEdit);
     window.addEventListener("image-master:generation-frame-output-retry", handleRetry);
     window.addEventListener("image-master:generation-frame-output-retry-all", handleRetryAll);
+    window.addEventListener("image-master:artifact-review-state", handleReviewState);
+    window.addEventListener("image-master:artifact-group-review-state", handleGroupReviewState);
+    window.addEventListener("image-master:artifact-group-retry", handleGroupRetry);
     window.addEventListener("image-master:generation-frame-output-save", handleSave);
     window.addEventListener("image-master:generation-frame-output-export", handleExport);
     window.addEventListener("image-master:generation-frame-output-open-folder", handleOpenFolder);
     return () => {
       window.removeEventListener("image-master:generation-frame-output-open", handleOpen);
+      window.removeEventListener("image-master:generation-frame-output-edit", handleEdit);
       window.removeEventListener("image-master:generation-frame-output-retry", handleRetry);
       window.removeEventListener("image-master:generation-frame-output-retry-all", handleRetryAll);
+      window.removeEventListener("image-master:artifact-review-state", handleReviewState);
+      window.removeEventListener("image-master:artifact-group-review-state", handleGroupReviewState);
+      window.removeEventListener("image-master:artifact-group-retry", handleGroupRetry);
       window.removeEventListener("image-master:generation-frame-output-save", handleSave);
       window.removeEventListener("image-master:generation-frame-output-export", handleExport);
       window.removeEventListener("image-master:generation-frame-output-open-folder", handleOpenFolder);
@@ -3360,8 +4567,11 @@ export function VisualWorkbench() {
   }, [
     artifacts,
     handleOpenGenerationOutputPreview,
+    handleRerunImageJob,
     handleRetryImageJob,
     handleSaveGenerationOutputAsAsset,
+    handleSetArtifactGroupReviewStatus,
+    handleSetArtifactReviewStatus,
     jobs,
   ]);
 
@@ -3571,73 +4781,30 @@ export function VisualWorkbench() {
     setWorkflowMessage("节点已连接");
   }, [canvasNodes, pushHistorySnapshot]);
 
-  const handleCreateGenerationFrameFromConnection = useCallback(
+  const handlePrepareAgentFromLineAction = useCallback(
     ({
       sourceNodeId,
       actionId,
-      position,
     }: {
       sourceNodeId: string;
       actionId: LineGenerationActionId;
-      position: XYPosition;
     }) => {
       const sourceNode = canvasNodes.find((node) => node.id === sourceNodeId);
       const action = getLineGenerationAction(actionId);
       if (!sourceNode || !action) return;
 
-      const node = createGenerationFrameNode({
-        action,
-        sourceNode,
-        position,
-        index: canvasNodes.length,
-      });
-      const positionedNode = {
-        ...node,
-        position: findAvailableGenerationFramePosition(canvasNodes, {
-          anchorNode: sourceNode,
-          preferredPosition: node.position,
-        }),
-      };
-
-      pushHistorySnapshot();
-      setCanvasNodes((nodes) => [...nodes, positionedNode]);
-      setCanvasEdges((edges) => [
-        ...edges,
-        {
-          id: `${sourceNode.id}-${positionedNode.id}`,
-          source: sourceNode.id,
-          target: positionedNode.id,
-          label: action.edgeLabel,
-          animated: true,
-        },
-      ]);
-      setSelectedNodeId(positionedNode.id);
-      requestCanvasFocus([sourceNode.id, positionedNode.id]);
-      setWorkflowMessage(getGenerationActionCreatedMessage(action, "已创建"));
+      const sourceLabel = sourceNode.data.label || "当前素材";
+      setComposeBrief(buildLineActionAgentBrief(action, sourceLabel));
+      setWorkflowPlanPreview(null);
+      setAgentImageEditTarget(null);
+      setAgentPanelCollapsed(false);
+      setSelectedNodeId(sourceNode.id);
+      requestCanvasFocus([sourceNode.id]);
+      setWorkflowMessage(`已准备「${action.title}」方向，继续在右上角让 Agent 规划`);
+      setComposeMessage(`已把「${sourceLabel}」作为参考；你可以直接规划，或补充更多要求。`);
     },
-    [canvasNodes, pushHistorySnapshot, requestCanvasFocus]
+    [canvasNodes, requestCanvasFocus]
   );
-
-  const handleCreateBlankGenerationFrame = useCallback((position?: XYPosition, actionId?: LineGenerationActionId) => {
-    const index = canvasNodes.length + canvasNodes.filter(isGenerationFrameNode).length;
-    const action = actionId ? getLineGenerationAction(actionId) : undefined;
-    const node = action
-      ? createTypedGenerationFrameNode({
-          action,
-          index,
-          position: position ?? findAvailableGenerationFramePosition(canvasNodes),
-        })
-      : createDefaultGenerationFrameNode({
-          productAsset: undefined,
-          index,
-          position: position ?? findAvailableGenerationFramePosition(canvasNodes),
-        });
-    pushHistorySnapshot();
-    setCanvasNodes((nodes) => [...nodes, node]);
-    setSelectedNodeId(node.id);
-    requestCanvasFocus([node.id]);
-    setWorkflowMessage(action ? getGenerationActionCreatedMessage(action, "已新建") : "已新建一个生成框");
-  }, [canvasNodes, pushHistorySnapshot, requestCanvasFocus]);
 
   const handleCreateCopyNode = useCallback((text: string, position: XYPosition) => {
     const cleanText = text.trim();
@@ -3651,7 +4818,7 @@ export function VisualWorkbench() {
     setCanvasNodes((nodes) => [...nodes, node]);
     setSelectedNodeId(node.id);
     requestCanvasFocus([node.id]);
-    setWorkflowMessage("文案已放到画布，可拖进生成框");
+    setWorkflowMessage("文案已放到画布，可作为 Agent 参考");
   }, [canvasNodes.length, pushHistorySnapshot, requestCanvasFocus]);
 
   const handleSetCanvasNodeRole = useCallback((nodeId: string, role: GenerationFrameRole) => {
@@ -3707,49 +4874,24 @@ export function VisualWorkbench() {
     setWorkflowMessage(`已设为${getGenerationReferenceRoleLabel(role)}`);
   }, [pushHistorySnapshot]);
 
-  const handleAddCanvasNodeToGenerationFrame = useCallback((nodeId: string, targetFrameId?: string) => {
-    const sourceNode = stageNodes.find((node) => node.id === nodeId && !isGenerationFrameNode(node));
-    if (!sourceNode) {
-      setWorkflowMessage("没有找到可放入生成框的节点");
-      return;
-    }
-    const frameNode =
-      (targetFrameId ? stageNodes.find((node) => node.id === targetFrameId && isGenerationFrameNode(node)) : undefined) ??
-      (stageNodes.find((node) => node.id === selectedNodeId && isGenerationFrameNode(node))) ??
-      stageNodes.find(isGenerationFrameNode) ??
-      defaultGenerationFrameNode;
-    const updatedAt = new Date().toISOString();
-    const generationFrame = bindNodeToGenerationFrameSlot(
-      migrateLegacyGenerationFrameData(frameNode.data, frameNode.id),
-      sourceNode,
-      { updatedAt }
-    );
-    const nextFrameNode: CanvasWorkbenchNode = {
-      ...frameNode,
-      data: {
-        ...frameNode.data,
-        status: generationFrame.status === "empty" ? frameNode.data.status : "ready",
-        generationFrame,
-        metrics: updateGenerationFrameSlotMetrics(frameNode.data.metrics, generationFrame),
-      },
-    };
-
-    pushHistorySnapshot();
-    setCanvasNodes((nodes) =>
-      nodes.some((node) => node.id === nextFrameNode.id)
-        ? nodes.map((node) => (node.id === nextFrameNode.id ? nextFrameNode : node))
-        : [...nodes, nextFrameNode]
-    );
-    setSelectedNodeId(nextFrameNode.id);
-    requestCanvasFocus([sourceNode.id, nextFrameNode.id]);
-    setWorkflowMessage(`${sourceNode.data.label} 已放入生成框`);
-  }, [defaultGenerationFrameNode, pushHistorySnapshot, requestCanvasFocus, selectedNodeId, stageNodes]);
-
   const handleOpenCanvasNodePreview = useCallback((nodeId: string) => {
     const node = stageNodes.find((item) => item.id === nodeId);
-    const url = getStringValue(node?.data.previewUrl) || getStringValue(node?.data.referenceUrl);
+    const url = getStringValue(node?.data.referenceUrl) || getStringValue(node?.data.previewUrl);
     if (!node || !url) {
       setArtifactMessage("这个节点没有可查看的大图");
+      return;
+    }
+    const artifactId = getStringValue(node.data.artifactId);
+    const jobId = getStringValue(node.data.jobId);
+    if (artifactId || jobId) {
+      handleOpenGenerationOutputPreview({
+        nodeId: getStringValue(node.data.linkedNodeId) || nodeId,
+        artifactId,
+        jobId,
+        url,
+        title: node.data.label || "生成图片",
+        status: getStringValue(node.data.artifactStatus) || node.data.status,
+      });
       return;
     }
     setOutputPreview({
@@ -3760,7 +4902,7 @@ export function VisualWorkbench() {
       }],
       index: 0,
     });
-  }, [stageNodes]);
+  }, [handleOpenGenerationOutputPreview, stageNodes]);
 
   const handleSaveCanvasNodeAsAsset = useCallback(async (nodeId: string) => {
     const node = stageNodes.find((item) => item.id === nodeId);
@@ -3930,28 +5072,6 @@ export function VisualWorkbench() {
     [modelAssets, patchLibraryAsset, persistedAssets]
   );
 
-  const handleChangeLibraryAssetCategory = useCallback(
-    async (item: AssetTrayItem, category: CanvasLibraryCategory) => {
-      const assetId = item.id.replace(/^asset:/, "");
-      const asset = [...persistedAssets, ...modelAssets].find((candidate) => candidate.id === assetId);
-      if (!asset || asset.category === category) return;
-      if (asset.source === "model-library") {
-        setAssetMessage("模特库资产暂不支持改分类");
-        return;
-      }
-
-      try {
-        const updated = await patchLibraryAsset(asset, { category });
-        setActiveCategory(updated.category);
-        setAssetMessage(`已归类到${updated.category}`);
-      } catch (error) {
-        console.error("Failed to update asset category:", error);
-        setAssetMessage(error instanceof Error ? error.message : "分类更新失败");
-      }
-    },
-    [modelAssets, patchLibraryAsset, persistedAssets]
-  );
-
   const handleDeleteLibraryItem = useCallback(
     async (item: AssetTrayItem) => {
       if (item.id.startsWith("component:")) {
@@ -4039,19 +5159,7 @@ export function VisualWorkbench() {
     setCanvasNodes((nodes) =>
       nodes.map((node) =>
         node.id === nodeId
-          ? {
-              ...node,
-            data: {
-              ...node.data,
-              generationUserRequest: prompt,
-              generationFrame: {
-                ...migrateLegacyGenerationFrameData(node.data, node.id),
-                prompt,
-                updatedAt: new Date().toISOString(),
-              },
-              metrics: updateGenerationFrameMetrics(node.data.metrics, prompt),
-            },
-          }
+          ? applyPromptToGenerationFrameNode(node, prompt)
           : node
       )
     );
@@ -4099,9 +5207,7 @@ export function VisualWorkbench() {
           ? nodes.map((node) => (node.id === nextFrameNode.id ? nextFrameNode : node))
           : [...nodes, nextFrameNode]
       );
-      setSelectedNodeId(nextFrameNode.id);
-      requestCanvasFocus([nextFrameNode.id]);
-      setWorkflowMessage(`${asset.title} 已放入生成框`);
+      setWorkflowMessage(`${asset.title} 已作为 Agent 参考`);
       setActiveBottomPanel(null);
     },
     [defaultGenerationFrameNode, pushHistorySnapshot, requestCanvasFocus, selectedNodeId, stageNodes]
@@ -4187,7 +5293,7 @@ export function VisualWorkbench() {
       updateGenerationFrameNodeState(
         detail.nodeId,
         (frame) => removeGenerationFrameAsset(frame, detail.bindingKey),
-        "资产已移出生成框"
+        "资产已从后台任务移出"
       );
     };
 
@@ -4239,9 +5345,15 @@ export function VisualWorkbench() {
     (assetId: string) => {
       const asset = allAssets.find((item) => item.id === assetId);
       if (!asset) return;
-      handleBindAssetToGenerationFrame(asset);
+      const position = getNextLibraryInsertPosition(canvasNodes, selectedNode, asset.category);
+      const node = createNodeFromAsset(asset, position, canvasNodes.length);
+      pushHistorySnapshot();
+      setCanvasNodes((nodes) => [...nodes, node]);
+      setSelectedNodeId(node.id);
+      requestCanvasFocus([node.id]);
+      setWorkflowMessage("素材已放到画布，可作为 Agent 参考");
     },
-    [allAssets, handleBindAssetToGenerationFrame]
+    [allAssets, canvasNodes, pushHistorySnapshot, requestCanvasFocus, selectedNode]
   );
 
   const handleSelectComponentFromLibrary = useCallback(
@@ -4249,15 +5361,7 @@ export function VisualWorkbench() {
       const component = components.find((item) => item.id === componentId);
       if (!component) return;
 
-      const matchedAsset = component.assetId
-        ? allAssets.find((asset) => asset.id === component.assetId)
-        : undefined;
-      if (matchedAsset) {
-        handleBindAssetToGenerationFrame(matchedAsset);
-        return;
-      }
-
-      const position = getNextLibraryInsertPosition(canvasNodes, selectedNode);
+      const position = getNextLibraryInsertPosition(canvasNodes, selectedNode, getComponentCategory(component.type));
       const node = createNodeFromComponent(component, position, canvasNodes.length);
       pushHistorySnapshot();
       setCanvasNodes((nodes) => [...nodes, node]);
@@ -4266,13 +5370,11 @@ export function VisualWorkbench() {
         setActiveProductComponentId(component.id);
       }
       requestCanvasFocus([node.id]);
-      setWorkflowMessage("组件已放入画布");
+      setWorkflowMessage("组件已放到画布，可作为 Agent 参考");
     },
     [
-      allAssets,
       canvasNodes,
       components,
-      handleBindAssetToGenerationFrame,
       pushHistorySnapshot,
       requestCanvasFocus,
       selectedNode,
@@ -4396,7 +5498,7 @@ export function VisualWorkbench() {
                 qualityRules: getStringArray(component.metadata?.qualityRules),
                 updatedAt: new Date().toISOString(),
               }),
-            "组件已放入生成框"
+            "组件已作为 Agent 参考"
           );
           return;
         }
@@ -4498,29 +5600,13 @@ export function VisualWorkbench() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleDeleteSelectedNode, handleDuplicateSelectedNode, handleRedo, handleUndo]);
 
-  const handleCreateProductAssetFrame = useCallback((position?: XYPosition) => {
-    handleCreateBlankGenerationFrame(position, "product_asset");
-  }, [handleCreateBlankGenerationFrame]);
-
-  const handleCreateModelAssetFrame = useCallback((position?: XYPosition) => {
-    handleCreateBlankGenerationFrame(position, "model_asset");
-  }, [handleCreateBlankGenerationFrame]);
-
-  const handleCreateSceneAssetFrame = useCallback((position?: XYPosition) => {
-    handleCreateBlankGenerationFrame(position, "scene_asset");
-  }, [handleCreateBlankGenerationFrame]);
-
-  const handleCreateStyleAssetFrame = useCallback((position?: XYPosition) => {
-    handleCreateBlankGenerationFrame(position, "style_asset");
-  }, [handleCreateBlankGenerationFrame]);
-
   const handleCreateKnowledgeNode = useCallback((position?: XYPosition) => {
     const node = createKnowledgeNode(position ?? findAvailableGenerationFramePosition(canvasNodes), canvasNodes.length);
     pushHistorySnapshot();
     setCanvasNodes((nodes) => [...nodes, node]);
     setSelectedNodeId(node.id);
     requestCanvasFocus([node.id]);
-    setWorkflowMessage("知识卡已放到画布，可拖进生成框");
+    setWorkflowMessage("知识卡已放到画布，可作为 Agent 参考");
   }, [canvasNodes, pushHistorySnapshot, requestCanvasFocus]);
 
   const activeOutputPreview = outputPreview?.items[outputPreview.index];
@@ -4533,10 +5619,26 @@ export function VisualWorkbench() {
   const activeReferenceRoleLabels = getOutputPreviewReferenceRoleLabels(activeOutputPreviewMetadata);
   const activeProviderRoleLabels = getOutputPreviewProviderRoleLabels(activeOutputPreviewMetadata);
   const activeProductFocusLabel = getOutputPreviewProductFocusLabel(activeOutputPreviewMetadata);
+  const activeAssetInvocationDecisions = getOutputPreviewAssetInvocationDecisions(activeOutputPreviewMetadata);
+  const activeOutputCopyPolicy = getOutputPreviewCopyRenderPolicy(activeOutputPreviewMetadata);
+  const activeOutputLockSummary = getOutputPreviewLockSummary({
+    metadata: activeOutputPreviewMetadata,
+    decisions: activeAssetInvocationDecisions,
+    copyPolicy: activeOutputCopyPolicy,
+  });
   const activeOutputPrompt = activeOutputPreview?.prompt ?? getGenerationOutputPreviewPrompt({
     metadata: activeOutputPreviewMetadata,
   });
   const activeOutputError = activeOutputPreview?.error || getProviderDiagnosticSummary(activeOutputPreviewMetadata);
+  const activeOutputReviewStatus = activeOutputPreview?.reviewStatus ??
+    getOutputPreviewReviewStatus(activeOutputPreviewMetadata, activeOutputPreview?.status);
+  const activeOutputVisualQa = useMemo(
+    () => getOutputPreviewVisualQaSummary({
+      item: activeOutputPreview,
+      artifacts,
+    }),
+    [activeOutputPreview, artifacts]
+  );
   const setPreviewIndex = useCallback((nextIndex: number) => {
     setOutputPreview((preview) => {
       if (!preview) return preview;
@@ -4560,63 +5662,75 @@ export function VisualWorkbench() {
       })
     );
   }, []);
+  const handleClearAgentImageEditTarget = useCallback(() => {
+    setAgentImageEditTarget(null);
+    setComposeBrief("");
+    setComposeMessage("");
+  }, []);
+  const handleCanvasPaneClick = useCallback(() => {
+    if (!agentImageEditTarget || composeBrief.trim() || workflowPlanPreview || composingWorkflow) return;
+    handleClearAgentImageEditTarget();
+    if (visibleOutputCount > 0) setAgentPanelCollapsed(true);
+  }, [
+    agentImageEditTarget,
+    composeBrief,
+    composingWorkflow,
+    handleClearAgentImageEditTarget,
+    visibleOutputCount,
+    workflowPlanPreview,
+  ]);
+
+  const hasCanvasStatus = Boolean(workflowMessage || visibleOutputCount > 0 || activeVisibleJobCount > 0);
 
   return (
-    <section className="relative flex w-full flex-col overflow-visible rounded-lg border border-warm-line/40 bg-warm-paper shadow-sm lg:h-[calc(100svh-150px)] lg:min-h-[620px] lg:overflow-hidden">
-      <div className="flex flex-col gap-2 border-b border-warm-line/40 bg-warm-paper px-3 py-2 md:flex-row md:items-center md:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-warm-ink">画布</h2>
-          </div>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 md:justify-end">
+    <section className="relative flex h-[calc(100svh-92px)] min-h-[680px] w-full flex-col overflow-hidden bg-transparent">
+      {hasCanvasStatus && (
+        <div className="pointer-events-none absolute left-3 right-3 top-3 z-30 flex justify-end gap-2 lg:right-[350px]">
           {workflowMessage && (
-            <div className="rounded-md bg-warm-primary-soft px-2.5 py-1.5 text-xs text-warm-primary">
+            <div className="rounded-full bg-warm-primary-soft px-2.5 py-1.5 text-xs text-warm-primary shadow-sm">
               {workflowMessage}
             </div>
           )}
-          <div className="rounded-md border border-warm-line/50 bg-warm-bg px-2.5 py-1.5 text-xs text-warm-muted">
-            {visibleOutputCount} 结果 · {jobs.filter(isActiveBackgroundJob).length} 生成中
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowStatusDrawer(true)}
-            className="inline-flex items-center gap-2 rounded-md border border-warm-line/50 bg-warm-paper px-3 py-1.5 text-xs font-medium text-warm-ink transition hover:border-warm-primary/35 hover:text-warm-primary"
-          >
-            <PackageCheck className="h-3.5 w-3.5" />
-            进度
-          </button>
+          {(visibleOutputCount > 0 || activeVisibleJobCount > 0) && (
+            <div className="rounded-full border border-warm-line/50 bg-warm-paper/90 px-2.5 py-1.5 text-xs text-warm-muted shadow-sm backdrop-blur">
+              {visibleOutputCount} 结果 · {activeVisibleJobCount} 生成中
+            </div>
+          )}
         </div>
-      </div>
+      )}
+      {visibleArtifacts.length > 0 && (
+        <ResultReviewFilterBar
+          value={resultReviewFilter}
+          counts={resultReviewFilterCounts}
+          onChange={setResultReviewFilter}
+        />
+      )}
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-hidden bg-warm-bg">
         <ReactFlowProvider>
           <CanvasStage
-            nodes={stageNodes}
-            edges={stageEdges}
-            selectedNodeId={selectedNodeId}
+            nodes={canvasStageNodes}
+            edges={canvasStageEdges}
+            selectedNodeId={selectedCanvasNode?.id ?? ""}
             focusRequest={focusRequest}
             onSelectNode={setSelectedNodeId}
             onNodesChange={handleNodesChange}
             onNodePositionCommit={handleNodePositionCommit}
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
-            onCreateGenerationFrame={handleCreateGenerationFrameFromConnection}
-            onCreateBlankGenerationFrame={handleCreateBlankGenerationFrame}
-            onCreateProductAsset={handleCreateProductAssetFrame}
-            onCreateModelAsset={handleCreateModelAssetFrame}
-            onCreateSceneAsset={handleCreateSceneAssetFrame}
-            onCreateStyleAsset={handleCreateStyleAssetFrame}
+            onPrepareAgentFromLineAction={handlePrepareAgentFromLineAction}
             onCreateKnowledgeNode={handleCreateKnowledgeNode}
             onCreateCopyNode={handleCreateCopyNode}
             onSetNodeRole={handleSetCanvasNodeRole}
-            onAddNodeToGenerationFrame={handleAddCanvasNodeToGenerationFrame}
             onOpenNodePreview={handleOpenCanvasNodePreview}
+            onPaneClick={handleCanvasPaneClick}
             onSaveNodeAsAsset={handleSaveCanvasNodeAsAsset}
             onDeleteNodeById={handleDeleteCanvasNodeById}
             onDropAsset={handleDropAssetOnCanvas}
             onDropComponent={handleDropComponentOnCanvas}
             onUploadProduct={handleUploadProduct}
+            onOpenAssets={() => setActiveBottomPanel("assets")}
+            onFocusAgent={() => setAgentPanelCollapsed(false)}
             onSaveWorkflow={handleSaveWorkflow}
             onBeforeEdit={pushHistorySnapshot}
             onUndo={handleUndo}
@@ -4626,7 +5740,7 @@ export function VisualWorkbench() {
             savingWorkflow={savingWorkflow}
             canUndo={undoStack.length > 0}
             canRedo={redoStack.length > 0}
-            canEditSelectedNode={!!selectedNode}
+            canEditSelectedNode={!!selectedCanvasNode}
           />
         </ReactFlowProvider>
       </div>
@@ -4634,20 +5748,34 @@ export function VisualWorkbench() {
       <CanvasAgentPanel
         productAsset={undefined}
         activeProductComponentTitle={activeComposeProductTitle}
+        activeGenerationFrameTitle={activeAgentGenerationFrameTitle}
+        editTarget={agentImageEditTarget}
+        primaryMode={agentPrimaryMode}
         composeBrief={composeBrief}
+        lastUserBrief={agentLastUserBrief}
         composeMessage={composeMessage}
         composingWorkflow={composingWorkflow}
         generatingSample={generatingAgentSample}
         hasAppliedWorkflow={hasAppliedAgentWorkflow}
         hasProductReference={hasCanvasProductReference}
         sampleOutputCount={agentSampleOutputCount}
+        visibleOutputCount={visibleOutputCount}
+        visibleArtifacts={visibleArtifacts}
+        activeJobCount={activeVisibleJobCount}
+        jobMessage={jobMessage}
         workflowPlanPreview={workflowPlanPreview}
+        planDiff={agentPlanDiff}
+        collapsed={agentPanelCollapsed}
         onComposeBriefChange={setComposeBrief}
         onComposeWorkflow={handleComposeWorkflow}
+        onEditWorkflowPlan={handleEditWorkflowPlanFromAgent}
+        onApplyResultGroupEdit={handleRunAgentResultGroupRevision}
         onApplyWorkflowPlan={handleApplyWorkflowPlan}
         onDismissWorkflowPlan={handleDismissWorkflowPlan}
+        onClearEditTarget={handleClearAgentImageEditTarget}
         onImportProduct={() => agentProductInputRef.current?.click()}
         onGenerateSample={handleGenerateAgentSample}
+        onCollapsedChange={setAgentPanelCollapsed}
       />
       <input
         ref={agentProductInputRef}
@@ -4660,12 +5788,7 @@ export function VisualWorkbench() {
 
       {activeBottomPanel === "assets" && (
         <div
-          className={cn(
-            "absolute inset-x-3 bottom-[72px] z-30 overflow-hidden rounded-lg border border-warm-line/70 bg-warm-paper shadow-2xl lg:bottom-[58px]",
-            assetLibraryGeneratorOpen
-              ? "h-[min(430px,52svh)]"
-              : "h-[min(320px,42svh)]"
-          )}
+          className="absolute inset-x-3 bottom-[58px] z-50 h-[min(320px,42svh)] overflow-hidden rounded-lg border border-warm-line/60 bg-warm-paper shadow-xl lg:bottom-[48px]"
         >
           <AssetLibrary
             activeCategory={activeCategory}
@@ -4698,13 +5821,12 @@ export function VisualWorkbench() {
             onAddAssetPackReferenceUploads={handleAddAssetPackReferenceUploads}
             onRemoveAssetPackReferenceUpload={handleRemoveAssetPackReferenceUpload}
             onClearAssetPackReferenceUploads={() => setAssetPackReferenceUploads([])}
-            onUseTrayItemAsAssetPackReference={handleUseTrayItemAsAssetPackReference}
             onRenameAsset={handleRenameLibraryAsset}
             onToggleFavoriteAsset={handleToggleFavoriteLibraryAsset}
             onDeleteLibraryItem={handleDeleteLibraryItem}
-            onChangeAssetCategory={handleChangeLibraryAssetCategory}
-            showGenerator={assetLibraryGeneratorOpen}
-            showUpload={false}
+            focusItemId={assetLibraryFocusItemId}
+            showGenerator
+            showUpload
             className="h-full"
           />
         </div>
@@ -4713,19 +5835,10 @@ export function VisualWorkbench() {
       <CanvasBottomDock
         activePanel={activeBottomPanel}
         outputCount={visibleFrameOutputCount}
-        activeJobCount={jobs.filter(isActiveBackgroundJob).length}
+        activeJobCount={activeVisibleJobCount}
         onToggleAssets={() =>
-          setActiveBottomPanel((panel) => {
-            const next = panel === "assets" ? null : "assets";
-            if (next === "assets") setAssetLibraryGeneratorOpen(true);
-            return next;
-          })
+          setActiveBottomPanel((panel) => (panel === "assets" ? null : "assets"))
         }
-        onCreateTemplateFrame={() => {
-          setActiveBottomPanel(null);
-          setAssetLibraryGeneratorOpen(false);
-          handleCreateBlankGenerationFrame(undefined, "custom_template");
-        }}
         onOpenStatus={() => setShowStatusDrawer(true)}
       />
 
@@ -4817,222 +5930,61 @@ export function VisualWorkbench() {
         </div>
       )}
       {outputPreview && activeOutputPreview && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-warm-ink/70 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label="查看生成大图"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setOutputPreview(null);
+        <OutputPreviewModal
+          item={activeOutputPreview}
+          index={outputPreview.index}
+          total={previewCount}
+          canPrevious={canPreviewPrevious}
+          canNext={canPreviewNext}
+          prompt={activeOutputPrompt}
+          error={activeOutputError}
+          referenceRoleLabels={activeReferenceRoleLabels}
+          providerRoleLabels={activeProviderRoleLabels}
+          productFocusLabel={activeProductFocusLabel}
+          lockSummary={activeOutputLockSummary}
+          copyPolicy={activeOutputCopyPolicy}
+          assetInvocationDecisions={activeAssetInvocationDecisions}
+          providerReferenceImages={activeProviderReferenceImages}
+          promptOnlyReferenceImages={activePromptOnlyReferenceImages}
+          reviewStatus={activeOutputReviewStatus}
+          visualQa={activeOutputVisualQa}
+          visualQaReviewing={visualQaReviewingArtifactId === activeOutputPreview.artifactId}
+          onSetReviewStatus={(status) => {
+            if (!activeOutputPreview.artifactId) {
+              setArtifactMessage("这张图还没有可保存的产物记录");
+              return;
+            }
+            void handleSetArtifactReviewStatus(activeOutputPreview.artifactId, status, "详情面板标记");
           }}
-        >
-          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-warm-line/60 bg-warm-paper shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-warm-line/60 px-3 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-warm-ink">{activeOutputPreview.title}</div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-warm-muted">
-                  <span>{previewCount > 1 ? `${outputPreview.index + 1}/${previewCount}` : "生成大图"}</span>
-                  {activeOutputPreview.provider && <span>· {activeOutputPreview.provider}</span>}
-                  {activeOutputPreview.model && <span>· {activeOutputPreview.model}</span>}
-                  {activeProductFocusLabel && <span>· {activeProductFocusLabel}</span>}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-warm-line/60 bg-warm-bg px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-45"
-                  disabled={!activeOutputPreview.jobId}
-                  onClick={() =>
-                    dispatchPreviewOutputAction("image-master:generation-frame-output-retry", activeOutputPreview)
-                  }
-                  title={activeOutputPreview.jobId ? "重做当前图" : "当前图没有可重做任务"}
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  重做
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-warm-line/60 bg-warm-bg px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-45"
-                  disabled={!activeOutputPreview.url}
-                  onClick={() =>
-                    dispatchPreviewOutputAction("image-master:generation-frame-output-save", activeOutputPreview)
-                  }
-                >
-                  <Save className="h-3 w-3" />
-                  保存
-                </button>
-                <a
-                  href={activeOutputPreview.url}
-                  download
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-warm-line/60 bg-warm-bg px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Download className="h-3 w-3" />
-                  下载
-                </a>
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-warm-line/60 bg-warm-bg px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-45"
-                  disabled={!activeOutputPrompt}
-                  onClick={() => {
-                    if (!activeOutputPrompt) return;
-                    void navigator.clipboard?.writeText(activeOutputPrompt);
-                    setArtifactMessage("已复制这张图的 prompt");
-                  }}
-                  title={activeOutputPrompt ? "复制这张图的 prompt" : "没有记录 prompt"}
-                >
-                  <Copy className="h-3 w-3" />
-                  Prompt
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-warm-line/60 bg-warm-bg text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-35"
-                  disabled={!canPreviewPrevious}
-                  onClick={() => setPreviewIndex(outputPreview.index - 1)}
-                  title="上一张"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-warm-line/60 bg-warm-bg text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-35"
-                  disabled={!canPreviewNext}
-                  onClick={() => setPreviewIndex(outputPreview.index + 1)}
-                  title="下一张"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink"
-                  onClick={() => setOutputPreview(null)}
-                  title="关闭"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <div className="grid min-h-0 flex-1 gap-3 overflow-auto bg-warm-bg p-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-              <div className="flex min-h-[360px] items-center justify-center rounded-md border border-warm-line/50 bg-warm-paper p-2">
-                <img
-                  src={activeOutputPreview.url}
-                  alt={activeOutputPreview.title}
-                  className="max-h-[78vh] max-w-full rounded-md object-contain shadow-sm"
-                />
-              </div>
-              <aside className="min-h-0 space-y-3 overflow-y-auto rounded-md border border-warm-line/50 bg-warm-paper p-3">
-                <div>
-                  <div className="text-xs font-semibold text-warm-ink">生成依据</div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {activeReferenceRoleLabels.length > 0 ? activeReferenceRoleLabels.map((label) => (
-                      <span key={label} className="rounded bg-warm-bg px-1.5 py-0.5 text-[10px] text-warm-muted">
-                        {label}
-                      </span>
-                    )) : (
-                      <span className="text-[11px] text-warm-muted">没有记录结构化引用角色</span>
-                    )}
-                  </div>
-                  {activeProviderRoleLabels.length > 0 && (
-                    <div className="mt-1 text-[11px] text-warm-muted">
-                      Provider 输入：{activeProviderRoleLabels.join("、")}
-                    </div>
-                  )}
-                </div>
-
-                {activeOutputError && (
-                  <div className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-700">
-                    {activeOutputError}
-                  </div>
-                )}
-
-                {activeProductFocusLabel && (
-                  <div className="rounded-md border border-warm-line/50 bg-warm-bg px-2 py-1.5">
-                    <div className="text-[10px] text-warm-muted">商品参考焦点</div>
-                    <div className="mt-0.5 text-xs font-medium text-warm-ink">{activeProductFocusLabel}</div>
-                  </div>
-                )}
-
-                <OutputPreviewReferenceSection
-                  title="强参考图"
-                  images={activeProviderReferenceImages}
-                  emptyText="这张图没有送进 provider 的图片参考"
-                />
-                <OutputPreviewReferenceSection
-                  title="弱参考 / 文字约束"
-                  images={activePromptOnlyReferenceImages}
-                  emptyText="没有额外弱参考图"
-                />
-
-                <div>
-                  <div className="mb-1 text-xs font-semibold text-warm-ink">Prompt</div>
-                  {activeOutputPrompt ? (
-                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-warm-line/50 bg-warm-bg p-2 text-[11px] leading-4 text-warm-ink">
-                      {activeOutputPrompt}
-                    </pre>
-                  ) : (
-                    <div className="rounded-md border border-warm-line/50 bg-warm-bg p-2 text-[11px] text-warm-muted">
-                      这张图还没有记录 prompt。
-                    </div>
-                  )}
-                </div>
-              </aside>
-            </div>
-          </div>
-        </div>
+          onRunVisualQa={
+            activeOutputPreview.artifactId
+              ? () => void handleRunArtifactVisualQa(activeOutputPreview.artifactId!)
+              : undefined
+          }
+          onPrevious={() => setPreviewIndex(outputPreview.index - 1)}
+          onNext={() => setPreviewIndex(outputPreview.index + 1)}
+          onClose={() => setOutputPreview(null)}
+          onEdit={() => {
+            dispatchPreviewOutputAction("image-master:generation-frame-output-edit", activeOutputPreview);
+            setOutputPreview(null);
+          }}
+          onRetry={() =>
+            dispatchPreviewOutputAction("image-master:generation-frame-output-retry", activeOutputPreview)
+          }
+          onSaveAsAsset={() =>
+            dispatchPreviewOutputAction("image-master:generation-frame-output-save", activeOutputPreview)
+          }
+          onOpenFolder={() =>
+            dispatchPreviewOutputAction("image-master:generation-frame-output-open-folder", activeOutputPreview)
+          }
+          onCopyPrompt={() => {
+            if (!activeOutputPrompt) return;
+            void navigator.clipboard?.writeText(activeOutputPrompt);
+            setArtifactMessage("已复制这张图的 prompt");
+          }}
+        />
       )}
     </section>
-  );
-}
-
-function OutputPreviewReferenceSection({
-  title,
-  images,
-  emptyText,
-}: {
-  title: string;
-  images: GenerationReferenceImage[];
-  emptyText: string;
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-warm-ink">{title}</span>
-        <span className="text-[10px] text-warm-muted">{images.length} 张</span>
-      </div>
-      {images.length > 0 ? (
-        <div className="grid grid-cols-2 gap-2">
-          {images.map((image, index) => (
-            <a
-              key={`${image.role}-${image.url}-${index}`}
-              href={image.url}
-              target="_blank"
-              rel="noreferrer"
-              className="group overflow-hidden rounded-md border border-warm-line/50 bg-warm-bg transition hover:border-warm-primary/50"
-              title={image.title}
-            >
-              <div className="aspect-square bg-warm-paper">
-                <img
-                  src={image.url}
-                  alt={image.title}
-                  className="h-full w-full object-cover transition group-hover:scale-[1.02]"
-                  loading="lazy"
-                />
-              </div>
-              <div className="space-y-1 px-1.5 py-1.5">
-                <div className="truncate text-[11px] font-medium text-warm-ink">{image.title}</div>
-                <span className={cn("inline-flex rounded px-1.5 py-0.5 text-[10px]", getReferenceImageUsabilityClassName(image))}>
-                  {getGenerationReferenceRoleLabel(image.role)}
-                </span>
-              </div>
-            </a>
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-md border border-dashed border-warm-line/60 bg-warm-bg px-2 py-2 text-[11px] text-warm-muted">
-          {emptyText}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -5074,6 +6026,99 @@ function getGenerationOutputPreviewPrompt({
     getStringValue(metadata.finalPrompt) ||
     getStringValue(metadata.revisedPrompt)
   );
+}
+
+function buildSavedGenerationOutputTraceMetadata({
+  metadata,
+  artifact,
+  job,
+  prompt,
+}: {
+  metadata: Record<string, unknown>;
+  artifact?: PersistedGeneratedArtifact;
+  job?: PersistedGenerationJob;
+  prompt?: string;
+}): Record<string, unknown> {
+  const providerImages = getOutputPreviewProviderReferenceImages(metadata)
+    .map(compactGenerationReferenceImageForAsset)
+    .filter(Boolean);
+  const promptOnlyImages = getOutputPreviewPromptOnlyReferenceImages(metadata)
+    .map(compactGenerationReferenceImageForAsset)
+    .filter(Boolean);
+  const trace = {
+    prompt: truncateRevisionText(prompt, 6000),
+    finalPrompt: truncateRevisionText(getStringValue(metadata.finalPrompt), 6000),
+    revisedPrompt: truncateRevisionText(getStringValue(metadata.revisedPrompt), 6000),
+    provider: artifact?.provider || getStringValue(metadata.provider),
+    model: artifact?.model || getStringValue(metadata.model),
+    generatedAt: artifact?.createdAt || job?.updatedAt || getStringValue(metadata.generatedAt),
+    referenceImages: providerImages.length > 0 ? providerImages : undefined,
+    promptOnlyReferenceImages: promptOnlyImages.length > 0 ? promptOnlyImages : undefined,
+    assetInvocationPlan: compactAssetInvocationPlanForAsset(metadata.assetInvocationPlan),
+    copyRenderPolicy: compactCopyRenderPolicyForAsset(metadata.copyRenderPolicy),
+    productReferenceFocus: getStringValue(metadata.productReferenceFocus),
+    providerReferenceCount: getMetadataNumber(metadata.providerReferenceCount),
+  };
+
+  return Object.fromEntries(Object.entries(trace).filter(([, value]) => value !== undefined));
+}
+
+function compactGenerationReferenceImageForAsset(image: GenerationReferenceImage): Record<string, unknown> | undefined {
+  const url = getTraceableImageUrl(image.url);
+  if (!url) return undefined;
+  const compact = {
+    role: image.role,
+    title: truncateRevisionText(image.title, 160),
+    url,
+    providerUsable: image.providerUsable,
+    providerMode: image.providerMode,
+    source: truncateRevisionText(image.source, 120),
+    nodeId: image.nodeId,
+    assetId: image.assetId,
+    componentId: image.componentId,
+  };
+  return Object.fromEntries(Object.entries(compact).filter(([, value]) => value !== undefined));
+}
+
+function compactAssetInvocationPlanForAsset(value: unknown): Record<string, unknown> | undefined {
+  const plan = getRecordValue(value);
+  const decisions = getOutputPreviewAssetInvocationDecisions({ assetInvocationPlan: plan }).slice(0, 8);
+  if (Object.keys(plan).length === 0 && decisions.length === 0) return undefined;
+  const compact = {
+    mode: getStringValue(plan.mode),
+    planner: getStringValue(plan.planner) || getStringValue(plan.source),
+    providerReferenceRoles: getStringArray(plan.providerReferenceRoles),
+    promptOnlyRoles: getStringArray(plan.promptOnlyRoles),
+    decisions: decisions.length > 0 ? decisions.map((decision) => ({
+      role: decision.role,
+      mode: decision.mode,
+      providerInput: decision.providerInput,
+      reason: truncateRevisionText(decision.reason, 240),
+    })) : undefined,
+  };
+  return Object.fromEntries(Object.entries(compact).filter(([, item]) => item !== undefined));
+}
+
+function compactCopyRenderPolicyForAsset(value: unknown): Record<string, unknown> | undefined {
+  const policy = getRecordValue(value);
+  if (Object.keys(policy).length === 0) return undefined;
+  const compact = {
+    mode: getStringValue(policy.mode),
+    allowBurnIn: typeof policy.allowBurnIn === "boolean" ? policy.allowBurnIn : undefined,
+    reason: truncateRevisionText(getStringValue(policy.reason), 320),
+    inImageText: getStringArray(policy.inImageText).slice(0, 8),
+    sellingPoints: getStringArray(policy.sellingPoints).slice(0, 8),
+  };
+  return Object.fromEntries(Object.entries(compact).filter(([, item]) =>
+    Array.isArray(item) ? item.length > 0 : item !== undefined
+  ));
+}
+
+function getTraceableImageUrl(value: unknown): string | undefined {
+  const url = getStringValue(value);
+  if (!url) return undefined;
+  if (url.startsWith("data:image/") && url.length > 4096) return undefined;
+  return url;
 }
 
 function getOutputPreviewProviderReferenceImages(
@@ -5160,6 +6205,128 @@ function getOutputPreviewProductFocusLabel(metadata: Record<string, unknown>): s
   return labels[focus] ?? `商品焦点：${focus}`;
 }
 
+function getOutputPreviewAssetInvocationDecisions(
+  metadata: Record<string, unknown>
+): OutputPreviewAssetInvocationDecision[] {
+  const plan = getRecordValue(metadata.assetInvocationPlan);
+  const decisions = Array.isArray(plan.decisions) ? plan.decisions : [];
+  return decisions.flatMap((entry): OutputPreviewAssetInvocationDecision[] => {
+    const record = getRecordValue(entry);
+    const role = getGenerationReferenceRole(record.role);
+    if (!role) return [];
+    const mode = getStringValue(record.mode) || "prompt_only";
+    const providerInput = record.providerInput === true;
+    if (mode === "unused" && !providerInput) return [];
+    return [{
+      role,
+      mode,
+      providerInput,
+      reason: getStringValue(record.reason),
+    }];
+  });
+}
+
+function getOutputPreviewCopyRenderPolicy(
+  metadata: Record<string, unknown>
+): OutputPreviewCopyRenderPolicy | undefined {
+  const policy = getRecordValue(metadata.copyRenderPolicy);
+  if (Object.keys(policy).length === 0) return undefined;
+  return {
+    mode: getStringValue(policy.mode),
+    allowBurnIn: typeof policy.allowBurnIn === "boolean" ? policy.allowBurnIn : undefined,
+    reason: getStringValue(policy.reason),
+    inImageText: getStringArray(policy.inImageText),
+    sellingPoints: getStringArray(policy.sellingPoints),
+    exportCopy: getStringArray(policy.exportCopy),
+    forbiddenClaims: getStringArray(policy.forbiddenClaims),
+  };
+}
+
+function getOutputPreviewLockSummary({
+  metadata,
+  decisions,
+  copyPolicy,
+}: {
+  metadata: Record<string, unknown>;
+  decisions: OutputPreviewAssetInvocationDecision[];
+  copyPolicy?: OutputPreviewCopyRenderPolicy;
+}): OutputPreviewLockSummaryItem[] {
+  const items: OutputPreviewLockSummaryItem[] = [];
+  const usedKeys = new Set<string>();
+  const push = (item: OutputPreviewLockSummaryItem) => {
+    if (usedKeys.has(item.key)) return;
+    usedKeys.add(item.key);
+    items.push(item);
+  };
+
+  for (const decision of decisions) {
+    const item = getOutputPreviewLockSummaryItem(decision);
+    if (item) push(item);
+  }
+
+  for (const image of getOutputPreviewProviderReferenceImages(metadata)) {
+    const item = getProviderImageLockSummaryItem(image.role);
+    if (item) push(item);
+  }
+
+  if (copyPolicy?.mode) {
+    push({
+      key: `copy:${copyPolicy.mode}`,
+      label: getOutputPreviewCopyLockLabel(copyPolicy.mode),
+      tone: "copy",
+    });
+  }
+
+  return items.slice(0, 8);
+}
+
+function getOutputPreviewLockSummaryItem(
+  decision: OutputPreviewAssetInvocationDecision
+): OutputPreviewLockSummaryItem | undefined {
+  if (decision.role === "copy") return undefined;
+  if (decision.providerInput) return getProviderImageLockSummaryItem(decision.role);
+
+  if (decision.mode === "unused") return undefined;
+  const labels: Partial<Record<GenerationReferenceRole, string>> = {
+    product: "商品只作文字约束",
+    model: "模特只作文字约束",
+    scene: "场景只作空间描述",
+    style: "风格只约束质感",
+  };
+  const label = labels[decision.role];
+  if (!label) return undefined;
+  return {
+    key: `${decision.role}:prompt_only`,
+    label,
+    tone: decision.role === "product" || decision.role === "model" ? "soft" : "muted",
+  };
+}
+
+function getProviderImageLockSummaryItem(
+  role: GenerationReferenceRole
+): OutputPreviewLockSummaryItem | undefined {
+  const labels: Partial<Record<GenerationReferenceRole, string>> = {
+    product: "商品强锁",
+    model: "模特身份参考",
+    scene: "场景锁光影",
+    style: "风格图进模型",
+  };
+  const label = labels[role];
+  if (!label) return undefined;
+  return {
+    key: `${role}:provider`,
+    label,
+    tone: role === "product" || role === "model" ? "strong" : "soft",
+  };
+}
+
+function getOutputPreviewCopyLockLabel(mode: string): string {
+  if (mode === "burn_in") return "文案烧进图";
+  if (mode === "layout_layer") return "文案图层";
+  if (mode === "metadata_only") return "文案不进图";
+  return `文案 ${mode}`;
+}
+
 function getGenerationReferenceRolesFromValue(value: unknown): GenerationReferenceRole[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -5177,22 +6344,19 @@ function CanvasStage({
   onNodePositionCommit,
   onEdgesChange,
   onConnect,
-  onCreateGenerationFrame,
-  onCreateBlankGenerationFrame,
-  onCreateProductAsset,
-  onCreateModelAsset,
-  onCreateSceneAsset,
-  onCreateStyleAsset,
+  onPrepareAgentFromLineAction,
   onCreateKnowledgeNode,
   onCreateCopyNode,
   onSetNodeRole,
-  onAddNodeToGenerationFrame,
   onOpenNodePreview,
+  onPaneClick,
   onSaveNodeAsAsset,
   onDeleteNodeById,
   onDropAsset,
   onDropComponent,
   onUploadProduct,
+  onOpenAssets,
+  onFocusAgent,
   onSaveWorkflow,
   onBeforeEdit,
   onUndo,
@@ -5213,26 +6377,22 @@ function CanvasStage({
   onNodePositionCommit: (nodeId: string, position: XYPosition) => void;
   onEdgesChange: (changes: EdgeChange<Edge>[]) => void;
   onConnect: (connection: Connection) => void;
-  onCreateGenerationFrame: (params: {
+  onPrepareAgentFromLineAction: (params: {
     sourceNodeId: string;
     actionId: LineGenerationActionId;
-    position: XYPosition;
   }) => void;
-  onCreateBlankGenerationFrame: (position?: XYPosition, actionId?: LineGenerationActionId) => void;
-  onCreateProductAsset: (position?: XYPosition) => void;
-  onCreateModelAsset: (position?: XYPosition) => void;
-  onCreateSceneAsset: (position?: XYPosition) => void;
-  onCreateStyleAsset: (position?: XYPosition) => void;
   onCreateKnowledgeNode: (position?: XYPosition) => void;
   onCreateCopyNode: (text: string, position: XYPosition) => void;
   onSetNodeRole: (nodeId: string, role: GenerationFrameRole) => void;
-  onAddNodeToGenerationFrame: (nodeId: string, targetFrameId?: string) => void;
   onOpenNodePreview: (nodeId: string) => void;
+  onPaneClick?: () => void;
   onSaveNodeAsAsset: (nodeId: string) => void;
   onDeleteNodeById: (nodeId: string) => void;
   onDropAsset: (assetId: string, position: XYPosition, targetFrameId?: string) => void;
   onDropComponent: (componentId: string, position: XYPosition, targetFrameId?: string) => void;
   onUploadProduct: (file: File, targetFrameId?: string, position?: XYPosition) => void;
+  onOpenAssets: () => void;
+  onFocusAgent: () => void;
   onSaveWorkflow: () => void;
   onBeforeEdit: () => void;
   onUndo: () => void;
@@ -5266,6 +6426,26 @@ function CanvasStage({
   );
   const flowNodesRef = useRef(flowNodes);
   const flowEdges = useMemo(() => edges.map((edge) => toFlowEdge(edge, edges.length)), [edges]);
+  const backstageFlowNodeIds = useMemo(
+    () => new Set(flowNodes.filter(isCanvasBackstageNode).map((node) => node.id)),
+    [flowNodes]
+  );
+  const visibleFlowNodes = useMemo(
+    () => flowNodes.filter((node) => !backstageFlowNodeIds.has(node.id)),
+    [backstageFlowNodeIds, flowNodes]
+  );
+  const visibleFlowEdges = useMemo(
+    () => flowEdges.filter((edge) =>
+      !backstageFlowNodeIds.has(String(edge.source)) &&
+      !backstageFlowNodeIds.has(String(edge.target))
+    ),
+    [backstageFlowNodeIds, flowEdges]
+  );
+  const initialFitViewMinZoom = nodes.some(isArtifactResultCanvasNode)
+    ? 0.82
+    : nodes.length > 12
+      ? 0.62
+      : 0.5;
 
   useEffect(() => {
     flowNodesRef.current = flowNodes;
@@ -5367,8 +6547,8 @@ function CanvasStage({
       }
 
       attempt += 1;
-      if (attempt < 8) {
-        timeoutId = window.setTimeout(focusNodes, 45);
+      if (attempt < 18) {
+        timeoutId = window.setTimeout(focusNodes, 70);
       }
     };
 
@@ -5385,6 +6565,26 @@ function CanvasStage({
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   };
+
+  const handleStageClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const explicitPreviewTarget = target?.closest("[data-canvas-preview-node-id]");
+    const explicitPreviewNodeId = explicitPreviewTarget?.getAttribute("data-canvas-preview-node-id");
+    if (explicitPreviewNodeId) {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenNodePreview(explicitPreviewNodeId);
+      return;
+    }
+
+    if (target?.closest("a,button,input,textarea,select")) return;
+    const nodeElement = target?.closest("[data-node-id]");
+    const nodeId = nodeElement?.getAttribute("data-node-id");
+    if (!nodeId) return;
+    const node = nodes.find((item) => item.id === nodeId);
+    if (!node || !shouldOpenCanvasNodeOnClick(node)) return;
+    onOpenNodePreview(node.id);
+  }, [nodes, onOpenNodePreview]);
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -5420,23 +6620,6 @@ function CanvasStage({
     if (!file || !target) return;
     onUploadProduct(file, target.targetFrameId, target.targetFrameId ? undefined : target.position);
   }, [onUploadProduct]);
-
-  const openToolbarImageImport = useCallback(() => {
-    const bounds = document.querySelector("[data-canvas-stage]")?.getBoundingClientRect();
-    const pointer = bounds
-      ? {
-          x: bounds.left + bounds.width * 0.42,
-          y: bounds.top + bounds.height * 0.38,
-        }
-      : {
-          x: window.innerWidth / 2,
-          y: window.innerHeight / 2,
-        };
-    pendingImageImportRef.current = {
-      position: reactFlow.screenToFlowPosition(pointer),
-    };
-    imageImportInputRef.current?.click();
-  }, [reactFlow]);
 
   const openPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
     event.preventDefault();
@@ -5488,33 +6671,8 @@ function CanvasStage({
     context: CanvasContextMenuContext
   ) => {
     const position = context.flowPosition ?? { x: 80, y: 120 };
-    if (action === "create-generation-frame") {
-      onCreateBlankGenerationFrame(position);
-      return;
-    }
-    if (action === "create-product-asset") {
-      onCreateProductAsset(position);
-      return;
-    }
-    if (action === "create-model-asset") {
-      onCreateModelAsset(position);
-      return;
-    }
-    if (action === "create-scene-asset") {
-      onCreateSceneAsset(position);
-      return;
-    }
-    if (action === "create-style-asset") {
-      onCreateStyleAsset(position);
-      return;
-    }
     if (action === "create-knowledge-asset") {
       onCreateKnowledgeNode(position);
-      return;
-    }
-    const frameActionId = getFrameActionIdFromContextAction(action);
-    if (frameActionId) {
-      onCreateBlankGenerationFrame(position, frameActionId);
       return;
     }
     if (action === "import-image") {
@@ -5539,10 +6697,6 @@ function CanvasStage({
     const role = getGenerationRoleFromContextAction(action);
     if (role) {
       onSetNodeRole(context.nodeId, role);
-      return;
-    }
-    if (action === "add-to-generation-frame") {
-      onAddNodeToGenerationFrame(context.nodeId);
       return;
     }
     if (action === "open-preview") {
@@ -5582,13 +6736,7 @@ function CanvasStage({
       }));
     }
   }, [
-    onAddNodeToGenerationFrame,
-    onCreateBlankGenerationFrame,
-    onCreateModelAsset,
     onCreateKnowledgeNode,
-    onCreateProductAsset,
-    onCreateSceneAsset,
-    onCreateStyleAsset,
     onCreateCopyNode,
     onDeleteNodeById,
     onOpenNodePreview,
@@ -5757,19 +6905,18 @@ function CanvasStage({
   const handleSelectLineAction = useCallback(
     (actionId: LineGenerationActionId) => {
       if (!lineActionMenu) return;
-      onCreateGenerationFrame({
+      onPrepareAgentFromLineAction({
         sourceNodeId: lineActionMenu.sourceNodeId,
         actionId,
-        position: lineActionMenu.position,
       });
       setLineActionMenu(null);
     },
-    [lineActionMenu, onCreateGenerationFrame]
+    [lineActionMenu, onPrepareAgentFromLineAction]
   );
 
   return (
     <div
-      className="h-full min-h-[420px] overflow-hidden border-y border-warm-line/50 bg-warm-bg sm:min-h-[520px] lg:min-h-0 lg:border-x lg:border-y-0"
+      className="h-full min-h-[420px] overflow-hidden bg-warm-bg sm:min-h-[520px] lg:min-h-0"
       data-canvas-stage
       onDragOver={handleDragOver}
       onDrop={handleDrop}
@@ -5778,6 +6925,7 @@ function CanvasStage({
         if (target?.closest(".react-flow__node")) return;
         openPaneContextMenu(event);
       }}
+      onClickCapture={handleStageClickCapture}
       onMouseDownCapture={handleStageMouseDownCapture}
       onMouseUpCapture={handleStageMouseUpCapture}
     >
@@ -5788,90 +6936,52 @@ function CanvasStage({
         className="hidden"
         onChange={handleImageImportChange}
       />
-      <div className="flex h-full min-h-[420px] flex-col sm:min-h-[520px] lg:min-h-0">
-        <div className="flex flex-col gap-2 border-b border-warm-line/40 bg-warm-paper/70 px-3 py-1.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-warm-line/60 bg-warm-bg px-2.5 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
-              type="button"
-              onClick={openToolbarImageImport}
-              title="导入一张素材到画布"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              导入素材
-            </button>
-            <span className="hidden truncate text-[11px] text-warm-muted xl:inline">
-              拖入素材，或直接让 Agent 规划一组图
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1">
-            <button
-              className="rounded-md p-1.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink disabled:opacity-35"
-              type="button"
-              title="撤销"
-              disabled={!canUndo}
-              onClick={onUndo}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </button>
-            <button
-              className="rounded-md p-1.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink disabled:opacity-35"
-              type="button"
-              title="重做"
-              disabled={!canRedo}
-              onClick={onRedo}
-            >
-              <RotateCw className="h-3.5 w-3.5" />
-            </button>
-            <button
-              className="rounded-md p-1.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink disabled:opacity-35"
-              type="button"
-              title="复制节点"
-              disabled={!canEditSelectedNode}
-              onClick={onDuplicateNode}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-            <button
-              className="rounded-md p-1.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink disabled:opacity-35"
-              type="button"
-              title="删除节点"
-              disabled={!canEditSelectedNode}
-              onClick={onDeleteNode}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-            <button
-              className="rounded-md p-1.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink disabled:opacity-40"
-              type="button"
-              title="保存画布"
-              disabled={savingWorkflow}
-              onClick={onSaveWorkflow}
-            >
-              {savingWorkflow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            </button>
-          </div>
-        </div>
-
+      <div className="relative flex h-full min-h-[420px] flex-col sm:min-h-[520px] lg:min-h-0">
         <div className="relative min-h-0 flex-1">
           {nodes.length === 0 && (
-            <div className="pointer-events-none absolute left-8 top-8 z-10 max-w-[360px] rounded-xl border border-dashed border-warm-line/70 bg-warm-paper/75 px-4 py-3 text-sm shadow-sm backdrop-blur">
-              <div className="flex items-center gap-2 font-medium text-warm-ink">
-                <Sparkles className="h-4 w-4 text-warm-primary" />
-                空画布
+            <div className="pointer-events-none absolute left-1/2 top-[42%] z-10 w-[min(460px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 text-center">
+              <div className="rounded-2xl border border-warm-line/55 bg-warm-paper/82 px-5 py-5 shadow-sm backdrop-blur">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-warm-primary-soft text-warm-primary">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <h2 className="mt-3 text-base font-semibold text-warm-ink">从素材或一句话开始</h2>
+                <p className="mx-auto mt-1 max-w-[340px] text-xs leading-5 text-warm-muted">
+                  上传商品、生成模特/场景/风格资产，或者直接告诉 Agent 你要做哪一套图。
+                </p>
+                <div className="pointer-events-auto mt-4 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={onOpenAssets}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-warm-line/60 bg-warm-bg px-3 py-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    准备资产
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onFocusAgent}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-warm-primary px-3 py-2 text-xs font-medium text-warm-paper transition hover:bg-warm-primary/90"
+                  >
+                    <Bot className="h-3.5 w-3.5" />
+                    告诉 Agent
+                  </button>
+                </div>
               </div>
-              <p className="mt-1 text-xs leading-5 text-warm-muted">
-                拖入商品、模特、场景或文案；也可以直接在右侧告诉 Agent 要做什么。
-              </p>
             </div>
           )}
           <ReactFlow
             className="h-full"
-            nodes={flowNodes}
-            edges={flowEdges}
+            nodes={visibleFlowNodes}
+            edges={visibleFlowEdges}
             nodeTypes={canvasNodeTypes}
-            onNodeClick={(_, node) => onSelectNode(node.id)}
-            onPaneClick={() => setContextMenu(null)}
+            onNodeClick={(_, node) => {
+              onSelectNode(node.id);
+              if (shouldOpenCanvasNodeOnClick(node)) onOpenNodePreview(node.id);
+            }}
+            onPaneClick={() => {
+              setContextMenu(null);
+              onPaneClick?.();
+            }}
             onPaneContextMenu={openPaneContextMenu}
             onNodeContextMenu={openNodeContextMenu}
             onNodeDragStart={handleNodeDragStart}
@@ -5882,16 +6992,16 @@ function CanvasStage({
             onConnectEnd={handleConnectEnd}
             deleteKeyCode={null}
             fitView
-            fitViewOptions={{ padding: 0.18 }}
+            fitViewOptions={{ padding: 0.24, minZoom: initialFitViewMinZoom }}
             minZoom={0.45}
             maxZoom={1.65}
             nodesDraggable
             nodesConnectable
             elementsSelectable
+            onlyRenderVisibleElements
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="#DDD0C0" gap={24} />
-            <Controls className="!border !border-warm-line/60 !bg-warm-paper !shadow-sm" />
+            <Background color="#eadfce" gap={28} />
             <ViewportPortal>
               <CanvasAlignmentGuides guides={alignmentGuides} />
             </ViewportPortal>
@@ -5915,58 +7025,243 @@ function CanvasStage({
   );
 }
 
+function ResultReviewFilterBar({
+  value,
+  counts,
+  onChange,
+}: {
+  value: ResultReviewFilter;
+  counts: Record<ResultReviewFilter, number>;
+  onChange: (value: ResultReviewFilter) => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-wrap gap-1.5 lg:right-[350px]">
+      <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-warm-line/55 bg-warm-paper/90 p-1 text-[11px] text-warm-muted shadow-sm backdrop-blur">
+        {resultReviewFilterOptions.map((option) => {
+          const active = option.id === value;
+          const count = counts[option.id] ?? 0;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onChange(option.id)}
+              className={cn(
+                "inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-medium transition",
+                active
+                  ? "bg-warm-ink text-warm-paper shadow-sm"
+                  : "text-warm-muted hover:bg-warm-bg hover:text-warm-ink"
+              )}
+              title={`${option.label}：${count} 张`}
+            >
+              <span>{option.label}</span>
+              <span className={cn("text-[10px]", active ? "text-warm-paper/75" : "text-warm-muted/75")}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function buildResultReviewFilterCounts(
+  artifacts: PersistedGeneratedArtifact[]
+): Record<ResultReviewFilter, number> {
+  const counts: Record<ResultReviewFilter, number> = {
+    all: artifacts.length,
+    approved: 0,
+    needs_redo: 0,
+    failed: 0,
+    qa_risk: 0,
+  };
+  for (const artifact of artifacts) {
+    const status = getArtifactReviewStatus(artifact);
+    if (status === "approved") counts.approved += 1;
+    if (status === "needs_redo") counts.needs_redo += 1;
+    if (status === "failed") counts.failed += 1;
+    if (isArtifactVisualQaRisk(artifact)) counts.qa_risk += 1;
+  }
+  return counts;
+}
+
+function isCanvasNodeVisibleForResultReviewFilter(
+  node: CanvasFlowNode,
+  filter: ResultReviewFilter,
+  artifactById: Map<string, PersistedGeneratedArtifact>
+): boolean {
+  if (filter === "all") return true;
+
+  const data = node.data;
+  if (data.source === "artifact-history") {
+    const artifactId = getArtifactResultNodeArtifactId(node);
+    const artifact = artifactId ? artifactById.get(artifactId) : undefined;
+    if (!artifact) return false;
+    return filter === "qa_risk"
+      ? isArtifactVisualQaRisk(artifact)
+      : getArtifactReviewStatus(artifact) === filter;
+  }
+
+  if (data.source === "artifact-group-header") {
+    const parameters = typeof data.parameters === "object" && data.parameters
+      ? data.parameters as Record<string, unknown>
+      : undefined;
+    const artifactIds = Array.isArray(parameters?.layoutArtifactIds)
+      ? parameters.layoutArtifactIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+    return artifactIds.some((artifactId) => {
+      const artifact = artifactById.get(artifactId);
+      if (!artifact) return false;
+      return filter === "qa_risk"
+        ? isArtifactVisualQaRisk(artifact)
+        : getArtifactReviewStatus(artifact) === filter;
+    });
+  }
+
+  return false;
+}
+
+function withResultReviewFilterContext(
+  node: CanvasFlowNode,
+  filter: ResultReviewFilter,
+  artifactById: Map<string, PersistedGeneratedArtifact>
+): CanvasFlowNode {
+  if (filter === "all" || node.data.source !== "artifact-group-header") return node;
+
+  const parameters = typeof node.data.parameters === "object" && node.data.parameters
+    ? node.data.parameters as Record<string, unknown>
+    : {};
+  const artifactIds = getStringArray(parameters.layoutArtifactIds);
+  if (artifactIds.length === 0) return node;
+
+  const artifacts = artifactIds
+    .map((artifactId) => artifactById.get(artifactId))
+    .filter((artifact): artifact is PersistedGeneratedArtifact => Boolean(artifact));
+  const matchedArtifacts = artifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, filter));
+  if (matchedArtifacts.length === 0) return node;
+
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      parameters: {
+        ...parameters,
+        layoutFilterActive: true,
+        layoutFilterLabel: getResultReviewFilterLabel(filter),
+        layoutFilteredCount: matchedArtifacts.length,
+        layoutFilteredTotalCount: artifacts.length || artifactIds.length,
+        layoutFilteredReviewSummary: buildArtifactReviewSummaryParts(matchedArtifacts),
+        layoutFilteredVisualQaSummary: buildArtifactVisualQaSummaryParts(matchedArtifacts),
+      },
+    },
+  };
+}
+
+function artifactMatchesResultReviewFilter(
+  artifact: PersistedGeneratedArtifact,
+  filter: ResultReviewFilter
+): boolean {
+  return filter === "qa_risk"
+    ? isArtifactVisualQaRisk(artifact)
+    : getArtifactReviewStatus(artifact) === filter;
+}
+
+function buildArtifactReviewSummaryParts(artifacts: PersistedGeneratedArtifact[]): string[] {
+  const counts = new Map<ArtifactReviewStatus, number>();
+  for (const artifact of artifacts) {
+    const status = getArtifactReviewStatus(artifact);
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return (["approved", "pending", "needs_redo", "rejected", "failed"] as const)
+    .flatMap((status) => {
+      const count = counts.get(status) ?? 0;
+      return count > 0 ? [`${getArtifactReviewStatusLabel(status)} ${count}`] : [];
+    });
+}
+
+function buildArtifactVisualQaSummaryParts(artifacts: PersistedGeneratedArtifact[]): string[] {
+  const counts = new Map<ArtifactVisualQaStatus, number>();
+  for (const artifact of artifacts) {
+    const status = getArtifactVisualQaSummary(artifact).status;
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return (["fail", "warn", "pending", "pass"] as const)
+    .flatMap((status) => {
+      const count = counts.get(status) ?? 0;
+      return count > 0 ? [`${getArtifactVisualQaStatusLabel(status)} ${count}`] : [];
+    });
+}
+
+function getResultReviewFilterLabel(filter: ResultReviewFilter): string {
+  return resultReviewFilterOptions.find((option) => option.id === filter)?.label ?? "筛选";
+}
+
+function isArtifactVisualQaRisk(artifact: PersistedGeneratedArtifact): boolean {
+  const qa = getArtifactVisualQaSummary(artifact);
+  return qa.status === "fail" || qa.status === "warn";
+}
+
+function hasStoredArtifactVisualQa(artifact: PersistedGeneratedArtifact): boolean {
+  const visualQa = getRecordValue(artifact.metadata?.visualQa);
+  return !!getStringValue(visualQa.status);
+}
+
+function isAutoVisualQaCandidate(artifact: PersistedGeneratedArtifact): boolean {
+  if (!artifact.url || isAgentArtifactFailed(artifact) || hasStoredArtifactVisualQa(artifact)) return false;
+  const status = artifact.status.toLowerCase();
+  return status === "ready" || status === "done" || status === "completed" || status === "success";
+}
+
+function isFreshAutoVisualQaCandidate(artifact: PersistedGeneratedArtifact): boolean {
+  const time = Date.parse(artifact.updatedAt || artifact.createdAt || "");
+  if (!Number.isFinite(time)) return false;
+  return Date.now() - time <= autoVisualQaFreshWindowMs;
+}
+
 function CanvasBottomDock({
   activePanel,
   outputCount,
   activeJobCount,
   onToggleAssets,
-  onCreateTemplateFrame,
   onOpenStatus,
 }: {
   activePanel: "assets" | null;
   outputCount: number;
   activeJobCount: number;
   onToggleAssets: () => void;
-  onCreateTemplateFrame: () => void;
   onOpenStatus: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 bottom-20 z-40 flex justify-center px-3 lg:inset-x-auto lg:bottom-4 lg:left-20 lg:justify-start">
+    <div className="absolute inset-x-0 bottom-4 z-40 flex justify-center px-3 lg:inset-x-auto lg:left-4 lg:justify-start">
       <nav
-        className="flex items-center gap-1 rounded-full border border-warm-line/70 bg-warm-paper/95 p-1 text-xs text-warm-muted shadow-lg backdrop-blur"
+        className="flex items-center gap-1 rounded-full border border-warm-line/55 bg-warm-paper/90 p-1 text-xs text-warm-muted shadow-sm backdrop-blur"
         aria-label="画布快捷操作"
       >
         <button
           type="button"
           onClick={onToggleAssets}
+          title="素材库"
           className={cn(
-            "inline-flex h-9 items-center gap-1.5 rounded-full px-3 font-medium transition",
+            "inline-flex h-9 w-9 items-center justify-center rounded-full font-medium transition",
             activePanel === "assets"
               ? "bg-warm-primary text-warm-paper shadow-sm"
               : "hover:bg-warm-soft hover:text-warm-ink"
           )}
         >
           <ImageIcon className="h-3.5 w-3.5" />
-          素材库
-        </button>
-        <button
-          type="button"
-          onClick={onCreateTemplateFrame}
-          className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 font-medium transition hover:bg-warm-soft hover:text-warm-ink"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          新建框
+          <span className="sr-only">素材库</span>
         </button>
         <button
           type="button"
           onClick={onOpenStatus}
-          className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 font-medium transition hover:bg-warm-soft hover:text-warm-ink"
+          title={`进度：${outputCount} 结果 · ${activeJobCount} 生成中`}
+          className="relative inline-flex h-9 w-9 items-center justify-center rounded-full font-medium transition hover:bg-warm-soft hover:text-warm-ink"
         >
           <PackageCheck className="h-3.5 w-3.5" />
-          进度
+          <span className="sr-only">进度</span>
           {(outputCount > 0 || activeJobCount > 0) && (
-            <span className="ml-0.5 rounded-full bg-warm-bg px-1.5 py-0.5 text-[10px] leading-none text-warm-muted">
-              {outputCount}/{activeJobCount}
+            <span className="absolute -right-0.5 -top-0.5 rounded-full bg-warm-primary px-1 text-[9px] leading-4 text-warm-paper">
+              {outputCount}
             </span>
           )}
         </button>
@@ -6024,16 +7319,16 @@ function LineActionMenu({
       className="absolute z-20 w-[280px] overflow-hidden rounded-lg border border-warm-line/70 bg-warm-paper shadow-lg"
       style={{ left: position.x, top: position.y }}
       role="dialog"
-      aria-label="选择生成框类型"
+      aria-label="选择 Agent 规划方向"
     >
       <div className="border-b border-warm-line/50 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <span className="block truncate text-xs font-medium text-warm-ink">
-              新建生成框
+              交给 Agent
             </span>
             <span className="mt-0.5 block truncate text-[11px] text-warm-muted">
-              来自 {sourceLabel}
+              以 {sourceLabel} 作为参考
             </span>
           </div>
           <button
@@ -6099,14 +7394,13 @@ function AssetLibrary({
   onAddAssetPackReferenceUploads,
   onRemoveAssetPackReferenceUpload,
   onClearAssetPackReferenceUploads,
-  onUseTrayItemAsAssetPackReference,
   onFavoritesOnlyChange,
   onRenameAsset,
   onToggleFavoriteAsset,
   onDeleteLibraryItem,
-  onChangeAssetCategory,
   onSelectAsset,
   onSelectComponent,
+  focusItemId,
   showGenerator = true,
   showUpload = true,
   className,
@@ -6135,20 +7429,21 @@ function AssetLibrary({
   onAddAssetPackReferenceUploads: (files: FileList | File[]) => void;
   onRemoveAssetPackReferenceUpload: (uploadId: string) => void;
   onClearAssetPackReferenceUploads: () => void;
-  onUseTrayItemAsAssetPackReference: (item: AssetTrayItem) => void;
   onFavoritesOnlyChange: (value: boolean) => void;
   onRenameAsset: (item: AssetTrayItem) => void;
   onToggleFavoriteAsset: (item: AssetTrayItem) => void;
   onDeleteLibraryItem: (item: AssetTrayItem) => void;
-  onChangeAssetCategory: (item: AssetTrayItem, category: CanvasLibraryCategory) => void;
   onSelectAsset: (assetId: string) => void;
   onSelectComponent: (componentId: string) => void;
+  focusItemId?: string;
   showGenerator?: boolean;
   showUpload?: boolean;
   className?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [selectedTrayItemId, setSelectedTrayItemId] = useState<string | undefined>();
+  const [previewingTrayItem, setPreviewingTrayItem] = useState<AssetTrayItem | null>(null);
+  const [assetGeneratorOpen, setAssetGeneratorOpen] = useState(false);
   const visibleCategories = canvasLibraryCategories.filter((category) => category !== "平台" && category !== "质检");
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -6157,7 +7452,7 @@ function AssetLibrary({
     event.target.value = "";
   };
 
-  const handleAddSelectedItemToGenerationFrame = (item: AssetTrayItem) => {
+  const handlePlaceSelectedItemOnCanvas = (item: AssetTrayItem) => {
     const dragType = item.dragData?.type;
     const dragValue = item.dragData?.value;
     if (!dragValue) return;
@@ -6180,7 +7475,19 @@ function AssetLibrary({
         category: getComponentTypeLabel(component.type),
         status: mapComponentStatusToTrayStatus(component.status),
         previewUrl: getOptionalRecordString(component.metadata, "previewUrl"),
+        referenceUrl:
+          getOptionalRecordString(component.metadata, "referenceUrl") ||
+          getOptionalRecordString(component.metadata, "previewUrl"),
         previewAlt: getOptionalRecordString(component.metadata, "previewAlt") || component.title,
+        sourceLabel: getAssetTraySourceLabel(getStringValue(component.metadata?.source) || "component-library"),
+        prompt: getAssetTrayPromptFromMetadata(component.metadata),
+        provider: getStringValue(component.metadata?.provider),
+        model: getStringValue(component.metadata?.model),
+        referenceImages: getAssetTrayReferenceImages(component.metadata, getOptionalRecordString(component.metadata, "referenceUrl")),
+        promptFragments: getStringArray(component.metadata?.promptFragments),
+        constraints: getStringArray(component.metadata?.constraints),
+        negativeRules: getStringArray(component.metadata?.negativeRules),
+        qualityRules: getStringArray(component.metadata?.qualityRules),
         icon: canvasIconMap[iconName],
         chips: getComponentLibraryChips(component),
         canDelete: true,
@@ -6197,7 +7504,17 @@ function AssetLibrary({
       category: asset.category,
       status: mapAssetStatusToTrayStatus(asset.status),
       previewUrl: asset.previewUrl,
+      referenceUrl: asset.referenceUrl || asset.previewUrl,
       previewAlt: asset.previewAlt ?? asset.title,
+      sourceLabel: getAssetTraySourceLabel(asset.source),
+      prompt: getAssetTrayPromptFromMetadata(asset.rawMetadata),
+      provider: getStringValue(asset.rawMetadata?.provider),
+      model: getStringValue(asset.rawMetadata?.model),
+      referenceImages: getAssetTrayReferenceImages(asset.rawMetadata, asset.referenceUrl || asset.previewUrl),
+      promptFragments: asset.promptFragments,
+      constraints: asset.constraints,
+      negativeRules: asset.negativeRules,
+      qualityRules: asset.qualityRules,
       icon: asset.icon,
       favorite: asset.favorite,
       canRename: true,
@@ -6210,6 +7527,16 @@ function AssetLibrary({
       },
     } satisfies AssetTrayItem)),
   ];
+  const selectedTrayItem = trayItems.find((item) => item.id === selectedTrayItemId);
+
+  useEffect(() => {
+    if (!focusItemId) return;
+    const exists = trayItems.some((item) => item.id === focusItemId);
+    if (exists) {
+      setSelectedTrayItemId(focusItemId);
+      setAssetGeneratorOpen(false);
+    }
+  }, [assets, components, focusItemId]);
 
   return (
     <>
@@ -6227,21 +7554,31 @@ function AssetLibrary({
         items={trayItems}
         selectedItemId={selectedTrayItemId}
         message={assetMessage}
-        secondaryActionLabel={showUpload ? (uploading ? "上传中" : "上传") : undefined}
+        secondaryActionLabel={showGenerator ? (assetGeneratorOpen ? "收起资产生成器" : "新建资产") : showUpload ? (uploading ? "上传中" : "上传") : undefined}
         emptyMessage="还没有素材"
         onCategoryChange={(category) => onCategoryChange(category as CanvasLibraryCategory)}
         actionLabel={undefined}
         onAction={undefined}
-        onSecondaryAction={() => inputRef.current?.click()}
+        onSecondaryAction={() => {
+          if (showGenerator) {
+            setAssetGeneratorOpen((value) => !value);
+            return;
+          }
+          inputRef.current?.click();
+        }}
         onSelectItem={(item) => {
           setSelectedTrayItemId(item.id);
         }}
         onRenameItem={onRenameAsset}
         onToggleFavorite={onToggleFavoriteAsset}
         onDeleteItem={onDeleteLibraryItem}
+        onPreviewItem={setPreviewingTrayItem}
+        onPlaceItem={handlePlaceSelectedItemOnCanvas}
         footer={
+          selectedTrayItem ? (
           <AssetLibraryFooter
-            selectedItem={trayItems.find((item) => item.id === selectedTrayItemId)}
+            selectedItem={selectedTrayItem}
+            assetGeneratorOpen={false}
             assetPackCategory={assetPackCategory}
             assetPackRequest={assetPackRequest}
             assetPackDraft={assetPackDraft}
@@ -6259,23 +7596,327 @@ function AssetLibrary({
             onAddAssetPackReferenceUploads={onAddAssetPackReferenceUploads}
             onRemoveAssetPackReferenceUpload={onRemoveAssetPackReferenceUpload}
             onClearAssetPackReferenceUploads={onClearAssetPackReferenceUploads}
-            onUseTrayItemAsAssetPackReference={onUseTrayItemAsAssetPackReference}
-            onAddSelectedItemToGenerationFrame={handleAddSelectedItemToGenerationFrame}
+            onPlaceSelectedItemOnCanvas={handlePlaceSelectedItemOnCanvas}
+            onPreviewItem={setPreviewingTrayItem}
             onFavoritesOnlyChange={onFavoritesOnlyChange}
-            onChangeAssetCategory={onChangeAssetCategory}
-            showGenerator={showGenerator}
+            onAssetGeneratorOpenChange={setAssetGeneratorOpen}
+            showGenerator={false}
           />
+          ) : undefined
         }
         compact
         showSearch={false}
         className={cn("max-h-[72svh] lg:max-h-none", className)}
       />
+      {showGenerator && assetGeneratorOpen && typeof document !== "undefined" ? createPortal((
+        <div
+          className="fixed inset-0 z-[120] flex items-end justify-center bg-warm-ink/35 p-3 backdrop-blur-sm sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="新建资产"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setAssetGeneratorOpen(false);
+          }}
+        >
+          <div
+            className="max-h-[82svh] w-full max-w-2xl overflow-auto rounded-xl border border-warm-line/65 bg-warm-paper p-4 shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <AssetLibraryFooter
+              selectedItem={undefined}
+              assetGeneratorOpen
+              assetPackCategory={assetPackCategory}
+              assetPackRequest={assetPackRequest}
+              assetPackDraft={assetPackDraft}
+              assetPackMessage={assetPackMessage}
+              assetPackReferenceUploads={assetPackReferenceUploads}
+              favoritesOnly={favoritesOnly}
+              generatingAssetPack={generatingAssetPack}
+              savingAssetPack={savingAssetPack}
+              onAssetPackCategoryChange={onAssetPackCategoryChange}
+              onAssetPackRequestChange={onAssetPackRequestChange}
+              onPreviewAssetPack={onPreviewAssetPack}
+              onSaveAssetPackDraft={onSaveAssetPackDraft}
+              onGenerateAssetPackReference={onGenerateAssetPackReference}
+              onDismissAssetPackDraft={onDismissAssetPackDraft}
+              onAddAssetPackReferenceUploads={onAddAssetPackReferenceUploads}
+              onRemoveAssetPackReferenceUpload={onRemoveAssetPackReferenceUpload}
+              onClearAssetPackReferenceUploads={onClearAssetPackReferenceUploads}
+              onPlaceSelectedItemOnCanvas={handlePlaceSelectedItemOnCanvas}
+              onPreviewItem={setPreviewingTrayItem}
+              onFavoritesOnlyChange={onFavoritesOnlyChange}
+              onAssetGeneratorOpenChange={setAssetGeneratorOpen}
+              showGenerator
+            />
+          </div>
+        </div>
+      ), document.body) : null}
+      <AssetLibraryImagePreviewModal
+        item={previewingTrayItem}
+        onClose={() => setPreviewingTrayItem(null)}
+      />
     </>
   );
 }
 
+function AssetLibraryImagePreviewModal({
+  item,
+  onClose,
+}: {
+  item: AssetTrayItem | null;
+  onClose: () => void;
+}) {
+  const imageUrl = item?.referenceUrl || item?.previewUrl;
+  if (!item) return null;
+  if (typeof document === "undefined") return null;
+  const itemStatusLabel = getAssetTrayStatusText(item.status);
+  const PreviewIcon = item.icon ?? ImageIcon;
+
+  return createPortal((
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-warm-ink/70 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="查看素材大图"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-warm-line/60 bg-warm-paper shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-warm-line/60 px-3 py-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-warm-ink">{item.title}</div>
+            <div className="mt-0.5 truncate text-[11px] text-warm-muted">
+              {item.category || "素材"} · {itemStatusLabel}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {imageUrl && (
+              <>
+                <a
+                  href={imageUrl}
+                  download
+                  className="inline-flex h-8 items-center gap-1 rounded-md border border-warm-line/60 bg-warm-bg px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Download className="h-3 w-3" />
+                  下载
+                </a>
+                <a
+                  href={imageUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-md border border-warm-line/60 bg-warm-bg px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  打开原图
+                </a>
+              </>
+            )}
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink"
+              onClick={onClose}
+              title="关闭"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="grid min-h-0 flex-1 gap-3 overflow-auto bg-warm-bg p-3 lg:grid-cols-[minmax(0,1fr)_260px]">
+          <div className="flex min-h-[360px] items-center justify-center rounded-md border border-warm-line/50 bg-warm-paper p-2">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={item.previewAlt ?? item.title}
+                className="max-h-[78vh] max-w-full rounded-md object-contain shadow-sm"
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-3 text-center text-warm-muted">
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-warm-primary-soft text-warm-primary">
+                  <PreviewIcon className="h-8 w-8" />
+                </span>
+                <div>
+                  <div className="text-sm font-medium text-warm-ink">无图片预览</div>
+                  <p className="mt-1 max-w-sm text-xs leading-5">
+                    这个资产主要提供文案、规则或知识内容，可在右侧查看结构化信息。
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+          <aside className="space-y-3 rounded-md border border-warm-line/50 bg-warm-paper p-3">
+            <div>
+              <div className="text-xs font-semibold text-warm-ink">素材信息</div>
+              <div className="mt-2 space-y-1 text-xs leading-5 text-warm-muted">
+                <div>类型：{item.category || "未分类"}</div>
+                <div>状态：{itemStatusLabel}</div>
+                {item.sourceLabel && <div>来源：{item.sourceLabel}</div>}
+                {item.provider && <div>Provider：{item.provider}</div>}
+                {item.model && <div>模型：{item.model}</div>}
+              </div>
+            </div>
+            {item.description && (
+              <div>
+                <div className="mb-1 text-xs font-semibold text-warm-ink">说明</div>
+                <p className="text-xs leading-5 text-warm-muted">{item.description}</p>
+              </div>
+            )}
+            {item.referenceImages && item.referenceImages.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-semibold text-warm-ink">参考图</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {item.referenceImages.slice(0, 9).map((image, index) => (
+                    <a
+                      key={`${image.url}-${index}`}
+                      href={image.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group overflow-hidden rounded border border-warm-line/50 bg-warm-bg"
+                      title={image.title}
+                    >
+                      <img src={image.url} alt={image.title} className="h-14 w-full object-cover transition group-hover:scale-105" />
+                      <div className="truncate px-1 py-0.5 text-[9px] text-warm-muted">
+                        {image.role || image.title}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+            {item.prompt && (
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-warm-ink">Prompt</span>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded border border-warm-line/50 bg-warm-bg px-1.5 py-0.5 text-[10px] text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                    onClick={() => void navigator.clipboard?.writeText(item.prompt || "")}
+                  >
+                    <Copy className="h-3 w-3" />
+                    复制
+                  </button>
+                </div>
+                <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded border border-warm-line/45 bg-warm-bg p-2 text-[10px] leading-4 text-warm-muted">
+                  {item.prompt}
+                </pre>
+              </div>
+            )}
+            {getAssetTrayRuleSummary(item).length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-semibold text-warm-ink">规则</div>
+                <div className="space-y-1">
+                  {getAssetTrayRuleSummary(item).map((rule) => (
+                    <div key={rule} className="rounded bg-warm-bg px-2 py-1 text-[10px] leading-4 text-warm-muted">
+                      {rule}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {item.chips && item.chips.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-semibold text-warm-ink">标签</div>
+                <div className="flex flex-wrap gap-1">
+                  {item.chips.map((chip) => (
+                    <span key={chip} className="rounded bg-warm-bg px-1.5 py-0.5 text-[10px] text-warm-muted">
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
+function getAssetTrayStatusText(status: AssetTrayItem["status"]): string {
+  if (status === "ready") return "可用";
+  if (status === "checking") return "确认中";
+  if (status === "needs_review") return "待确认";
+  return "草稿";
+}
+
+function getAssetTraySourceLabel(source: string | undefined): string | undefined {
+  if (!source) return undefined;
+  if (source === "asset-pack-generator") return "资产生成器";
+  if (source === "model-library") return "模特库";
+  if (source === "component-library") return "组件库";
+  if (source === "asset-library" || source === "persisted-asset") return "素材库";
+  if (source === "canvas-manual-save") return "画布保存";
+  if (source === "generation-frame-output-save") return "生成结果保存";
+  if (source === "canvas-upload") return "本地上传";
+  return source;
+}
+
+function getAssetTrayPromptFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
+  if (!metadata) return undefined;
+  return (
+    getStringValue(metadata.prompt) ||
+    getStringValue(metadata.finalPrompt) ||
+    getStringValue(metadata.revisedPrompt) ||
+    getStringArray(metadata.promptFragments).join("\n")
+  ) || undefined;
+}
+
+function getAssetTrayReferenceImages(
+  metadata: Record<string, unknown> | undefined,
+  fallbackUrl?: string
+): AssetTrayItem["referenceImages"] {
+  const images = [
+    ...getAssetTrayReferenceImagesFromValue(metadata?.referenceImages),
+    ...getAssetTrayReferenceImagesFromValue(metadata?.providerReferenceImages),
+    ...getAssetTrayReferenceImagesFromValue(metadata?.promptOnlyReferenceImages),
+  ];
+
+  if (fallbackUrl && !images.some((image) => image.url === fallbackUrl)) {
+    images.unshift({
+      title: "主参考图",
+      url: fallbackUrl,
+      providerUsable: isProviderUsableReferenceUrl(fallbackUrl),
+    });
+  }
+
+  return images.length > 0 ? images.slice(0, 12) : undefined;
+}
+
+function getAssetTrayReferenceImagesFromValue(value: unknown): NonNullable<AssetTrayItem["referenceImages"]> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item, index) => {
+    if (typeof item === "string" && item.trim()) {
+      return [{
+        title: `参考图 ${index + 1}`,
+        url: item.trim(),
+        providerUsable: isProviderUsableReferenceUrl(item.trim()),
+      }];
+    }
+    if (!isPlainRecord(item)) return [];
+    const url = getStringValue(item.url) || getStringValue(item.src);
+    if (!url) return [];
+    return [{
+      title: getStringValue(item.title) || getStringValue(item.label) || `参考图 ${index + 1}`,
+      url,
+      role: getStringValue(item.role),
+      providerUsable: item.providerUsable === true || isProviderUsableReferenceUrl(url),
+    }];
+  });
+}
+
+function getAssetTrayRuleSummary(item: AssetTrayItem): string[] {
+  return [
+    ...((item.promptFragments ?? []).slice(0, 2).map((rule) => `Prompt：${rule}`)),
+    ...((item.constraints ?? []).slice(0, 3).map((rule) => `约束：${rule}`)),
+    ...((item.negativeRules ?? []).slice(0, 2).map((rule) => `禁用：${rule}`)),
+    ...((item.qualityRules ?? []).slice(0, 2).map((rule) => `质检：${rule}`)),
+  ].slice(0, 7);
+}
+
 function AssetLibraryFooter({
   selectedItem,
+  assetGeneratorOpen,
   assetPackCategory,
   assetPackRequest,
   assetPackDraft,
@@ -6293,13 +7934,14 @@ function AssetLibraryFooter({
   onAddAssetPackReferenceUploads,
   onRemoveAssetPackReferenceUpload,
   onClearAssetPackReferenceUploads,
-  onUseTrayItemAsAssetPackReference,
-  onAddSelectedItemToGenerationFrame,
+  onPlaceSelectedItemOnCanvas,
+  onPreviewItem,
   onFavoritesOnlyChange,
-  onChangeAssetCategory,
+  onAssetGeneratorOpenChange,
   showGenerator = true,
 }: {
   selectedItem?: AssetTrayItem;
+  assetGeneratorOpen: boolean;
   assetPackCategory: AssetPackCategory;
   assetPackRequest: string;
   assetPackDraft: AssetPackDraft | null;
@@ -6317,10 +7959,10 @@ function AssetLibraryFooter({
   onAddAssetPackReferenceUploads: (files: FileList | File[]) => void;
   onRemoveAssetPackReferenceUpload: (uploadId: string) => void;
   onClearAssetPackReferenceUploads: () => void;
-  onUseTrayItemAsAssetPackReference: (item: AssetTrayItem) => void;
-  onAddSelectedItemToGenerationFrame: (item: AssetTrayItem) => void;
+  onPlaceSelectedItemOnCanvas: (item: AssetTrayItem) => void;
+  onPreviewItem: (item: AssetTrayItem) => void;
   onFavoritesOnlyChange: (value: boolean) => void;
-  onChangeAssetCategory: (item: AssetTrayItem, category: CanvasLibraryCategory) => void;
+  onAssetGeneratorOpenChange: (value: boolean) => void;
   showGenerator?: boolean;
 }) {
   const referenceInputRef = useRef<HTMLInputElement>(null);
@@ -6329,95 +7971,64 @@ function AssetLibraryFooter({
   const draftPreviewUrl = assetPackDraft ? getAssetPackPrimaryReferenceUrl(assetPackDraft) : "";
   const referenceLabel = getAssetPackReferenceUploadLabel(assetPackCategory);
   const referenceHint = getAssetPackReferenceUploadHint(assetPackCategory);
-  const [assetGeneratorOpen, setAssetGeneratorOpen] = useState(false);
-  const generatorOpen =
-    showGenerator &&
-    (assetGeneratorOpen ||
-      Boolean(assetPackDraft) ||
-      Boolean(assetPackRequest.trim()) ||
-      assetPackReferenceUploads.length > 0 ||
-      Boolean(assetPackMessage));
+  const generatorOpen = showGenerator && assetGeneratorOpen;
+  const isCopyAssetPack = assetPackCategory === "copy_asset";
   const canGenerateAssetPack =
     Boolean(assetPackRequest.trim()) ||
-    assetPackReferenceUploads.length > 0;
+    (!isCopyAssetPack && assetPackReferenceUploads.length > 0);
 
   return (
     <div className="space-y-2">
       {selectedItem && (
         <div className="flex items-center gap-2 rounded-md border border-warm-line/40 bg-warm-bg/70 px-2 py-1.5">
-            <AssetPreview
-              src={selectedItem.previewUrl}
-              alt={selectedItem.previewAlt ?? selectedItem.title}
-              icon={SelectedIcon}
-              size="sm"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-warm-ink">{selectedItem.title}</div>
+          <AssetPreview
+            src={selectedItem.previewUrl}
+            alt={selectedItem.previewAlt ?? selectedItem.title}
+            icon={SelectedIcon}
+            size="sm"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs font-medium text-warm-ink">{selectedItem.title}</div>
             <div className="mt-0.5 truncate text-[10px] leading-none text-warm-muted">
               {selectedItem.category || "素材"}
             </div>
-            </div>
-            {selectedItem.dragData && (
-              <button
-                type="button"
-                onClick={() => onAddSelectedItemToGenerationFrame(selectedItem)}
-                className="shrink-0 rounded-md bg-warm-primary px-2 py-1 text-[11px] font-medium text-warm-paper transition hover:bg-warm-primary/90"
-                title="放入当前生成框；没有生成框时会自动创建"
-              >
-                放入生成框
-              </button>
-            )}
-            {showGenerator && (
-              <button
-                type="button"
-                disabled={!selectedItem.previewUrl}
-                onClick={() => {
-                  setAssetGeneratorOpen(true);
-                  onUseTrayItemAsAssetPackReference(selectedItem);
-                }}
-              className="shrink-0 rounded-md bg-warm-primary-soft px-2 py-1 text-[11px] font-medium text-warm-primary transition hover:bg-warm-primary hover:text-warm-paper disabled:opacity-40"
-                title={selectedItem.previewUrl ? `作为${referenceLabel}` : "这个素材没有预览图"}
-              >
-                用作参考
-              </button>
-            )}
-          {selectedItem.id.startsWith("asset:") && (
-          <label className="shrink-0 text-[11px] text-warm-muted">
-              <select
-                value={selectedItem.category}
-                onChange={(event) =>
-                  onChangeAssetCategory(selectedItem, event.target.value as CanvasLibraryCategory)
-                }
-              className="rounded-md border border-warm-line/50 bg-warm-paper px-2 py-1 text-[11px] text-warm-ink outline-none focus:border-warm-primary"
-              >
-                {canvasLibraryCategories
-                  .filter((category) => category !== "平台" && category !== "质检")
-                  .map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-              </select>
-            </label>
+          </div>
+          {selectedItem.dragData && (
+            <button
+              type="button"
+              onClick={() => onPlaceSelectedItemOnCanvas(selectedItem)}
+              className="shrink-0 rounded-md bg-warm-primary px-2 py-1 text-[11px] font-medium text-warm-paper transition hover:bg-warm-primary/90"
+              title="放到画布，作为 Agent 可判断的素材"
+            >
+              放到画布
+            </button>
           )}
+          <button
+            type="button"
+            onClick={() => onPreviewItem(selectedItem)}
+            className="shrink-0 rounded-md border border-warm-line/60 bg-warm-paper px-2 py-1 text-[11px] font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary disabled:opacity-40"
+            title="查看素材详情"
+          >
+            查看
+          </button>
         </div>
       )}
 
-      {showGenerator && (
+      {showGenerator && generatorOpen && (
         <div className="flex items-center justify-between gap-2 rounded-md border border-warm-line/45 bg-warm-bg/75 px-2 py-1.5">
           <div className="min-w-0">
-            <div className="text-xs font-semibold text-warm-ink">资产生成器</div>
+            <div className="text-xs font-semibold text-warm-ink">新建资产</div>
             <div className="mt-0.5 truncate text-[10px] text-warm-muted">
-              需要时再打开；生成后满意再保存。
+              选类型，补参考图或一句话，满意后保存到素材库。
             </div>
           </div>
           <button
             type="button"
-            onClick={() => setAssetGeneratorOpen((value) => !value)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-warm-primary px-2.5 py-1.5 text-[11px] font-medium text-warm-paper transition hover:bg-warm-primary/90"
+            onClick={() => onAssetGeneratorOpenChange(false)}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-warm-line/60 bg-warm-paper px-2.5 py-1.5 text-[11px] font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary"
           >
-            {assetGeneratorOpen ? <ChevronLeft className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-            {assetGeneratorOpen ? "收起" : "新建资产"}
+            <ChevronLeft className="h-3 w-3" />
+            收起
           </button>
         </div>
       )}
@@ -6446,32 +8057,26 @@ function AssetLibraryFooter({
             );
           })}
           <div className="ml-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => onFavoritesOnlyChange(!favoritesOnly)}
-              className={cn(
-                "rounded-full px-2 py-1 text-[10px] transition",
-                favoritesOnly
-                  ? "bg-warm-primary-soft text-warm-primary"
-                  : "text-warm-muted hover:bg-warm-soft hover:text-warm-ink"
-              )}
-            >
-              收藏
-            </button>
-          {assetPackDraft && (
-            <button
-              type="button"
-              onClick={onDismissAssetPackDraft}
-              className="rounded-full px-2 py-1 text-[10px] text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink"
-            >
-              清草案
-            </button>
-          )}
+            {assetPackDraft && (
+              <button
+                type="button"
+                onClick={onDismissAssetPackDraft}
+                className="rounded-full px-2 py-1 text-[10px] text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink"
+              >
+                清草案
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="mt-2 grid gap-2 lg:grid-cols-[240px_minmax(0,1fr)_104px]">
-          <div className="min-h-[66px] rounded-md border border-dashed border-warm-line/65 bg-warm-paper px-2 py-1.5">
+        <div
+          className={cn(
+            "mt-3 grid gap-2",
+            isCopyAssetPack ? "lg:grid-cols-[minmax(0,1fr)_108px]" : "lg:grid-cols-[220px_minmax(0,1fr)_108px]"
+          )}
+        >
+          {!isCopyAssetPack && (
+          <div className="min-h-[88px] rounded-lg border border-dashed border-warm-line/65 bg-warm-paper px-2.5 py-2">
             <input
               ref={referenceInputRef}
               type="file"
@@ -6510,7 +8115,7 @@ function AssetLibraryFooter({
                 {assetPackReferenceUploads.map((upload, index) => (
                   <div
                     key={upload.id}
-                    className="group relative h-9 w-9 shrink-0 overflow-hidden rounded border border-warm-line/60 bg-warm-bg"
+                    className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-md border border-warm-line/60 bg-warm-bg"
                     title={upload.name}
                   >
                     <img
@@ -6538,14 +8143,17 @@ function AssetLibraryFooter({
               </p>
             )}
           </div>
+          )}
           <textarea
             value={assetPackRequest}
             onChange={(event) => onAssetPackRequestChange(event.target.value)}
-            rows={2}
-            className="min-h-[66px] resize-none rounded-md border border-warm-line/55 bg-warm-paper px-2.5 py-2 text-xs leading-snug text-warm-ink outline-none transition placeholder:text-warm-muted/60 focus:border-warm-primary"
+            rows={3}
+            className="min-h-[88px] resize-none rounded-lg border border-warm-line/55 bg-warm-paper px-3 py-2.5 text-xs leading-relaxed text-warm-ink outline-none transition placeholder:text-warm-muted/60 focus:border-warm-primary"
             placeholder={
               assetPackCategory === "product_asset"
                 ? "可选：补充商品名、材质、要保留的细节"
+                : assetPackCategory === "copy_asset"
+                  ? "例如：标题：暖意随身；卖点：柔软毛绒、轻量容量；禁止：不要夸大功效"
                 : assetPackCategory === "style_asset"
                   ? "可选：比如杂志硬光、日系自然光、奢侈品广告感"
                   : assetPackCategory === "scene_asset"
@@ -6557,7 +8165,7 @@ function AssetLibraryFooter({
             type="button"
             disabled={isAssetPackBusy || !canGenerateAssetPack}
             onClick={onGenerateAssetPackReference}
-            className="inline-flex min-h-[66px] items-center justify-center gap-1.5 rounded-md bg-warm-primary px-3 py-2 text-xs font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:opacity-50"
+            className="inline-flex min-h-[88px] items-center justify-center gap-1.5 rounded-lg bg-warm-primary px-3 py-2 text-xs font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:opacity-50"
           >
             {isAssetPackBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
             生成
@@ -6615,67 +8223,188 @@ function AssetLibraryFooter({
 function CanvasAgentPanel({
   productAsset,
   activeProductComponentTitle,
+  activeGenerationFrameTitle,
+  editTarget,
+  primaryMode,
   composeBrief,
+  lastUserBrief,
   composeMessage,
   composingWorkflow,
   generatingSample,
   hasAppliedWorkflow,
   hasProductReference,
   sampleOutputCount,
+  visibleOutputCount,
+  visibleArtifacts,
+  activeJobCount,
+  jobMessage,
   workflowPlanPreview,
+  planDiff,
+  collapsed,
   onComposeBriefChange,
   onComposeWorkflow,
+  onEditWorkflowPlan,
+  onApplyResultGroupEdit,
   onApplyWorkflowPlan,
   onDismissWorkflowPlan,
+  onClearEditTarget,
   onImportProduct,
   onGenerateSample,
+  onCollapsedChange,
 }: {
   productAsset?: CanvasAsset;
   activeProductComponentTitle: string;
+  activeGenerationFrameTitle?: string;
+  editTarget: AgentImageEditTarget | null;
+  primaryMode: CanvasAgentPrimaryMode;
   composeBrief: string;
+  lastUserBrief: string;
   composeMessage: string;
   composingWorkflow: boolean;
   generatingSample: boolean;
   hasAppliedWorkflow: boolean;
   hasProductReference: boolean;
   sampleOutputCount: number;
+  visibleOutputCount: number;
+  visibleArtifacts: PersistedGeneratedArtifact[];
+  activeJobCount: number;
+  jobMessage: string;
   workflowPlanPreview: WorkflowPlanPreview | null;
+  planDiff: AgentPlanDiff | null;
+  collapsed: boolean;
   onComposeBriefChange: (brief: string) => void;
   onComposeWorkflow: () => void;
+  onEditWorkflowPlan: (preview: WorkflowPlanPreview) => void;
+  onApplyResultGroupEdit: (
+    group: AgentPlanGroup,
+    brief: string,
+    artifacts: PersistedGeneratedArtifact[]
+  ) => void;
   onApplyWorkflowPlan: () => void;
   onDismissWorkflowPlan: () => void;
+  onClearEditTarget: () => void;
   onImportProduct: () => void;
   onGenerateSample: () => void;
+  onCollapsedChange: (collapsed: boolean) => void;
 }) {
-  const canCompose = !!composeBrief.trim() && !composingWorkflow;
+  const [agentEventHistory, setAgentEventHistory] = useState<AgentConversationMessage[]>([]);
+  const hasComposeBrief = !!composeBrief.trim();
+  const canCompose = hasComposeBrief && !composingWorkflow;
   const agentPlan = workflowPlanPreview?.agentPlan;
-  const productLabel = activeProductComponentTitle || productAsset?.title || "未选商品";
+  const productLabel = activeProductComponentTitle || productAsset?.title || "等待需求";
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const agentHeaderSubtitle = editTarget
+    ? `修改：${editTarget.title}`
+    : activeGenerationFrameTitle
+      ? `当前任务：${activeGenerationFrameTitle}`
+      : activeProductComponentTitle || productAsset?.title
+        ? productLabel
+        : "说需求，Agent 出计划";
+  const hasEditTarget = Boolean(editTarget?.url);
+  const [showAgentPlanAdvanced, setShowAgentPlanAdvanced] = useState(false);
+  const [focusedPlanGroup, setFocusedPlanGroup] = useState<AgentPlanGroup | null>(null);
+  const hasFocusedGroupContext = Boolean(focusedPlanGroup && !hasEditTarget);
+  const focusedGroupArtifacts = useMemo(() => {
+    const ids = new Set(focusedPlanGroup?.artifactIds ?? []);
+    if (ids.size === 0) return [];
+    return visibleArtifacts.filter((artifact) => ids.has(artifact.id));
+  }, [focusedPlanGroup?.artifactIds, visibleArtifacts]);
+  const isEditingVisiblePlan = Boolean(workflowPlanPreview && hasComposeBrief && !hasEditTarget);
+  const hasActiveGenerationFrame = primaryMode === "plan_frame" || primaryMode === "generate_frame";
+  const willCreateGenerationFrame = primaryMode === "create_frame";
   const needsProduct = hasAppliedWorkflow && !hasProductReference && !workflowPlanPreview;
-  const canGenerateSample = hasAppliedWorkflow && hasProductReference && !workflowPlanPreview;
+  const requestedSampleCount = parseRequestedAgentSampleCount(composeBrief);
+  const canGenerateSample =
+    hasProductReference &&
+    !workflowPlanPreview &&
+    ((hasAppliedWorkflow && !hasComposeBrief) || Boolean(requestedSampleCount));
+  const planFallbackReason = workflowPlanPreview?.agentPlan?.summary?.fallbackUsed
+    ? workflowPlanPreview.agentPlan.summary.fallbackReason || "Agent 深度规划暂不可用"
+    : "";
   const agentUnderstanding = workflowPlanPreview
-    ? `我会按${agentPlan?.shortLabel || "当前需求"}先出样张，再扩展完整图组。`
-    : needsProduct
+    ? planFallbackReason
+      ? `我先展示基础计划：${planFallbackReason}。你可以先改数量、图组和文案策略。`
+      : `我会按${agentPlan?.shortLabel || "当前需求"}先出样张，再扩展完整图组。`
+    : hasEditTarget
+      ? `已选中「${editTarget?.title || "这张图"}」；说要怎么改，我会把它当作上一版参考。`
+      : hasActiveGenerationFrame
+      ? primaryMode === "generate_frame"
+        ? "当前需求已写入任务；再次点击会开始生成。"
+        : "正在作用于当前任务：素材在画布里，需求在这里说。"
+      : needsProduct
       ? "计划已经放好，先导入商品图。"
       : canGenerateSample
         ? `商品图已接入，可以先生成 ${sampleOutputCount} 张样张。`
-        : "说一句需求，我来拆成图组计划。";
-  const primaryAction = needsProduct
+      : willCreateGenerationFrame
+        ? "说需求，我会判断用途、比例、参考图和文案策略。"
+        : "说需求，我会判断要做哪些图、怎么调用素材。";
+  const primaryAction = hasEditTarget
+    ? onComposeWorkflow
+    : isEditingVisiblePlan
+    ? () => workflowPlanPreview ? onEditWorkflowPlan(workflowPlanPreview) : onComposeWorkflow()
+    : needsProduct
     ? onImportProduct
     : canGenerateSample
       ? onGenerateSample
+    : hasActiveGenerationFrame || willCreateGenerationFrame
+    ? onComposeWorkflow
       : onComposeWorkflow;
-  const primaryDisabled = needsProduct
+  const handlePrimaryAction = () => {
+    if (focusedPlanGroup && composeBrief.trim() && !workflowPlanPreview && !hasEditTarget) {
+      onApplyResultGroupEdit(focusedPlanGroup, composeBrief, focusedGroupArtifacts);
+      return;
+    }
+    if (workflowPlanPreview && composeBrief.trim() && !hasEditTarget) {
+      onEditWorkflowPlan(workflowPlanPreview);
+      return;
+    }
+    primaryAction();
+  };
+  const primaryDisabled = hasEditTarget
+    ? !canCompose
+    : needsProduct
     ? false
     : canGenerateSample
       ? generatingSample
+    : hasActiveGenerationFrame || willCreateGenerationFrame
+    ? !canCompose
       : !canCompose;
-  const primaryLabel = needsProduct
-    ? "导入商品图"
-    : canGenerateSample
-      ? `生成 ${sampleOutputCount} 张样张`
-      : "规划图组";
-  const PrimaryIcon = needsProduct ? Upload : canGenerateSample ? Sparkles : Send;
+  const primaryLabel =
+    hasEditTarget
+      ? "修改这张图"
+      : hasFocusedGroupContext && hasComposeBrief
+        ? "调整这组"
+      : needsProduct
+        ? "导入商品图"
+      : canGenerateSample
+        ? `生成 ${sampleOutputCount} 张样张`
+      : workflowPlanPreview && hasComposeBrief
+        ? "按这句话调整计划"
+      : primaryMode === "generate_frame"
+      ? "开始生成"
+      : primaryMode === "plan_frame"
+        ? "规划当前任务"
+        : primaryMode === "create_frame"
+          ? "让 Agent 规划"
+          : "让 Agent 规划";
+  const PrimaryIcon =
+    hasEditTarget
+      ? Wand2
+      : needsProduct
+        ? Upload
+      : canGenerateSample
+        ? Sparkles
+      : primaryMode === "create_frame"
+      ? Send
+      : hasActiveGenerationFrame
+        ? Sparkles
+        : Send;
   const requiredRoles = agentPlan?.requiredAssetRoles ?? [];
+  const matrixItems = agentPlan?.generationMatrix?.length
+    ? agentPlan.generationMatrix
+    : buildAgentMatrixFromPreviewItems(workflowPlanPreview?.items ?? []);
+  const assetGroupsById = new Map((agentPlan?.assetGroups ?? []).map((group) => [group.id, group]));
+  const missingInputById = new Map((agentPlan?.missingInputs ?? []).map((input) => [input.id, input]));
   const outputSlots = agentPlan?.outputSlots?.length
     ? agentPlan.outputSlots
     : workflowPlanPreview?.items.map((item) => ({
@@ -6685,11 +8414,497 @@ function CanvasAgentPanel({
         ratio: item.ratio,
         samplePhase: true,
       })) ?? [];
+  const blockedMatrixItemCount = matrixItems.filter((item) => item.status === "blocked").length;
+  const missingInputHints = buildAgentMissingInputHints(
+    agentPlan?.missingInputs ?? [],
+    matrixItems,
+    requiredRoles,
+    agentPlan?.assetGroups ?? []
+  );
+  const hasBlockedAgentPlanItems = blockedMatrixItemCount > 0 || missingInputHints.length > 0;
+  const canShowCompactPanel =
+    collapsed &&
+    !workflowPlanPreview &&
+    !hasEditTarget &&
+    !composeBrief.trim() &&
+    !composeMessage &&
+    !composingWorkflow &&
+    !generatingSample;
+  const compactStatus = visibleOutputCount > 0
+    ? `${visibleOutputCount} 张结果`
+    : "说需求";
+  const estimatedCallCount =
+    matrixItems.length ||
+    workflowPlanPreview?.items.length ||
+    workflowPlanPreview?.estimatedCount ||
+    0;
+  const planGroups = buildAgentPlanGroups({
+    matrixItems,
+    outputSlots,
+    assetGroupsById,
+    missingInputById,
+  });
+  const planExplanation = buildAgentPlanExplanation({
+    workflowPlanPreview,
+    planGroups,
+    matrixItems,
+  });
+  const productionOrderHint = buildAgentProductionOrderHint({
+    workflowPlanPreview,
+    planGroups,
+  });
+  const followUpHint = buildAgentFollowUpHint({
+    workflowPlanPreview,
+    userBrief: composeBrief || lastUserBrief,
+    missingInputHints,
+    hasProductReference,
+    matrixItems,
+    planGroups,
+  });
+  const criticalGapItems = buildAgentCriticalGapItems({
+    workflowPlanPreview,
+    userBrief: composeBrief || lastUserBrief,
+    missingInputHints,
+    hasProductReference,
+    matrixItems,
+    planGroups,
+  });
+  const clarificationHint = buildAgentClarificationHint({
+    workflowPlanPreview,
+    userBrief: composeBrief || lastUserBrief,
+    hasProductReference,
+    matrixItems,
+    planGroups,
+    criticalGapItems,
+  });
+  const planAttentionHints = agentUniqueStrings([
+    ...missingInputHints,
+    ...criticalGapItems
+      .filter((item) => !missingInputHints.some((hint) => hint.includes(item.label)))
+      .map((item) => `${item.label}：${item.text}`),
+  ]).slice(0, 4);
+  const hasAgentPlanAttentionItems = planAttentionHints.length > 0;
+  const editContextHint = buildAgentEditContextHint(editTarget);
+  const focusedGroupHint = buildAgentFocusedGroupHint(focusedPlanGroup);
+  const progressSteps = buildAgentProgressSteps({
+    hasComposeBrief,
+    hasPlan: Boolean(workflowPlanPreview),
+    composingWorkflow,
+    generatingSample,
+    activeJobCount,
+    visibleOutputCount,
+  });
+  const completionSummary = buildAgentCompletionSummary({
+    visibleOutputCount,
+    visibleArtifacts,
+    activeJobCount,
+    hasPlan: Boolean(workflowPlanPreview || hasAppliedWorkflow),
+    planGroups,
+    matrixItems,
+  });
+  const qaSummaryItems = buildAgentQaSummaryItems({
+    visibleOutputCount,
+    visibleArtifacts,
+    activeJobCount,
+    planGroups,
+    matrixItems,
+  });
+  const executableReviewSuggestions = buildAgentExecutableReviewSuggestions({
+    visibleArtifacts,
+    planGroups,
+    matrixItems,
+    activeJobCount,
+  });
+  const agentMessages = buildAgentConversationMessages({
+    historyMessages: agentEventHistory,
+    composeBrief,
+    lastUserBrief,
+    agentUnderstanding,
+    composeMessage,
+    workflowPlanPreview,
+    editTarget,
+    composingWorkflow,
+    generatingSample,
+    planFallbackReason,
+    planExplanation,
+    productionOrderHint,
+    followUpHint,
+    clarificationHint,
+    criticalGapItems,
+    planDiff,
+    editContextHint,
+    focusedGroupHint,
+    completionSummary,
+  });
+  const planInputPlaceholder = workflowPlanPreview
+    ? "直接说怎么改计划，比如：模特图少两张，详情页要烧字，加两张商场场景。"
+    : editTarget
+      ? "比如：把背景换成室外街拍，人物表情更自然，保留产品和构图。"
+      : focusedPlanGroup
+        ? "比如：这组动作太重复，换一批姿势；或这组改成商场场景。"
+      : "说你要做什么，比如：羽绒服，淘宝详情页，雪山场景，带模特。";
+  const criticalGapHistoryText = criticalGapItems
+    .slice(0, 3)
+    .map((item) => `${item.label}：${item.text}`)
+    .join("\n");
+  const planDiffHistoryText = planDiff ? formatAgentPlanDiffForConversation(planDiff) : "";
+  const rememberAgentEvent = useCallback((key: string, message: Omit<AgentConversationMessage, "id">) => {
+    const cleanText = message.text.trim();
+    if (!cleanText) return;
+    const signature = `${key}:${message.role}:${message.title ?? ""}:${cleanText}`;
+    setAgentEventHistory((items) => {
+      if (items.some((item) => item.id === signature || `${key}:${item.role}:${item.title ?? ""}:${item.text}` === signature)) {
+        return items;
+      }
+      return [
+        ...items,
+        {
+          ...message,
+          id: signature,
+          text: cleanText,
+        },
+      ].slice(-8);
+    });
+  }, []);
+
+  useEffect(() => {
+    const text = lastUserBrief.trim();
+    if (!text) return;
+    rememberAgentEvent(`user:${text}`, {
+      role: "user",
+      title: "你的需求",
+      text,
+    });
+  }, [lastUserBrief, rememberAgentEvent]);
+
+  useEffect(() => {
+    if (!workflowPlanPreview || !planExplanation) return;
+    rememberAgentEvent(`plan:${workflowPlanPreview.title}:${workflowPlanPreview.estimatedCount}`, {
+      role: "agent",
+      title: "计划解释",
+      text: planExplanation,
+    });
+  }, [planExplanation, rememberAgentEvent, workflowPlanPreview]);
+
+  useEffect(() => {
+    if (!criticalGapHistoryText) return;
+    rememberAgentEvent(`gaps:${criticalGapHistoryText}`, {
+      role: "agent",
+      title: "关键缺口",
+      text: criticalGapHistoryText,
+      tone: criticalGapItems.some((item) => item.tone === "warn") ? "warn" : "default",
+    });
+  }, [criticalGapHistoryText, criticalGapItems, rememberAgentEvent]);
+
+  useEffect(() => {
+    if (!planDiffHistoryText) return;
+    rememberAgentEvent(`diff:${planDiffHistoryText}`, {
+      role: "agent",
+      title: "修改记录",
+      text: planDiffHistoryText,
+      tone: "success",
+    });
+  }, [planDiffHistoryText, rememberAgentEvent]);
+
+  useEffect(() => {
+    if (!completionSummary) return;
+    rememberAgentEvent(`completion:${completionSummary}`, {
+      role: "agent",
+      title: "生成总结",
+      text: completionSummary,
+      tone: "success",
+    });
+  }, [completionSummary, rememberAgentEvent]);
+
+  useEffect(() => {
+    setShowAgentPlanAdvanced(false);
+    setFocusedPlanGroup(null);
+  }, [workflowPlanPreview?.title, workflowPlanPreview?.estimatedCount]);
+
+  useEffect(() => {
+    const handleArtifactGroupEdit = (event: Event) => {
+      const detail = event instanceof CustomEvent && isPlainRecord(event.detail)
+        ? event.detail
+        : undefined;
+      if (!detail) return;
+      const title = getStringValue(detail.group) || "结果分组";
+      const count = typeof detail.count === "number" && Number.isFinite(detail.count)
+        ? detail.count
+        : 1;
+      const ratios = getStringArray(detail.ratios);
+      const artifactIds = getStringArray(detail.artifactIds);
+      setFocusedPlanGroup({
+        id: `artifact-group:${title}`,
+        title,
+        count,
+        ratios: ratios.length > 0 ? ratios : ["auto"],
+        copyModes: getStringArray(detail.copyModes),
+        providerRoles: getStringArray(detail.providerRoles),
+        promptOnlyRoles: getStringArray(detail.promptOnlyRoles),
+        assetTitles: getStringArray(detail.artifactTitles),
+        artifactIds,
+        status: "ready",
+        summary: "已生成结果分组，后续修改只影响这一组。",
+        reason: "这是成片墙中的一个结果分组，适合批量换姿势、换场景或重做风格。",
+        missingHints: [],
+      });
+      if (!composeBrief.trim()) onComposeBriefChange(`调整「${title}」：`);
+      onCollapsedChange(false);
+    };
+    window.addEventListener("image-master:artifact-group-edit", handleArtifactGroupEdit);
+    return () => window.removeEventListener("image-master:artifact-group-edit", handleArtifactGroupEdit);
+  }, [composeBrief, onCollapsedChange, onComposeBriefChange]);
+
+  const handleAgentReviewSuggestionAction = useCallback((suggestion: AgentExecutableReviewSuggestion, action: AgentReviewSuggestionAction) => {
+    const artifact = suggestion.artifactId
+      ? visibleArtifacts.find((item) => item.id === suggestion.artifactId)
+      : undefined;
+    const group = suggestion.groupTitle
+      ? planGroups.find((item) => item.title === suggestion.groupTitle)
+      : undefined;
+    const groupArtifactIds = suggestion.artifactIds ?? group?.artifactIds ?? [];
+    const groupArtifacts = groupArtifactIds.length > 0
+      ? visibleArtifacts.filter((item) => groupArtifactIds.includes(item.id))
+      : [];
+    const groupTitle = suggestion.groupTitle || group?.title || suggestion.title;
+    const recordAction = (text: string) => {
+      rememberAgentEvent(`review-action:${suggestion.id}:${action}`, {
+        role: "agent",
+        title: "已执行建议",
+        text,
+        tone: "success",
+      });
+    };
+
+    if (action === "approve" || action === "mark_needs_redo" || action === "reject") {
+      const status: ArtifactReviewStatus =
+        action === "approve" ? "approved" : action === "reject" ? "rejected" : "needs_redo";
+      if (suggestion.artifactId) {
+        window.dispatchEvent(
+          new CustomEvent("image-master:artifact-review-state", {
+            detail: {
+              artifactId: suggestion.artifactId,
+              status,
+              note: `Agent 建议卡片：${suggestion.title}`,
+            },
+          })
+        );
+        recordAction(`已把「${suggestion.title}」标记为${getArtifactReviewStatusLabel(status)}。`);
+        return;
+      }
+      if (groupArtifactIds.length > 0) {
+        window.dispatchEvent(
+          new CustomEvent("image-master:artifact-group-review-state", {
+            detail: {
+              artifactIds: groupArtifactIds,
+              group: groupTitle,
+              status,
+              note: `Agent 建议卡片：${suggestion.title}`,
+            },
+          })
+        );
+        recordAction(`已把「${groupTitle}」这一组标记为${getArtifactReviewStatusLabel(status)}。`);
+      }
+      return;
+    }
+
+    if (action === "redo") {
+      if (suggestion.jobId || artifact?.jobId) {
+        window.dispatchEvent(
+          new CustomEvent("image-master:generation-frame-output-retry", {
+            detail: {
+              artifactId: suggestion.artifactId,
+              jobId: suggestion.jobId || artifact?.jobId,
+              title: artifact?.title || suggestion.title,
+            },
+          })
+        );
+        recordAction(`已按原参考图、比例和图组用途重做「${artifact?.title || suggestion.title}」。`);
+        return;
+      }
+      onComposeBriefChange(suggestion.editBrief || `重做「${suggestion.title}」：只改这张，保留原参考图、比例和用途。`);
+      recordAction(`已切到自然语言修改；只会处理「${suggestion.title}」。`);
+      return;
+    }
+
+    if (action === "edit" || action === "copy") {
+      if (!artifact?.url) {
+        onComposeBriefChange(suggestion.editBrief || `修改「${suggestion.title}」：只改这张，保留其他结果。`);
+        recordAction(`已把「${suggestion.title}」作为单张修改目标。`);
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-edit", {
+          detail: {
+            artifactId: artifact.id,
+            jobId: artifact.jobId,
+            nodeId: artifact.nodeId,
+            title: artifact.title,
+            url: artifact.url,
+            status: artifact.status,
+          },
+        })
+      );
+      const brief = action === "copy"
+        ? "这张文案短一点，放在画面安全区，不要改商品包装标签；保留原商品、比例和图组用途。"
+        : suggestion.editBrief || `修改这张图：${suggestion.body}；保留原参考图、比例和图组用途。`;
+      window.setTimeout(() => onComposeBriefChange(brief), 0);
+      recordAction(`已选中「${artifact.title}」；接下来只修改这张，保留原参考图、比例和用途。`);
+      return;
+    }
+
+    if (action === "group_redo") {
+      window.dispatchEvent(
+        new CustomEvent("image-master:artifact-group-retry", {
+          detail: {
+            group: groupTitle,
+            count: groupArtifacts.length || group?.count || groupArtifactIds.length,
+            ratios: group?.ratios ?? [],
+            artifactIds: groupArtifactIds,
+            artifactTitles: groupArtifacts.map((item) => item.title),
+            providerRoles: group?.providerRoles ?? [],
+            promptOnlyRoles: group?.promptOnlyRoles ?? [],
+            copyModes: group?.copyModes ?? [],
+          },
+        })
+      );
+      recordAction(`已按原上下文重做「${groupTitle}」这一组；其他图片不会被重写。`);
+      return;
+    }
+
+    if (action === "group_edit") {
+      const nextGroup = group ?? {
+        id: `artifact-group:${groupTitle}`,
+        title: groupTitle,
+        count: groupArtifacts.length || groupArtifactIds.length || 1,
+        ratios: ["auto"],
+        copyModes: [],
+        providerRoles: [],
+        promptOnlyRoles: [],
+        assetTitles: groupArtifacts.map((item) => item.title),
+        artifactIds: groupArtifactIds,
+        status: "ready" as const,
+        summary: "已生成结果分组，后续修改只影响这一组。",
+        reason: "来自 Agent 审核建议，可局部重做或调整。",
+        missingHints: [],
+      };
+      setFocusedPlanGroup(nextGroup);
+      onComposeBriefChange(suggestion.editBrief || `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`);
+      onCollapsedChange(false);
+      recordAction(`已选中「${groupTitle}」这一组；接下来只调整这组。`);
+    }
+  }, [onCollapsedChange, onComposeBriefChange, planGroups, rememberAgentEvent, visibleArtifacts]);
+
+  useEffect(() => {
+    if (!hasEditTarget || workflowPlanPreview || collapsed) return;
+    const id = window.setTimeout(() => {
+      editTextareaRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [collapsed, editTarget?.artifactId, editTarget?.jobId, editTarget?.url, hasEditTarget, workflowPlanPreview]);
+
+  if (canShowCompactPanel) {
+    return (
+      <div className="pointer-events-none absolute right-3 top-3 z-40">
+        <button
+          type="button"
+          onClick={() => onCollapsedChange(false)}
+          className="pointer-events-auto inline-flex max-w-[240px] items-center gap-2 rounded-full border border-warm-line/55 bg-warm-paper/90 px-3 py-2 text-left shadow-sm backdrop-blur transition hover:border-warm-primary/40 hover:text-warm-primary"
+          title="展开 Agent"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-warm-primary-soft text-warm-primary">
+            <Bot className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold leading-4 text-warm-ink">Agent</span>
+            <span className="block truncate text-[11px] leading-4 text-warm-muted">{compactStatus}</span>
+          </span>
+          <ChevronLeft className="h-4 w-4 shrink-0 text-warm-muted" />
+        </button>
+      </div>
+    );
+  }
+
+  if (hasEditTarget && !workflowPlanPreview) {
+    return (
+      <div className="pointer-events-none absolute right-3 top-3 z-40 w-[min(320px,calc(100%-24px))] max-w-[320px]">
+        <section className="pointer-events-auto flex max-h-[calc(100vh-24px)] flex-col overflow-hidden rounded-xl border border-warm-line/55 bg-warm-paper/92 shadow-lg backdrop-blur">
+          <div className="flex items-center justify-between gap-2 border-b border-warm-line/50 px-3 py-2.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-warm-primary-soft text-warm-primary">
+                <Wand2 className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-warm-ink">修改这张图</h3>
+                <p className="mt-0.5 truncate text-[11px] text-warm-muted">
+                  作为上一版参考
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClearEditTarget}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-bg hover:text-warm-ink"
+              title="取消修改目标"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
+            {editTarget && (
+              <div className="flex items-center gap-2 rounded-lg border border-warm-line/60 bg-warm-bg p-2">
+                <img
+                  src={editTarget.url}
+                  alt={editTarget.title}
+                  className="h-12 w-12 shrink-0 rounded-md bg-warm-paper object-cover"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium text-warm-ink">{editTarget.title}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-warm-muted">
+                    保留需要保留的主体，按你的话改
+                  </div>
+                </div>
+              </div>
+            )}
+            <AgentConversation messages={agentMessages} compact />
+            <textarea
+              ref={editTextareaRef}
+              data-testid="agent-image-edit-brief"
+              value={composeBrief}
+              onChange={(event) => onComposeBriefChange(event.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-warm-line/70 bg-warm-bg px-3 py-2.5 text-sm leading-relaxed text-warm-ink outline-none transition placeholder:text-warm-muted/60 focus:border-warm-primary/60"
+              placeholder="比如：换成室外街拍光，产品不变，文字更清晰。"
+            />
+            <AgentProgressSteps steps={progressSteps} />
+            {composeMessage && (
+              <p className="rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
+                {composeMessage}
+              </p>
+            )}
+            <button
+              type="button"
+              disabled={primaryDisabled}
+              onClick={handlePrimaryAction}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-warm-primary px-3 py-2.5 text-sm font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {composingWorkflow ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Wand2 className="h-4 w-4" />
+              )}
+              {primaryLabel}
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
-    <div className="pointer-events-none absolute right-3 top-[96px] z-20 w-[min(380px,calc(100%-24px))] max-w-[380px]">
-      <section className="pointer-events-auto overflow-hidden rounded-xl border border-warm-line/70 bg-warm-paper/95 shadow-2xl backdrop-blur">
-        <div className="border-b border-warm-line/50 px-4 py-3">
+    <div className="pointer-events-none absolute right-3 top-3 z-40 w-[min(330px,calc(100%-24px))] max-w-[330px]">
+      <section className="pointer-events-auto flex max-h-[calc(100vh-24px)] flex-col overflow-hidden rounded-xl border border-warm-line/55 bg-warm-paper/92 shadow-lg backdrop-blur">
+        <div className="border-b border-warm-line/50 px-3 py-2.5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -6699,38 +8914,103 @@ function CanvasAgentPanel({
                 <div className="min-w-0">
                   <h3 className="truncate text-sm font-semibold text-warm-ink">Agent</h3>
                   <p className="mt-0.5 truncate text-[11px] text-warm-muted">
-                    {productLabel}
+                    {agentHeaderSubtitle}
                   </p>
                 </div>
               </div>
             </div>
-            <span className="shrink-0 rounded bg-warm-bg px-2 py-1 text-[10px] text-warm-muted">
-              画布主控
+            <span className="hidden shrink-0 rounded bg-warm-bg px-2 py-1 text-[10px] text-warm-muted sm:inline">
+              主控
             </span>
+            <button
+              type="button"
+              onClick={() => onCollapsedChange(true)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-bg hover:text-warm-ink"
+              title="收起 Agent"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
-        <div className="space-y-3 p-4">
-          <div className="rounded-lg bg-warm-bg px-3 py-2.5">
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-warm-primary-soft text-warm-primary">
-                <Sparkles className="h-3 w-3" />
-              </span>
-              <p className="text-xs leading-5 text-warm-ink">{agentUnderstanding}</p>
-            </div>
-          </div>
-
-          <textarea
-            value={composeBrief}
-            onChange={(event) => onComposeBriefChange(event.target.value)}
-            rows={4}
-            className="w-full resize-none rounded-lg border border-warm-line/70 bg-warm-bg px-3 py-2.5 text-sm leading-relaxed text-warm-ink outline-none transition placeholder:text-warm-muted/60 focus:border-warm-primary/60"
-            placeholder="比如：羽绒服，淘宝详情页，雪山场景，带模特。"
+        <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
+          <AgentProjectContextCard
+            productLabel={productLabel}
+            hasProductReference={hasProductReference}
+            hasPlan={Boolean(workflowPlanPreview || hasAppliedWorkflow)}
+            visibleOutputCount={visibleOutputCount}
+            activeJobCount={activeJobCount}
           />
 
-          <p className="text-[11px] leading-4 text-warm-muted">
-            一句话即可。文案默认做图层。
-          </p>
+          <AgentConversation messages={agentMessages} />
+
+          {criticalGapItems.length > 0 && (
+            <AgentGapChecklist items={criticalGapItems} />
+          )}
+
+          {planDiff && (
+            <AgentPlanDiffCard diff={planDiff} />
+          )}
+
+          {focusedPlanGroup && !editTarget && (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-warm-primary/20 bg-warm-primary-soft/55 px-2.5 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium text-warm-ink">
+                  正在调整：{focusedPlanGroup.title}
+                </div>
+                <div className="mt-0.5 text-[11px] text-warm-muted">
+                  只影响这组，当前 {focusedPlanGroup.count} 张
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFocusedPlanGroup(null)}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-paper hover:text-warm-ink"
+                title="取消分组上下文"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {editTarget && (
+            <div className="flex items-center gap-2 rounded-lg border border-warm-primary/20 bg-warm-primary-soft/55 p-2">
+              <img
+                src={editTarget.url}
+                alt={editTarget.title}
+                className="h-12 w-12 shrink-0 rounded-md bg-warm-paper object-cover"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-warm-ink">{editTarget.title}</div>
+                <div className="mt-0.5 text-[11px] leading-4 text-warm-muted">
+                  这张会作为上一版参考图
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClearEditTarget}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-paper hover:text-warm-ink"
+                title="取消修改目标"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {completionSummary && (
+            <div className="space-y-2 rounded-lg border border-emerald-200/70 bg-emerald-50 px-3 py-2 text-[11px] leading-4 text-emerald-800">
+              <div className="whitespace-pre-line">{completionSummary}</div>
+            </div>
+          )}
+          {executableReviewSuggestions.length > 0 && (
+            <AgentReviewSuggestionCards
+              suggestions={executableReviewSuggestions}
+              onAction={handleAgentReviewSuggestionAction}
+            />
+          )}
+          {qaSummaryItems.length > 0 && (
+            <AgentQaSummary items={qaSummaryItems} />
+          )}
 
           {workflowPlanPreview ? (
             <div className="rounded-lg border border-warm-line/60 bg-warm-bg p-3">
@@ -6749,48 +9029,97 @@ function CanvasAgentPanel({
                   {workflowPlanPreview.estimatedCount} 图
                 </span>
               </div>
-              {agentPlan && (
-                <div className="mt-3 grid grid-cols-3 gap-1.5">
-                  <QuickFlowMetric label="样张" value={`${agentPlan.sampleCount}`} active />
-                  <QuickFlowMetric label="完整包" value={`${agentPlan.fullCount}`} active />
-                  <QuickFlowMetric
-                    label="文案"
-                    value={agentPlan.copyPolicy.requestedMode === "burn_in" ? "带字" : "图层"}
-                    active
-                  />
+              <AgentPlanBoard
+                groups={planGroups}
+                totalCount={estimatedCallCount || workflowPlanPreview.estimatedCount}
+                blockedCount={hasBlockedAgentPlanItems ? blockedMatrixItemCount || missingInputHints.length : 0}
+                onFocusGroup={(group) => {
+                  setFocusedPlanGroup(group);
+                  onComposeBriefChange(`调整「${group.title}」：`);
+                }}
+              />
+              {hasAgentPlanAttentionItems && (
+                <div className="mt-2 rounded-md border border-amber-200/80 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800">
+                  <div>
+                    {hasBlockedAgentPlanItems
+                      ? "当前计划缺少关键素材。先补齐关键参考，再应用计划。"
+                      : "本轮还要注意这些素材风险；不阻塞规划，但会影响成片稳定性。"}
+                  </div>
+                  {planAttentionHints.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {planAttentionHints.map((hint) => (
+                        <li key={hint}>{hint}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
-              {outputSlots.length > 0 && (
-                <div className="mt-3">
-                  <div className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-warm-muted">
-                    输出槽位
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {outputSlots.slice(0, 7).map((slot) => (
-                      <span
-                        key={slot.id}
-                        className={cn(
-                          "max-w-full truncate rounded-md border px-2 py-1 text-[11px]",
-                          slot.samplePhase
-                            ? "border-warm-primary/25 bg-warm-primary-soft text-warm-primary"
-                            : "border-warm-line/50 bg-warm-paper text-warm-muted"
-                        )}
-                        title={slot.purpose}
-                      >
-                        {slot.label}
-                      </span>
-                    ))}
-                  </div>
+              {matrixItems.length > 0 && (
+                <div className="mt-3 border-t border-warm-line/50 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAgentPlanAdvanced((value) => !value)}
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-[11px] font-medium text-warm-muted transition hover:bg-warm-paper hover:text-warm-ink"
+                  >
+                    <span>
+                      查看参考图细节
+                      {agentPlan?.compositionMode ? ` · ${getCompositionModeLabel(agentPlan.compositionMode)}` : ""}
+                    </span>
+                    <ChevronRight className={cn("h-3.5 w-3.5 transition", showAgentPlanAdvanced && "rotate-90")} />
+                  </button>
+                  {showAgentPlanAdvanced && (
+                    <div className="mt-1.5 max-h-[218px] space-y-1.5 overflow-y-auto pr-1">
+                      {matrixItems.slice(0, 8).map((item, index) => {
+                        const providerRoles = item.providerReferenceRoles;
+                        const promptOnlyRoles = item.referenceRoles.filter((role) => !providerRoles.includes(role));
+                        const assetTitles = item.assetGroupIds
+                          .map((id) => assetGroupsById.get(id)?.title)
+                          .filter((title): title is string => Boolean(title));
+                        return (
+                          <div
+                            key={item.id || item.itemId}
+                            className={cn(
+                              "rounded-md border bg-warm-paper px-2.5 py-2",
+                              item.status === "blocked"
+                                ? "border-red-200/80"
+                                : "border-warm-line/55"
+                            )}
+                          >
+                            <div className="truncate text-[12px] font-medium text-warm-ink">
+                              {index + 1}. {getAgentPlanGroupDisplayTitle(item.title, item.outputSlotId || item.type)}
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              <AgentPlanTinyBadge>{item.ratio || "auto"}</AgentPlanTinyBadge>
+                              <AgentPlanTinyBadge>{getCopyModeLabel(item.copyMode)}</AgentPlanTinyBadge>
+                              {item.status === "blocked" && <AgentPlanTinyBadge tone="warn">缺素材</AgentPlanTinyBadge>}
+                            </div>
+                            <div className="mt-1.5 space-y-0.5 text-[11px] leading-4 text-warm-muted">
+                              <div className="truncate">
+                                强参考：{providerRoles.length ? providerRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
+                              </div>
+                              <div className="truncate">
+                                文字/约束：{promptOnlyRoles.length ? promptOnlyRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
+                              </div>
+                              {assetTitles.length > 0 && (
+                                <div className="truncate">素材：{assetTitles.slice(0, 3).join("、")}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
                   onClick={onApplyWorkflowPlan}
-                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-warm-primary px-3 py-2 text-xs font-medium text-warm-paper transition hover:bg-warm-primary/90"
+                  disabled={hasBlockedAgentPlanItems}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-warm-primary px-3 py-2 text-xs font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  应用到画布
+                  {hasActiveGenerationFrame ? "应用到当前任务" : "应用到画布"}
                 </button>
                 <button
                   type="button"
@@ -6803,6 +9132,22 @@ function CanvasAgentPanel({
             </div>
           ) : null}
 
+        </div>
+        <div className="shrink-0 space-y-2.5 border-t border-warm-line/50 bg-warm-paper/95 p-3">
+          <textarea
+            value={composeBrief}
+            onChange={(event) => onComposeBriefChange(event.target.value)}
+            rows={3}
+            className="w-full resize-none rounded-lg border border-warm-line/70 bg-warm-bg px-3 py-2.5 text-sm leading-relaxed text-warm-ink outline-none transition placeholder:text-warm-muted/60 focus:border-warm-primary/60"
+            placeholder={planInputPlaceholder}
+          />
+
+          <p className="text-[11px] leading-4 text-warm-muted">
+            你可以直接说“不要这组”“这类少两张”“这张重做”；Agent 会先改计划，再执行。
+          </p>
+
+          <AgentProgressSteps steps={progressSteps} jobMessage={jobMessage} />
+
           {composeMessage && (
             <p className="rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
               {composeMessage}
@@ -6812,7 +9157,7 @@ function CanvasAgentPanel({
           <button
             type="button"
             disabled={primaryDisabled}
-            onClick={primaryAction}
+            onClick={handlePrimaryAction}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-warm-primary px-3 py-2.5 text-sm font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
           >
             {composingWorkflow || generatingSample ? (
@@ -6826,6 +9171,452 @@ function CanvasAgentPanel({
       </section>
     </div>
   );
+}
+
+function AgentProjectContextCard({
+  productLabel,
+  hasProductReference,
+  hasPlan,
+  visibleOutputCount,
+  activeJobCount,
+}: {
+  productLabel: string;
+  hasProductReference: boolean;
+  hasPlan: boolean;
+  visibleOutputCount: number;
+  activeJobCount: number;
+}) {
+  return (
+    <div className="rounded-lg border border-warm-line/55 bg-warm-bg px-3 py-2.5" data-testid="agent-project-context">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-warm-muted">
+            当前项目理解
+          </div>
+          <div className="mt-1 truncate text-xs font-medium text-warm-ink">
+            {productLabel}
+          </div>
+        </div>
+        <span className={cn(
+          "shrink-0 rounded-full px-2 py-1 text-[10px]",
+          hasProductReference
+            ? "bg-warm-primary-soft text-warm-primary"
+            : "bg-warm-paper text-warm-muted"
+        )}>
+          {hasProductReference ? "已锁商品" : "待商品图"}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
+        <AgentContextMetric
+          label="计划"
+          value={hasPlan ? "已准备" : visibleOutputCount > 0 ? "已出图" : "待生成"}
+          active={hasPlan || visibleOutputCount > 0}
+        />
+        <AgentContextMetric label="结果" value={`${visibleOutputCount} 张`} active={visibleOutputCount > 0} />
+        <AgentContextMetric label="生成" value={activeJobCount > 0 ? `${activeJobCount} 中` : "空闲"} active={activeJobCount > 0} />
+      </div>
+    </div>
+  );
+}
+
+function AgentContextMetric({
+  label,
+  value,
+  active,
+}: {
+  label: string;
+  value: string;
+  active: boolean;
+}) {
+  return (
+    <div className={cn(
+      "min-w-0 rounded-md border px-2 py-1.5",
+      active ? "border-warm-primary/25 bg-warm-paper" : "border-warm-line/45 bg-warm-soft/35"
+    )}>
+      <span className="block text-[10px] text-warm-muted">{label}</span>
+      <span className="mt-0.5 block truncate text-[11px] font-medium text-warm-ink">{value}</span>
+    </div>
+  );
+}
+
+function AgentConversation({
+  messages,
+  compact = false,
+}: {
+  messages: AgentConversationMessage[];
+  compact?: boolean;
+}) {
+  const visibleMessages = compact
+    ? getCompactAgentConversationMessages(messages)
+    : messages.slice(-7);
+  return (
+    <div className={cn("rounded-lg border border-warm-line/55 bg-warm-paper", compact ? "p-2" : "p-2.5")} data-testid="agent-conversation">
+      {!compact && (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-warm-muted">对话</span>
+          <span className="text-[10px] text-warm-muted">自然语言改计划</span>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {visibleMessages.map((message) => {
+          const isUser = message.role === "user";
+          return (
+            <div
+              key={message.id}
+              className={cn(
+                "flex",
+                isUser ? "justify-end" : "justify-start"
+              )}
+            >
+              <div
+                className={cn(
+                  "max-w-[92%] rounded-lg px-2.5 py-2 text-[11px] leading-4",
+                  isUser
+                    ? "bg-warm-primary text-warm-paper"
+                    : message.tone === "success"
+                      ? "bg-emerald-50 text-emerald-800"
+                      : message.tone === "warn"
+                        ? "bg-amber-50 text-amber-800"
+                      : message.tone === "progress"
+                        ? "bg-warm-primary-soft text-warm-primary"
+                        : "bg-warm-bg text-warm-ink"
+                )}
+              >
+                {message.title && (
+                  <div className={cn(
+                    "mb-0.5 text-[10px] font-medium",
+                    isUser ? "text-warm-paper/80" : "text-warm-muted"
+                  )}>
+                    {message.title}
+                  </div>
+                )}
+                <div className="whitespace-pre-line">{message.text}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function getCompactAgentConversationMessages(
+  messages: AgentConversationMessage[]
+): AgentConversationMessage[] {
+  const pinnedIds = new Set(["agent-edit-context", "agent-focused-group"]);
+  const pinnedMessages = messages.filter((message) => pinnedIds.has(message.id));
+  const tailMessages = messages.slice(-2);
+  const seen = new Set<string>();
+  return [...pinnedMessages, ...tailMessages].filter((message) => {
+    if (seen.has(message.id)) return false;
+    seen.add(message.id);
+    return true;
+  }).slice(-4);
+}
+
+function AgentProgressSteps({
+  steps,
+  jobMessage,
+}: {
+  steps: AgentProgressStep[];
+  jobMessage?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-warm-line/55 bg-warm-bg px-3 py-2" data-testid="agent-progress-steps">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-warm-muted">制作进度</span>
+        {jobMessage && <span className="truncate text-[10px] text-warm-muted">{jobMessage}</span>}
+      </div>
+      <div className="mt-2 grid grid-cols-6 gap-1.5">
+        {steps.map((step) => (
+          <div key={step.id} className="min-w-0">
+            <div className={cn(
+              "mb-1 h-1 rounded-full",
+              step.status === "done"
+                ? "bg-warm-primary"
+                : step.status === "active"
+                  ? "bg-warm-primary/55"
+                  : "bg-warm-line/60"
+            )} />
+            <div className={cn(
+              "truncate text-[10px]",
+              step.status === "pending" ? "text-warm-muted" : "text-warm-ink"
+            )}>
+              {step.label}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentPlanBoard({
+  groups,
+  totalCount,
+  blockedCount,
+  onFocusGroup,
+}: {
+  groups: AgentPlanGroup[];
+  totalCount: number;
+  blockedCount: number;
+  onFocusGroup: (group: AgentPlanGroup) => void;
+}) {
+  const visibleGroups = groups.slice(0, 6);
+  const hiddenCount = Math.max(0, groups.length - visibleGroups.length);
+  return (
+    <div className="mt-3 rounded-lg border border-warm-line/55 bg-warm-paper p-2.5" data-testid="agent-plan-board">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-warm-muted">
+            制作清单
+          </div>
+          <div className="mt-0.5 text-[11px] text-warm-muted">
+            共 {totalCount || groups.reduce((sum, group) => sum + group.count, 0)} 张{blockedCount > 0 ? " · 有缺素材" : ""}
+          </div>
+        </div>
+        <ListChecks className="h-4 w-4 text-warm-primary" />
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {visibleGroups.map((group) => (
+          <div
+            key={group.id}
+            className={cn(
+              "rounded-md border bg-warm-bg px-2.5 py-2",
+              group.status === "blocked" ? "border-amber-200/80" : "border-warm-line/50"
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium text-warm-ink">
+                  {group.title}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  <AgentPlanTinyBadge tone={getAgentGroupPriorityTone(group)}>
+                    {getAgentGroupPriorityLabel(group)}
+                  </AgentPlanTinyBadge>
+                  <AgentPlanTinyBadge>{group.count} 张</AgentPlanTinyBadge>
+                  {group.ratios.slice(0, 2).map((ratio) => (
+                    <AgentPlanTinyBadge key={ratio}>{ratio}</AgentPlanTinyBadge>
+                  ))}
+                  {group.copyModes.slice(0, 2).map((mode) => (
+                    <AgentPlanTinyBadge key={mode}>{getCopyModeLabel(mode)}</AgentPlanTinyBadge>
+                  ))}
+                  {group.status === "blocked" && <AgentPlanTinyBadge tone="warn">缺素材</AgentPlanTinyBadge>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onFocusGroup(group)}
+                className="shrink-0 rounded-md border border-warm-line/55 bg-warm-paper px-2 py-1 text-[10px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+              >
+                改这组
+              </button>
+            </div>
+            <div className="mt-1.5 space-y-0.5 text-[11px] leading-4 text-warm-muted">
+              <div className="truncate">
+                强参考：{group.providerRoles.length ? group.providerRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
+              </div>
+              <div className="truncate">
+                文字/约束：{group.promptOnlyRoles.length ? group.promptOnlyRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
+              </div>
+              <div className="truncate">
+                文案：{formatAgentPlanCopyModes(group.copyModes)}
+              </div>
+              {group.assetTitles.length > 0 && (
+                <div className="truncate">素材：{group.assetTitles.slice(0, 3).join("、")}</div>
+              )}
+                {group.summary && <div className="line-clamp-2">用途：{group.summary}</div>}
+                <div className="truncate">
+                  状态：{group.status === "blocked" ? "缺关键素材，暂不建议执行" : "可执行，可继续微调"}
+                </div>
+                {group.reason && <div className="line-clamp-2">为什么：{group.reason}</div>}
+                {group.missingHints && group.missingHints.length > 0 && (
+                  <div className="line-clamp-2 text-amber-700">
+                    缺口：{group.missingHints.slice(0, 2).join("；")}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        {hiddenCount > 0 && (
+          <div className="rounded-md bg-warm-bg px-2.5 py-2 text-[11px] text-warm-muted">
+            还有 {hiddenCount} 组，应用后会按用途回到画布结果墙。
+          </div>
+        )}
+      </div>
+      <div className="mt-2 rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
+        想改就直接说：这组少两张、不要封面、文案烧进详情页、加商场场景。
+      </div>
+    </div>
+  );
+}
+
+function AgentPlanDiffCard({ diff }: { diff: AgentPlanDiff }) {
+  const sections = [
+    { label: "新增", values: diff.additions },
+    { label: "删除", values: diff.removals },
+    { label: "数量", values: diff.countChanges },
+    { label: "文案", values: diff.copyChanges },
+    { label: "其他", values: diff.otherChanges },
+  ].filter((section) => section.values.length > 0);
+
+  return (
+    <div className="rounded-lg border border-warm-primary/20 bg-warm-primary-soft/45 px-3 py-2 text-[11px] leading-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-warm-ink">本次计划变更</span>
+        <span className="text-warm-muted">{diff.summary}</span>
+      </div>
+      {(diff.scopeSummary || diff.preservedSummary || diff.nextAction) && (
+        <div className="mt-1.5 space-y-0.5 text-warm-muted">
+          {diff.scopeSummary && <div>{diff.scopeSummary}</div>}
+          {diff.preservedSummary && <div>{diff.preservedSummary}</div>}
+          {diff.nextAction && <div>{diff.nextAction}</div>}
+        </div>
+      )}
+      {sections.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          {sections.map((section) => (
+            <div key={section.label} className="flex gap-2">
+              <span className="w-8 shrink-0 text-warm-muted">{section.label}</span>
+              <span className="min-w-0 flex-1 text-warm-ink">{section.values.join("；")}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentGapChecklist({ items }: { items: AgentGapHintItem[] }) {
+  return (
+    <div className="rounded-lg border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[11px] leading-4" data-testid="agent-gap-checklist">
+      <div className="mb-1.5 flex items-center gap-1.5 font-medium text-amber-900">
+        <AlertCircle className="h-3.5 w-3.5" />
+        关键缺口
+      </div>
+      <div className="space-y-1">
+        {items.slice(0, 4).map((item) => (
+          <div key={item.label} className="flex gap-2">
+            <span className={cn(
+              "w-12 shrink-0",
+              item.tone === "warn" ? "text-amber-800" : "text-warm-muted"
+            )}>
+              {item.label}
+            </span>
+            <span className="min-w-0 flex-1 text-amber-900">{item.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentQaSummary({ items }: { items: AgentQaSummaryItem[] }) {
+  return (
+    <div className="rounded-lg border border-warm-line/60 bg-warm-paper px-3 py-2 text-[11px] leading-4">
+      <div className="mb-1.5 flex items-center gap-1.5 font-medium text-warm-ink">
+        <ListChecks className="h-3.5 w-3.5 text-warm-primary" />
+        Agent 质检建议
+      </div>
+      <div className="space-y-1">
+        {items.map((item) => (
+          <div key={item.label} className="flex gap-2">
+            <span
+              className={cn(
+                "w-14 shrink-0",
+                item.tone === "warn"
+                  ? "text-amber-700"
+                  : item.tone === "success"
+                    ? "text-emerald-700"
+                    : "text-warm-muted"
+              )}
+            >
+              {item.label}
+            </span>
+            <span className="min-w-0 flex-1 text-warm-muted">{item.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentReviewSuggestionCards({
+  suggestions,
+  onAction,
+}: {
+  suggestions: AgentExecutableReviewSuggestion[];
+  onAction: (suggestion: AgentExecutableReviewSuggestion, action: AgentReviewSuggestionAction) => void;
+}) {
+  return (
+    <div className="space-y-1.5" data-testid="agent-review-suggestions">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-warm-ink">
+        <Sparkles className="h-3.5 w-3.5 text-warm-primary" />
+        可执行建议
+      </div>
+      {suggestions.slice(0, 4).map((suggestion) => (
+        <div
+          key={suggestion.id}
+          className={cn(
+            "rounded-lg border px-2.5 py-2 text-[11px] leading-4",
+            suggestion.tone === "warn"
+              ? "border-amber-200/80 bg-amber-50/80"
+              : suggestion.tone === "success"
+                ? "border-emerald-200/80 bg-emerald-50/80"
+                : "border-warm-line/60 bg-warm-paper"
+          )}
+        >
+          <div className="font-medium text-warm-ink">{suggestion.title}</div>
+          <div className="mt-0.5 text-warm-muted">{suggestion.body}</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {suggestion.actions.map((action) => {
+              const ActionIcon = getAgentReviewSuggestionActionIcon(action);
+              return (
+                <button
+                  key={`${suggestion.id}-${action}`}
+                  type="button"
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1 rounded-md border bg-white/75 px-2 text-[10px] font-medium transition hover:bg-white",
+                    action === "approve"
+                      ? "border-emerald-200 text-emerald-700 hover:border-emerald-300"
+                      : action === "reject"
+                        ? "border-zinc-200 text-zinc-600 hover:border-zinc-300"
+                        : action === "mark_needs_redo" || action === "redo" || action === "group_redo"
+                          ? "border-amber-200 text-amber-700 hover:border-amber-300"
+                          : "border-warm-line/60 text-warm-ink hover:border-warm-primary/40 hover:text-warm-primary"
+                  )}
+                  onClick={() => onAction(suggestion, action)}
+                >
+                  <ActionIcon className="h-3 w-3" />
+                  {getAgentReviewSuggestionActionLabel(action)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction): string {
+  if (action === "approve") return "保留";
+  if (action === "mark_needs_redo") return "标记重做";
+  if (action === "reject") return "淘汰";
+  if (action === "redo") return "执行重做";
+  if (action === "edit") return "让 Agent 改";
+  if (action === "copy") return "修改文案";
+  if (action === "group_edit") return "调整这组";
+  return "重做这组";
+}
+
+function getAgentReviewSuggestionActionIcon(action: AgentReviewSuggestionAction) {
+  if (action === "approve") return PackageCheck;
+  if (action === "reject") return Trash2;
+  if (action === "redo" || action === "group_redo" || action === "mark_needs_redo") return RefreshCw;
+  if (action === "copy") return Copy;
+  return Wand2;
 }
 
 function QuickProductionFlowPanel({
@@ -6940,6 +9731,1793 @@ function QuickFlowMetric({
       <span className="mt-0.5 block truncate text-[11px] font-medium text-warm-ink">{value}</span>
     </div>
   );
+}
+
+function AgentPlanTinyBadge({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "warn" | "priority";
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded px-1.5 py-0.5 text-[10px] leading-none",
+        tone === "warn"
+          ? "bg-red-50 text-red-700"
+          : tone === "priority"
+            ? "bg-warm-primary-soft text-warm-primary"
+            : "bg-warm-bg text-warm-muted"
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function getAgentPlanRoleLabel(role: string): string {
+  if (role === "product") return "商品";
+  if (role === "model") return "模特";
+  if (role === "scene") return "场景";
+  if (role === "style") return "风格";
+  if (role === "copy") return "文案";
+  return role || "未知";
+}
+
+function getCopyModeLabel(mode?: string): string {
+  if (mode === "burn_in") return "烧字";
+  if (mode === "metadata_only") return "不进图";
+  return "图层";
+}
+
+function getAgentGroupPriorityLabel(group: AgentPlanGroup): string {
+  if (group.status === "blocked") return "先补素材";
+  const text = `${group.title} ${group.summary ?? ""}`.toLowerCase();
+  if (/主图|main|hero/.test(text)) return "先做";
+  if (/详情|细节|材质|特写|工艺|场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle|detail|macro|material/.test(text)) return "验证";
+  if (/海报|卖点|封面|收尾|poster|feature|cover/.test(text)) return "转化";
+  return "后续";
+}
+
+function getAgentGroupPriorityTone(group: AgentPlanGroup): "warn" | "priority" | undefined {
+  const label = getAgentGroupPriorityLabel(group);
+  if (label === "先补素材") return "warn";
+  if (label === "先做") return "priority";
+  return undefined;
+}
+
+function formatAgentPlanCopyModes(modes: string[]): string {
+  const labels = agentUniqueStrings(modes.map(getCopyModeLabel));
+  return labels.length > 0 ? labels.join("、") : "图层";
+}
+
+function buildAgentMatrixFromPreviewItems(
+  items: WorkflowPlanPreviewItem[]
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  return items.map((item, index) => ({
+    id: `preview_matrix_${item.id || index + 1}`,
+    itemId: item.id || `plan_item_${index + 1}`,
+    title: item.title || `图 ${index + 1}`,
+    type: item.slot || item.id || `image_${index + 1}`,
+    outputSlotId: getPreviewItemBaseSlotId(item.slot),
+    ratio: item.ratio,
+    size: item.size,
+    referenceRoles: inferPreviewItemReferenceRoles(item),
+    providerReferenceRoles: [],
+    assetGroupIds: [],
+    copyMode: item.copyMode || "layout_layer",
+    missingInputIds: [],
+    status: "ready",
+    summary: item.purpose,
+  }));
+}
+
+function getPreviewItemBaseSlotId(slot: string): string {
+  return (slot || "image").replace(/[-_]\d+$/, "");
+}
+
+function inferPreviewItemReferenceRoles(item: WorkflowPlanPreviewItem): string[] {
+  const text = `${item.title} ${item.slot} ${item.purpose}`.toLowerCase();
+  const roles = new Set<string>();
+  roles.add("product");
+  roles.add("style");
+  if (/model|模特|真人|人物|上身|穿搭/.test(text)) roles.add("model");
+  if (/scene|lifestyle|场景|生活|使用环境|桌面|室内|户外|商场|海报|poster|closing/.test(text)) roles.add("scene");
+  if (item.copyMode === "burn_in" || /copy|text|文案|文字|海报|poster|closing|卖点|feature/.test(text)) roles.add("copy");
+  return Array.from(roles);
+}
+
+function buildAgentPlanGroups({
+  matrixItems,
+  outputSlots,
+  assetGroupsById,
+  missingInputById,
+}: {
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  outputSlots: Array<{
+    id: string;
+    label: string;
+    purpose: string;
+    ratio: string;
+    samplePhase: boolean;
+  }>;
+  assetGroupsById: Map<string, WorkflowPlanPreviewAgentAssetGroup>;
+  missingInputById: Map<string, WorkflowPlanPreviewAgentMissingInput>;
+}): AgentPlanGroup[] {
+  const outputSlotById = new Map(outputSlots.map((slot) => [slot.id, slot]));
+  const byId = new Map<string, AgentPlanGroup>();
+
+  for (const item of matrixItems) {
+    const baseSlotId = getAgentPlanGroupSlotId(item);
+    const slot = outputSlotById.get(baseSlotId) || (item.outputSlotId ? outputSlotById.get(item.outputSlotId) : undefined);
+    const id = slot?.id || baseSlotId || item.type || item.title;
+    const existing = byId.get(id);
+    const providerRoles = item.providerReferenceRoles;
+    const promptOnlyRoles = item.referenceRoles.filter((role) => !providerRoles.includes(role));
+    const assetTitles = item.assetGroupIds
+      .map((assetGroupId) => assetGroupsById.get(assetGroupId)?.title)
+      .filter((title): title is string => Boolean(title));
+    const missingHints = (item.missingInputIds ?? [])
+      .map((id) => missingInputById.get(id))
+      .filter((input): input is WorkflowPlanPreviewAgentMissingInput => Boolean(input))
+      .map((input) => `${input.label}：${getAgentMissingInputAction(input.role)}`);
+    const displayTitle = getAgentPlanGroupDisplayTitle(slot?.label || item.title, id);
+    const next: AgentPlanGroup = existing ?? {
+      id,
+      title: displayTitle,
+      count: 0,
+      ratios: [],
+      copyModes: [],
+      providerRoles: [],
+      promptOnlyRoles: [],
+      assetTitles: [],
+      status: "ready",
+      summary: getAgentPlanGroupSummary(slot?.purpose, item.summary),
+      reason: "",
+      missingHints: [],
+    };
+
+    next.count += 1;
+    next.ratios = agentUniqueStrings([...next.ratios, item.ratio || slot?.ratio || "auto"]);
+    next.copyModes = agentUniqueStrings([...next.copyModes, item.copyMode || "layout_layer"]);
+    next.providerRoles = agentUniqueStrings([...next.providerRoles, ...providerRoles]);
+    next.promptOnlyRoles = agentUniqueStrings([...next.promptOnlyRoles, ...promptOnlyRoles]);
+    next.assetTitles = agentUniqueStrings([...next.assetTitles, ...assetTitles]);
+    next.missingHints = agentUniqueStrings([...(next.missingHints ?? []), ...missingHints]);
+    if (item.status === "blocked") next.status = "blocked";
+    next.summary = getAgentPlanGroupSummary(next.summary, item.summary);
+    next.reason = buildAgentGroupReason(next);
+    byId.set(id, next);
+  }
+
+  if (byId.size > 0) return Array.from(byId.values()).map((group) => ({
+    ...group,
+    reason: group.reason || buildAgentGroupReason(group),
+  }));
+
+  return outputSlots.map((slot) => ({
+    id: slot.id,
+    title: getAgentPlanGroupDisplayTitle(slot.label, slot.id),
+    count: 1,
+    ratios: [slot.ratio || "auto"],
+    copyModes: ["layout_layer"],
+    providerRoles: [],
+    promptOnlyRoles: [],
+    assetTitles: [],
+    status: "ready",
+    summary: slot.purpose,
+    reason: buildAgentGroupReason({
+      id: slot.id,
+      title: slot.label,
+      count: 1,
+      ratios: [slot.ratio || "auto"],
+      copyModes: ["layout_layer"],
+      providerRoles: [],
+      promptOnlyRoles: [],
+      assetTitles: [],
+      status: "ready",
+      summary: slot.purpose,
+      missingHints: [],
+    }),
+    missingHints: [],
+  }));
+}
+
+function getAgentPlanGroupSlotId(item: WorkflowPlanPreviewAgentMatrixItem): string {
+  if (item.outputSlotId && /^scene_\d+$/i.test(item.outputSlotId)) return item.outputSlotId;
+  return getPreviewItemBaseSlotId(item.outputSlotId || item.type || item.title);
+}
+
+function getAgentPlanGroupDisplayTitle(rawTitle: string | undefined, slotId: string | undefined): string {
+  const title = rawTitle?.trim() || "图组";
+  const slotKey = (slotId || "").trim().toLowerCase();
+  if (/^scene_\d+/.test(slotKey) && /场景(?:海报)?\s+\d+$/.test(title)) {
+    return title.replace(/\s+\d+$/, "");
+  }
+  if (/[\u4e00-\u9fff]/.test(title)) return title;
+  const normalizedSlot = (slotId || title)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+\d+$/, "");
+  const normalizedTitle = title
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+\d+$/, "");
+  const numberMatch = title.match(/(?:^|[\s_-])(\d+)$/) || slotId?.match(/(?:^|[\s_-])(\d+)$/);
+  const suffix = numberMatch?.[1] ? ` ${numberMatch[1]}` : "";
+  const key = normalizedSlot || normalizedTitle;
+  const titleKey = normalizedTitle || key;
+  const labels: Record<string, string> = {
+    main: "主图",
+    hero: "主视觉",
+    white_main: "白底主图",
+    feature: "卖点图",
+    infographic: "信息图",
+    dimensions: "尺寸图",
+    material: "材质细节",
+    detail: "商品细节",
+    macro: "特写细节",
+    front: "正面图",
+    side: "侧面图",
+    back: "背面图",
+    rear: "背面图",
+    overview: "整体图",
+    closeup: "局部特写",
+    scene: "场景图",
+    lifestyle: "生活方式图",
+    model: "模特展示",
+    poster: "海报图",
+    cover: "封面图",
+    closing: "收尾图",
+  };
+  return labels[key] ? `${labels[key]}${suffix}` : labels[titleKey] ? `${labels[titleKey]}${suffix}` : title;
+}
+
+function getAgentPlanGroupSummary(current: string | undefined, itemSummary: string | undefined): string | undefined {
+  const summary = itemSummary?.trim();
+  if (summary) return summary;
+  return current?.trim() || undefined;
+}
+
+function buildAgentGroupReason(group: AgentPlanGroup): string {
+  const text = `${group.title} ${group.summary ?? ""}`.toLowerCase();
+  const titleText = group.title.toLowerCase();
+  if (/主图|main|hero/.test(text)) return "先交代商品正面价值，保证平台首图能快速识别。";
+  if (/详情|细节|材质|特写|工艺|detail|macro|material/.test(text)) return "补足材质、结构和做工证据，降低用户下单疑虑。";
+  if (/海报|卖点|封面|收尾|poster|feature|cover/.test(text)) {
+    return group.copyModes.includes("burn_in")
+      ? "承担转化信息，短文案会直接进图，需要留安全区。"
+      : "承担营销主视觉，文案默认作为后期图层更方便修改。";
+  }
+  if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(titleText)) return "把商品放进具体环境，验证空间、光影和使用氛围。";
+  if (/模特|真人|人物|上身|穿搭|model/.test(text)) return "展示尺度、上身状态和情绪，让商品进入真实使用关系。";
+  if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(text)) return "把商品放进具体环境，验证空间、光影和使用氛围。";
+  if (group.copyModes.includes("burn_in")) return "这组需要直接承载画面文字，重点检查字的位置和可读性。";
+  return "补齐这组能让整套图更完整，方便后续挑图和单张重做。";
+}
+
+function buildAgentPlanExplanation({
+  workflowPlanPreview,
+  planGroups,
+  matrixItems,
+}: {
+  workflowPlanPreview: WorkflowPlanPreview | null;
+  planGroups: AgentPlanGroup[];
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+}): string {
+  if (!workflowPlanPreview) return "";
+  const sourceTypeLabel =
+    workflowPlanPreview.agentPlan?.shortLabel ||
+    getCompositionModeLabel(workflowPlanPreview.agentPlan?.compositionMode || "") ||
+    workflowPlanPreview.title;
+  const projectTypeLabel = inferAgentProjectTypeLabel({
+    workflowPlanPreview,
+    planGroups,
+    matrixItems,
+    fallbackLabel: sourceTypeLabel,
+  });
+  const purposeSummary = buildAgentPlanPurposeSummary(planGroups);
+  const coverageSummary = buildAgentPlanCoverageSummary(planGroups);
+  const referenceSummary = buildAgentReferenceStrategySummary(matrixItems);
+  const copySummary = buildAgentCopyStrategySummary(matrixItems);
+  return [
+    `项目类型：${projectTypeLabel}${projectTypeLabel !== sourceTypeLabel ? `（${sourceTypeLabel}）` : ""}，预计 ${workflowPlanPreview.estimatedCount} 张。`,
+    coverageSummary ? `制作理由：先覆盖${coverageSummary}，避免只靠单张图硬撑整套交付。` : "",
+    purposeSummary ? `图组目的：${purposeSummary}` : "",
+    referenceSummary ? `参考策略：${referenceSummary}` : "",
+    `文案策略：${copySummary}`,
+  ].filter(Boolean).join("\n");
+}
+
+function inferAgentProjectTypeLabel({
+  workflowPlanPreview,
+  planGroups,
+  matrixItems,
+  fallbackLabel,
+}: {
+  workflowPlanPreview: WorkflowPlanPreview;
+  planGroups: AgentPlanGroup[];
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  fallbackLabel: string;
+}): string {
+  const text = [
+    workflowPlanPreview.title,
+    workflowPlanPreview.summary,
+    workflowPlanPreview.agentPlan?.title,
+    workflowPlanPreview.agentPlan?.shortLabel,
+    workflowPlanPreview.agentPlan?.compositionMode,
+    ...planGroups.flatMap((group) => [group.title, group.summary ?? ""]),
+  ].join(" ").toLowerCase();
+  const hasRole = (role: string) => matrixItems.some((item) => item.referenceRoles.includes(role));
+  const hasGroup = (pattern: RegExp) => planGroups.some((group) => pattern.test(`${group.title} ${group.summary ?? ""}`));
+  const hasProduct = hasRole("product") || hasGroup(/商品|产品|主图|详情|海报|product|main|detail|poster/i);
+  const hasModel = hasRole("model") || hasGroup(/模特|真人|人物|上身|穿搭|model/i);
+  const hasScene = hasRole("scene") || hasGroup(/场景|生活|室内|户外|街拍|商场|咖啡|scene|lifestyle/i);
+  const hasCopy = hasRole("copy") || matrixItems.some((item) => item.copyMode === "burn_in") || /文案|卖点|标题|烧字|copy/.test(text);
+
+  if (/淘宝|taobao|详情页/.test(text)) return "淘宝详情页项目";
+  if (/amazon|亚马逊/.test(text)) return "Amazon 主图项目";
+  if (/小红书|xiaohongshu|rednote|封面/.test(text)) return "小红书内容项目";
+  if (hasProduct && hasModel && hasCopy) return "商品 + 模特 + 文案项目";
+  if (hasProduct && hasModel) return "商品模特展示项目";
+  if (hasProduct && hasScene) return "商品场景项目";
+  if (hasProduct && hasCopy) return "商品海报项目";
+  if (hasModel && hasScene) return "模特场景项目";
+  return fallbackLabel || "商业图片项目";
+}
+
+function buildAgentPlanCoverageSummary(planGroups: AgentPlanGroup[]): string {
+  const purposes = agentUniqueStrings(
+    planGroups.map((group) => getAgentPlanGroupBusinessPurpose(group))
+  ).slice(0, 3);
+  return purposes.join("、");
+}
+
+function buildAgentPlanPurposeSummary(planGroups: AgentPlanGroup[]): string {
+  return planGroups
+    .slice(0, 4)
+    .map((group) => `${group.title}解决${getAgentPlanGroupBusinessPurpose(group)}`)
+    .join("；");
+}
+
+function getAgentPlanGroupBusinessPurpose(group: AgentPlanGroup): string {
+  const text = `${group.title} ${group.summary ?? ""}`.toLowerCase();
+  const titleText = group.title.toLowerCase();
+  if (/主图|main|hero/.test(text)) return "第一眼识别和点击";
+  if (/详情|细节|材质|特写|工艺|detail|macro|material/.test(text)) return "材质、结构和信任证据";
+  if (/海报|卖点|封面|收尾|poster|feature|cover/.test(text)) return "转化信息和活动表达";
+  if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(titleText)) return "使用氛围、空间和光影";
+  if (/模特|真人|人物|上身|穿搭|model/.test(text)) return "上身比例、姿态和情绪";
+  if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(text)) return "使用氛围、空间和光影";
+  return "补齐整套项目的可挑选项";
+}
+
+function buildAgentReferenceStrategySummary(matrixItems: WorkflowPlanPreviewAgentMatrixItem[]): string {
+  const activeRoles = agentUniqueStrings(matrixItems.flatMap((item) => item.referenceRoles));
+  if (activeRoles.length === 0) return "先按文字需求生成，后续可补素材提高稳定性。";
+  const providerRoles = new Set(matrixItems.flatMap((item) => item.providerReferenceRoles));
+  const parts: string[] = [];
+  if (activeRoles.includes("product")) {
+    parts.push(providerRoles.has("product") ? "商品用强参考锁身份" : "缺商品强参考时只能做概念样张");
+  }
+  if (activeRoles.includes("model")) {
+    parts.push(providerRoles.has("model") ? "模特用参考保同一人" : "模特先按文字设定");
+  }
+  if (activeRoles.includes("scene")) {
+    parts.push(providerRoles.has("scene") ? "场景参考负责空间光影" : "场景先按 prompt 发散");
+  }
+  if (activeRoles.includes("style")) parts.push("风格只约束完成度");
+  return parts.length ? parts.join("；") : `${activeRoles.map(getAgentPlanRoleLabel).join("、")}参与规划。`;
+}
+
+function buildAgentCopyStrategySummary(matrixItems: WorkflowPlanPreviewAgentMatrixItem[]): string {
+  const burnInCount = matrixItems.filter((item) => item.copyMode === "burn_in").length;
+  const copyRoleCount = matrixItems.filter((item) => item.referenceRoles.includes("copy")).length;
+  if (burnInCount > 0) {
+    return `${burnInCount} 张会把短文案烧进图，必须检查安全区，不能写到商品包装标签上。`;
+  }
+  if (copyRoleCount > 0) {
+    return "文案作为图层/导出文案保留，后期改字更稳；需要成片带字时可直接说烧进图。";
+  }
+  return "当前没有强文案需求；需要海报或详情页带字时再补短标题和卖点。";
+}
+
+function buildAgentProductionOrderHint({
+  workflowPlanPreview,
+  planGroups,
+}: {
+  workflowPlanPreview: WorkflowPlanPreview | null;
+  planGroups: AgentPlanGroup[];
+}): string {
+  if (!workflowPlanPreview || planGroups.length === 0) return "";
+  const blockedGroups = planGroups.filter((group) => group.status === "blocked");
+  if (blockedGroups.length > 0) {
+    return `先补 ${blockedGroups.slice(0, 2).map((group) => group.title).join("、")} 的关键素材；补完再生成，能少走很多无效重做。`;
+  }
+
+  const seenBaseTitles = new Set<string>();
+  const sortedGroups = [...planGroups]
+    .sort((a, b) => {
+      const priorityDelta = getAgentProductionOrderRank(a) - getAgentProductionOrderRank(b);
+      return priorityDelta !== 0 ? priorityDelta : b.count - a.count;
+    })
+    .filter((group) => {
+      const baseTitle = getAgentProductionOrderBaseTitle(group.title);
+      if (seenBaseTitles.has(baseTitle)) return false;
+      seenBaseTitles.add(baseTitle);
+      return true;
+    });
+  const first = sortedGroups[0]?.title;
+  const second = sortedGroups.slice(1, 3).map((group) => group.title);
+  const last = sortedGroups.find((group) => getAgentProductionOrderRank(group) >= 3)?.title;
+  if (!first) return "";
+
+  return [
+    `建议先确认${first}，它决定整套方向。`,
+    second.length ? `再看${second.join("、")}。` : "",
+    last && last !== first && !second.includes(last) ? `最后挑${last}，不满意再局部重做。` : "最后按问题单张或单组重做。"
+  ].filter(Boolean).join("");
+}
+
+function getAgentProductionOrderRank(group: AgentPlanGroup): number {
+  const priority = getAgentGroupPriorityLabel(group);
+  if (priority === "先补素材") return 0;
+  if (priority === "先做") return 1;
+  if (priority === "验证") return 2;
+  if (priority === "转化") return 3;
+  return 4;
+}
+
+function getAgentProductionOrderBaseTitle(title: string): string {
+  return title.replace(/\s+\d+$/, "").trim() || title;
+}
+
+function buildAgentFollowUpHint({
+  workflowPlanPreview,
+  userBrief,
+  missingInputHints,
+  hasProductReference,
+  matrixItems,
+  planGroups,
+}: {
+  workflowPlanPreview: WorkflowPlanPreview | null;
+  userBrief: string;
+  missingInputHints: string[];
+  hasProductReference: boolean;
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  planGroups: AgentPlanGroup[];
+}): string {
+  if (!workflowPlanPreview) return "";
+  const userBriefText = userBrief.toLowerCase();
+  const userAskedForScene = /(多场景|场景|花店|咖啡|商场|室内|户外|街拍|雪山|家居|办公室|商圈|门店)/.test(userBriefText);
+  const hasSceneProvider = matrixItems.some((item) => item.providerReferenceRoles.includes("scene"));
+  const sceneWeakHint = userAskedForScene && !hasSceneProvider
+    ? "多场景可以先按 prompt 生成，但同场地空间一致性会弱；后续可补场景参考。"
+    : "";
+  const productNeeded = matrixItems.some((item) => item.referenceRoles.includes("product"));
+  if (productNeeded && !hasProductReference) {
+    return sceneWeakHint
+      ? `下一步先补真实商品图，这样商品形状、Logo、材质不会漂。${sceneWeakHint}`
+      : "下一步先补真实商品图，这样商品形状、Logo、材质不会漂。";
+  }
+  if (missingInputHints.length > 0) return `下一步先补：${missingInputHints[0]}`;
+  const hasModelGroup = planGroups.some((group) =>
+    group.providerRoles.includes("model") ||
+    group.promptOnlyRoles.includes("model") ||
+    /模特|真人|人物|上身/.test(group.title)
+  );
+  const hasModelProvider = matrixItems.some((item) => item.providerReferenceRoles.includes("model"));
+  if (hasModelGroup && !hasModelProvider) {
+    return "如果要同一个人稳定出镜，建议先上传或生成模特资产；不补也能先做概念样张。";
+  }
+  const hasSceneGroup = planGroups.some((group) =>
+    group.providerRoles.includes("scene") ||
+    group.promptOnlyRoles.includes("scene") ||
+    /场景|室内|户外|商场|咖啡/.test(group.title)
+  );
+  if (hasSceneGroup && !hasSceneProvider) {
+    return "场景可以先按文字生成；如果要同场地多角度稳定，后面再补场景参考。";
+  }
+  if (sceneWeakHint) return sceneWeakHint;
+  const burnInCount = matrixItems.filter((item) => item.copyMode === "burn_in").length;
+  if (burnInCount > 0) return "生成前最好确认短标题和卖点，避免文字写到商品包装或脸上。";
+  return "计划可以先应用到画布；不满意时直接说“这组少两张”或“加一组商场场景”。";
+}
+
+function buildAgentClarificationHint({
+  workflowPlanPreview,
+  userBrief,
+  hasProductReference,
+  matrixItems,
+  planGroups,
+  criticalGapItems,
+}: {
+  workflowPlanPreview: WorkflowPlanPreview | null;
+  userBrief: string;
+  hasProductReference: boolean;
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  planGroups: AgentPlanGroup[];
+  criticalGapItems: AgentGapHintItem[];
+}): string {
+  if (!workflowPlanPreview) return "";
+  const text = userBrief.toLowerCase();
+  const productNeeded = matrixItems.some((item) => item.referenceRoles.includes("product"));
+  if (productNeeded && !hasProductReference) {
+    return "先问一句：这是要锁真实商品吗？如果是，先补商品图；如果只是概念 mockup，我会按概念样张继续。";
+  }
+
+  const modelNeeded = planGroups.some((group) =>
+    group.providerRoles.includes("model") ||
+    group.promptOnlyRoles.includes("model") ||
+    /模特|真人|人物|上身|穿搭/.test(`${group.title} ${group.summary ?? ""}`)
+  );
+  const hasModelProvider = matrixItems.some((item) => item.providerReferenceRoles.includes("model"));
+  if (modelNeeded && !hasModelProvider) {
+    return "模特资产不影响先规划；我默认先按年轻商业模特概念做，等你上传/生成模特后再锁同一人。";
+  }
+
+  const sceneNeeded =
+    /(多场景|场景|商场|室内|户外|街拍|雪山|家居|咖啡|门店|办公室)/.test(text) ||
+    planGroups.some((group) => /场景|室内|户外|商场|咖啡|街拍|雪山|家居|门店|办公室/.test(group.title));
+  const hasSceneProvider = matrixItems.some((item) => item.providerReferenceRoles.includes("scene"));
+  if (sceneNeeded && !hasSceneProvider) {
+    return "场景我先按文字发散；如果你要同一个场地多角度稳定，再补一张场景参考。";
+  }
+
+  const burnInCount = matrixItems.filter((item) => item.copyMode === "burn_in").length;
+  const hasCopyProviderOrPrompt = matrixItems.some((item) => item.referenceRoles.includes("copy"));
+  if (burnInCount > 0 && !hasCopyProviderOrPrompt) {
+    return "烧字图我默认只写短标题和一个核心卖点，放画面安全区，不改商品包装标签。";
+  }
+
+  if (criticalGapItems.length > 0) {
+    return "我只追问会明显影响结果的缺口；其他风格和细节先按当前项目默认值推进。";
+  }
+
+  return "";
+}
+
+function buildAgentCriticalGapItems({
+  workflowPlanPreview,
+  userBrief,
+  missingInputHints,
+  hasProductReference,
+  matrixItems,
+  planGroups,
+}: {
+  workflowPlanPreview: WorkflowPlanPreview | null;
+  userBrief: string;
+  missingInputHints: string[];
+  hasProductReference: boolean;
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  planGroups: AgentPlanGroup[];
+}): AgentGapHintItem[] {
+  if (!workflowPlanPreview) return [];
+  const text = userBrief.toLowerCase();
+  const items: AgentGapHintItem[] = [];
+  const productNeeded = matrixItems.some((item) => item.referenceRoles.includes("product"));
+  if (productNeeded && !hasProductReference) {
+    items.push({
+      label: "商品",
+      text: "缺商品参考图，无法锁商品身份；可以先规划，但真实项目执行前要补图。",
+      tone: "warn",
+    });
+  }
+
+  const hasModelGroup = planGroups.some((group) =>
+    group.providerRoles.includes("model") ||
+    group.promptOnlyRoles.includes("model") ||
+    /模特|真人|人物|上身|穿搭|model/.test(`${group.title} ${group.summary ?? ""}`.toLowerCase())
+  );
+  const hasModelProvider = matrixItems.some((item) => item.providerReferenceRoles.includes("model"));
+  if (hasModelGroup && !hasModelProvider) {
+    items.push({
+      label: "模特",
+      text: "模特展示缺模特资产；可先生成/上传模特，否则只适合概念样张。",
+      tone: "warn",
+    });
+  }
+
+  const wantsScene = /(多场景|场景|商场|室内|户外|街拍|雪山|家居|咖啡|门店|办公室)/.test(text);
+  const hasSceneGroup = planGroups.some((group) =>
+    group.providerRoles.includes("scene") ||
+    group.promptOnlyRoles.includes("scene") ||
+    /场景|室内|户外|商场|咖啡|街拍|雪山|家居|门店|办公室/.test(`${group.title} ${group.summary ?? ""}`.toLowerCase())
+  );
+  const hasSceneProvider = matrixItems.some((item) => item.providerReferenceRoles.includes("scene"));
+  if ((wantsScene || hasSceneGroup) && !hasSceneProvider) {
+    items.push({
+      label: "场景",
+      text: "可继续用 prompt 生成场景；如果要同场地多角度稳定，建议补场景参考。",
+    });
+  }
+
+  const wantsCopy =
+    /(文案|卖点|参数|标题|海报|详情|烧字|进图|带字|出字)/.test(text) ||
+    matrixItems.some((item) => item.referenceRoles.includes("copy") || item.copyMode === "burn_in");
+  const hasCopyAsset = matrixItems.some((item) => item.referenceRoles.includes("copy"));
+  const hasBurnIn = matrixItems.some((item) => item.copyMode === "burn_in");
+  if (wantsCopy && !hasCopyAsset) {
+    items.push({
+      label: "文案",
+      text: hasBurnIn
+        ? "本轮要烧字，但缺明确卖点/标题；先用保守短文案，后续可单独改字。"
+        : "需要商品卖点/参数/标题时，补一句文案资产或直接在需求里说。",
+    });
+  }
+
+  for (const hint of missingInputHints) {
+    if (items.length >= 4) break;
+    const label = hint.includes("商品")
+      ? "商品"
+      : hint.includes("模特")
+        ? "模特"
+        : hint.includes("场景")
+          ? "场景"
+          : hint.includes("文案")
+            ? "文案"
+            : "素材";
+    if (items.some((item) => item.label === label)) continue;
+    items.push({ label, text: hint, tone: "warn" });
+  }
+
+  return items.slice(0, 4);
+}
+
+function buildAgentEditContextHint(editTarget: AgentImageEditTarget | null): string {
+  if (!editTarget) return "";
+  const metadata = editTarget.metadata ?? {};
+  const providerImages = getOutputPreviewProviderReferenceImages(metadata);
+  const promptOnlyImages = getOutputPreviewPromptOnlyReferenceImages(metadata);
+  const providerRoles = agentUniqueStrings(providerImages.map((image) => getAgentPlanRoleLabel(image.role)));
+  const promptOnlyRoles = agentUniqueStrings(promptOnlyImages.map((image) => getAgentPlanRoleLabel(image.role)));
+  const ratio = getStringValue(metadata.ratio) || getStringValue(metadata.exportSpecRatio);
+  const purposeText = getAgentRevisionPurposeText(metadata, editTarget.title);
+  const contextParts = [
+    `我会把「${editTarget.title}」作为上一版成片参考，只改这张，不改其它图组，也不重写整套计划。`,
+    purposeText ? `图组用途沿用：${purposeText}。` : "",
+    ratio ? `比例继续按 ${ratio}。` : "",
+    providerRoles.length ? `强参考会带回：${providerRoles.join("、")}。` : "没有强参考图时，会优先保留原图主体和构图。",
+    promptOnlyRoles.length ? `文字约束继续继承：${promptOnlyRoles.join("、")}。` : "",
+    editTarget.prompt?.trim() ? "原 prompt 会作为必要约束继承，不从零重写。" : "",
+    getOutputPreviewCopyRenderPolicy(metadata)?.mode === "burn_in"
+      ? "原本烧进图的短文案会继续按安全区处理；要改字可以直接说。"
+      : "",
+  ];
+  return contextParts.filter(Boolean).join("\n");
+}
+
+function buildAgentFocusedGroupHint(group: AgentPlanGroup | null): string {
+  if (!group) return "";
+  const roles = agentUniqueStrings([
+    ...group.providerRoles.map(getAgentPlanRoleLabel),
+    ...group.promptOnlyRoles.map(getAgentPlanRoleLabel),
+  ]);
+  return [
+    `正在调整「${group.title}」，只影响这组 ${group.count} 张；其他图组保持不动，不重写全局计划。`,
+    group.summary ? `这组用途继续按：${group.summary}。` : "",
+    roles.length ? `参考角色继续按 ${roles.join("、")}。` : "没有强参考角色时，会优先沿用本组成片主体和构图。",
+    "可以直接说换场景、改数量、文案烧进图或不要这组。",
+  ].filter(Boolean).join("\n");
+}
+
+function buildAgentResultGroupRevisionDiff(
+  group: AgentPlanGroup,
+  userBrief: string,
+  targetCount: number,
+  submittedCount: number
+): AgentPlanDiff {
+  const otherChanges = [
+    `只调整「${group.title}」`,
+    `修改要求：${truncateRevisionText(userBrief, 120)}`,
+  ];
+  const countChanges = targetCount > 0
+    ? [`本组 ${targetCount} 张，已提交 ${submittedCount} 张`]
+    : [`本组暂无可重做成片`];
+  const copyChanges = group.copyModes.includes("burn_in")
+    ? ["继承原本烧字策略，继续检查文案安全区"]
+    : [];
+  return {
+    summary: `只影响「${group.title}」这一组，其他图组保持不动。`,
+    scopeSummary: `修改范围：只重做「${group.title}」这一组。`,
+    preservedSummary: "未点名的图组、比例和参考图角色保持不变。",
+    nextAction: targetCount > 0
+      ? "下一步先看本组重做结果，再决定是否继续扩大修改范围。"
+      : "下一步可以换一个有成片的图组继续改。",
+    additions: [],
+    removals: [],
+    countChanges,
+    copyChanges,
+    otherChanges,
+  };
+}
+
+function buildAgentImageRevisionMessage(target: AgentImageEditTarget, userBrief: string): string {
+  const metadata = target.metadata ?? {};
+  const providerRoles = agentUniqueStrings(
+    getOutputPreviewProviderReferenceImages(metadata).map((image) => getAgentPlanRoleLabel(image.role))
+  );
+  const promptOnlyRoles = agentUniqueStrings(
+    getOutputPreviewPromptOnlyReferenceImages(metadata).map((image) => getAgentPlanRoleLabel(image.role))
+  );
+  const ratio = getStringValue(metadata.ratio) || getStringValue(metadata.exportSpecRatio);
+  const purposeText = getAgentRevisionPurposeText(metadata, target.title);
+  return [
+    `已提交「${target.title}」单图修改，只影响这张，不重写整套计划。`,
+    purposeText ? `图组用途沿用：${purposeText}。` : "",
+    ratio ? `比例沿用 ${ratio}。` : "",
+    providerRoles.length ? `强参考继续带回：${providerRoles.join("、")}。` : "保留上一版成片主体、构图和商业质感。",
+    promptOnlyRoles.length ? `文字约束继续继承：${promptOnlyRoles.join("、")}。` : "",
+    target.prompt?.trim() ? "原 prompt 已作为必要约束带回。" : "",
+    getOutputPreviewCopyRenderPolicy(metadata)?.mode === "burn_in"
+      ? "原烧字策略继续保留，文案只放安全区。"
+      : "",
+    `修改要求：${formatRevisionTextForSentence(userBrief, 120)}。`,
+  ].filter(Boolean).join("\n");
+}
+
+function buildAgentResultGroupRevisionMessage(
+  group: AgentPlanGroup,
+  userBrief: string,
+  targetCount: number,
+  submittedCount: number,
+  failedCount: number
+): string {
+  const roles = agentUniqueStrings([
+    ...group.providerRoles.map(getAgentPlanRoleLabel),
+    ...group.promptOnlyRoles.map(getAgentPlanRoleLabel),
+  ]);
+  const roleText = roles.length ? `保留参考角色：${roles.join("、")}。` : "保留上一版成片主体和构图。";
+  const ratioText = group.ratios.length ? `比例沿用 ${group.ratios.slice(0, 3).join(" / ")}。` : "";
+  const purposeText = group.summary ? `图组用途继续按：${group.summary}。` : "";
+  const failText = failedCount > 0 ? `有 ${failedCount} 张创建失败，稍后可单张重试。` : "";
+  return [
+    targetCount > 0
+      ? `已只针对「${group.title}」提交 ${submittedCount}/${targetCount} 张修改，其他图组保持不动。`
+      : `「${group.title}」暂无可重做成片，其他图组保持不动。`,
+    purposeText,
+    roleText,
+    ratioText,
+    group.copyModes.includes("burn_in") ? "文案继续按原烧字策略处理，注意安全区。" : "",
+    `修改要求：${formatRevisionTextForSentence(userBrief, 120)}。`,
+    failText,
+  ].filter(Boolean).join("\n");
+}
+
+function formatAgentPlanDiffForConversation(diff: AgentPlanDiff): string {
+  const changes = [
+    ...diff.additions,
+    ...diff.removals,
+    ...diff.countChanges,
+    ...diff.copyChanges,
+    ...diff.otherChanges,
+  ].slice(0, 3);
+  return [
+    diff.summary,
+    diff.scopeSummary,
+    changes.length > 0 ? `这次改了：${changes.join("；")}。` : "",
+    diff.preservedSummary,
+    diff.nextAction,
+  ].filter(Boolean).join("\n");
+}
+
+function buildAgentConversationMessages({
+  historyMessages,
+  composeBrief,
+  lastUserBrief,
+  agentUnderstanding,
+  composeMessage,
+  workflowPlanPreview,
+  editTarget,
+  composingWorkflow,
+  generatingSample,
+  planFallbackReason,
+  planExplanation,
+  productionOrderHint,
+  followUpHint,
+  clarificationHint,
+  criticalGapItems,
+  planDiff,
+  editContextHint,
+  focusedGroupHint,
+  completionSummary,
+}: {
+  historyMessages?: AgentConversationMessage[];
+  composeBrief: string;
+  lastUserBrief: string;
+  agentUnderstanding: string;
+  composeMessage: string;
+  workflowPlanPreview: WorkflowPlanPreview | null;
+  editTarget: AgentImageEditTarget | null;
+  composingWorkflow: boolean;
+  generatingSample: boolean;
+  planFallbackReason?: string;
+  planExplanation?: string;
+  productionOrderHint?: string;
+  followUpHint?: string;
+  clarificationHint?: string;
+  criticalGapItems?: AgentGapHintItem[];
+  planDiff?: AgentPlanDiff | null;
+  editContextHint?: string;
+  focusedGroupHint?: string;
+  completionSummary?: string;
+}): AgentConversationMessage[] {
+  const messages: AgentConversationMessage[] = [...(historyMessages ?? [])];
+  const brief = composeBrief.trim() || lastUserBrief.trim();
+
+  if (brief) {
+    messages.push({
+      id: "user-brief",
+      role: "user",
+      title: editTarget ? "你要改这张图" : workflowPlanPreview ? "你要调整计划" : "你的需求",
+      text: brief,
+    });
+  }
+
+  messages.push({
+    id: "agent-understanding",
+    role: "agent",
+    title: workflowPlanPreview ? "Agent 理解" : editTarget ? "Agent 修改目标" : "Agent 准备",
+    text: workflowPlanPreview
+      ? planFallbackReason
+        ? `我先把需求整理成 ${workflowPlanPreview.estimatedCount} 张基础制作清单。${planFallbackReason}。你可以继续修改数量、图组、比例和文案策略。`
+        : `我已把需求拆成 ${workflowPlanPreview.estimatedCount} 张制作清单。你可以继续说要删哪组、加哪组、文案要不要进图。`
+      : agentUnderstanding,
+  });
+
+  if (planExplanation) {
+    messages.push({
+      id: "agent-plan-explanation",
+      role: "agent",
+      title: "为什么这样规划",
+      text: planExplanation,
+    });
+  }
+
+  if (productionOrderHint) {
+    messages.push({
+      id: "agent-production-order",
+      role: "agent",
+      title: "先做什么",
+      text: productionOrderHint,
+    });
+  }
+
+  if (followUpHint) {
+    messages.push({
+      id: "agent-next-step",
+      role: "agent",
+      title: "下一步",
+      text: followUpHint,
+      tone: followUpHint.includes("缺") || followUpHint.includes("补真实商品图") ? "warn" : "default",
+    });
+  }
+
+  if (clarificationHint) {
+    messages.push({
+      id: "agent-clarification-default",
+      role: "agent",
+      title: "默认推进",
+      text: clarificationHint,
+      tone: clarificationHint.includes("先问一句") || clarificationHint.includes("真实商品") ? "warn" : "default",
+    });
+  }
+
+  if (criticalGapItems?.length) {
+    messages.push({
+      id: "agent-critical-gaps",
+      role: "agent",
+      title: "关键缺口",
+      text: criticalGapItems.slice(0, 3).map((item) => `${item.label}：${item.text}`).join("\n"),
+      tone: criticalGapItems.some((item) => item.tone === "warn") ? "warn" : "default",
+    });
+  }
+
+  if (focusedGroupHint) {
+    messages.push({
+      id: "agent-focused-group",
+      role: "agent",
+      title: "当前修改范围",
+      text: focusedGroupHint,
+      tone: "progress",
+    });
+  }
+
+  if (editContextHint) {
+    messages.push({
+      id: "agent-edit-context",
+      role: "agent",
+      title: "单图修改上下文",
+      text: editContextHint,
+      tone: "progress",
+    });
+  }
+
+  if (planDiff) {
+    messages.push({
+      id: "agent-plan-diff",
+      role: "agent",
+      title: "修改记录",
+      text: formatAgentPlanDiffForConversation(planDiff),
+      tone: "success",
+    });
+  }
+
+  if (composingWorkflow || generatingSample) {
+    messages.push({
+      id: "agent-progress",
+      role: "agent",
+      title: "正在处理",
+      text: generatingSample ? "我正在创建样张任务，结果会回到画布。" : "我正在理解需求并更新制作计划。",
+      tone: "progress",
+    });
+  } else if (composeMessage) {
+    messages.push({
+      id: "agent-message",
+      role: "system",
+      title: "状态",
+      text: composeMessage,
+      tone: workflowPlanPreview ? "success" : "default",
+    });
+  }
+
+  if (completionSummary) {
+    messages.push({
+      id: "agent-completion-summary",
+      role: "agent",
+      title: "生成总结",
+      text: completionSummary,
+      tone: "success",
+    });
+  }
+
+  return dedupeAgentConversationMessages(messages);
+}
+
+function dedupeAgentConversationMessages(messages: AgentConversationMessage[]): AgentConversationMessage[] {
+  const seen = new Set<string>();
+  return messages.filter((message, index) => {
+    const key = `${message.role}:${message.title ?? ""}:${message.text}`;
+    const laterDuplicate = messages
+      .slice(index + 1)
+      .some((next) => `${next.role}:${next.title ?? ""}:${next.text}` === key);
+    if (laterDuplicate || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildAgentProgressSteps({
+  hasComposeBrief,
+  hasPlan,
+  composingWorkflow,
+  generatingSample,
+  activeJobCount,
+  visibleOutputCount,
+}: {
+  hasComposeBrief: boolean;
+  hasPlan: boolean;
+  composingWorkflow: boolean;
+  generatingSample: boolean;
+  activeJobCount: number;
+  visibleOutputCount: number;
+}): AgentProgressStep[] {
+  const isGenerating = generatingSample || activeJobCount > 0;
+  return [
+    {
+      id: "understand",
+      label: "理解",
+      status: hasComposeBrief || hasPlan || visibleOutputCount > 0 ? "done" : composingWorkflow ? "active" : "pending",
+    },
+    {
+      id: "plan",
+      label: "规划",
+      status: hasPlan ? "done" : composingWorkflow ? "active" : "pending",
+    },
+    {
+      id: "references",
+      label: "参考",
+      status: hasPlan ? "done" : composingWorkflow ? "active" : "pending",
+    },
+    {
+      id: "generate",
+      label: "生成",
+      status: isGenerating ? "active" : visibleOutputCount > 0 ? "done" : "pending",
+    },
+    {
+      id: "qa",
+      label: "质检",
+      status: visibleOutputCount > 0 && activeJobCount === 0 ? "done" : "pending",
+    },
+    {
+      id: "review",
+      label: "挑图",
+      status: visibleOutputCount > 0 && activeJobCount === 0 ? "active" : "pending",
+    },
+  ];
+}
+
+function buildAgentCompletionSummary({
+  visibleOutputCount,
+  visibleArtifacts,
+  activeJobCount,
+  hasPlan,
+  planGroups,
+  matrixItems,
+}: {
+  visibleOutputCount: number;
+  visibleArtifacts: PersistedGeneratedArtifact[];
+  activeJobCount: number;
+  hasPlan: boolean;
+  planGroups: AgentPlanGroup[];
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+}): string {
+  if (visibleOutputCount <= 0 || activeJobCount > 0) return "";
+  const failedCount = getAgentArtifactFailureCount(visibleArtifacts);
+  const reviewSummary = formatAgentArtifactReviewSummary(visibleArtifacts);
+  const visualQaSummary = formatAgentVisualQaSummary(visibleArtifacts);
+  const candidateGroups = planGroups
+    .filter((group) => /主图|详情|细节|海报|模特|场景|卖点|封面/.test(group.title))
+    .slice(0, 3)
+    .map((group) => group.title);
+  const usableArtifactLabels = getAgentUsableArtifactLabels(visibleArtifacts);
+  const redoTarget = getAgentSuggestedRedoTarget(visibleArtifacts, candidateGroups);
+  const riskChecks = agentUniqueStrings([
+    ...buildAgentCompletionRiskChecks({ planGroups, matrixItems, visibleArtifacts }),
+    ...getAgentVisualQaRiskLabels(visibleArtifacts),
+  ]);
+  const keepText = usableArtifactLabels.length
+    ? `够用先看：${usableArtifactLabels.join("、")}。`
+    : candidateGroups.length
+    ? `够用先看：${candidateGroups.join("、")}。`
+    : "够用先看：点开图片检查参考图和 prompt。";
+  const riskText = riskChecks.length
+    ? `建议重做前复查：${riskChecks.join("、")}。`
+    : "建议重做前复查：主体稳定、画面能否直接交付。";
+  const redoText = failedCount > 0
+    ? `建议先重做：${redoTarget?.label || `${failedCount} 张失败图`}，先排除失败或不可用。`
+    : redoTarget
+      ? `建议先重做：${redoTarget.label}，${redoTarget.reason}。`
+      : `建议先重做：先挑最影响转化的 ${candidateGroups[0] || "主图/海报"}，只重做问题单张。`;
+  const nextText = buildAgentCompletionNextAction({
+    failedCount,
+    hasPlan,
+    redoTarget,
+    riskChecks,
+  });
+  return [
+    `已完成 ${visibleOutputCount} 张结果。`,
+    reviewSummary ? `挑图状态：${reviewSummary}。` : "",
+    visualQaSummary ? `视觉 QA：${visualQaSummary}。` : "",
+    keepText,
+    riskText,
+    redoText,
+    nextText,
+  ].filter(Boolean).join("\n");
+}
+
+function buildAgentCompletionNextAction({
+  failedCount,
+  hasPlan,
+  redoTarget,
+  riskChecks,
+}: {
+  failedCount: number;
+  hasPlan: boolean;
+  redoTarget: { label: string; reason: string } | null;
+  riskChecks: string[];
+}): string {
+  if (failedCount > 0) {
+    return "下一步：先点失败图重试，稳定后再挑图导出。";
+  }
+  if (riskChecks.includes("文案安全区")) {
+    return "下一步：先点开烧字图检查安全区；不满意就说“这张文案短一点”。";
+  }
+  if (riskChecks.includes("商品一致性风险")) {
+    return "下一步：先补商品参考图，或只重做商品主图。";
+  }
+  if (riskChecks.includes("模特身份和神态")) {
+    return "下一步：先看模特脸、眼神、头和手；不自然就点单张具体改。";
+  }
+  if (redoTarget) {
+    return `下一步：先确认 ${redoTarget.label}，没问题再导出。`;
+  }
+  return hasPlan
+    ? "下一步：有问题点单张说“这张重做”，或点一组说“换一批”。"
+    : "下一步：可以点图让 Agent 改单张。";
+}
+
+function buildAgentCompletionRiskChecks({
+  planGroups,
+  matrixItems,
+  visibleArtifacts,
+}: {
+  planGroups: AgentPlanGroup[];
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  visibleArtifacts: PersistedGeneratedArtifact[];
+}): string[] {
+  const risks: string[] = [];
+  const artifactProviderRoles = getAgentArtifactProviderReferenceRoles(visibleArtifacts);
+  const artifactPromptOnlyRoles = getAgentArtifactPromptOnlyReferenceRoles(visibleArtifacts);
+  const hasProductRole =
+    matrixItems.some((item) => item.referenceRoles.includes("product")) ||
+    artifactProviderRoles.includes("product") ||
+    artifactPromptOnlyRoles.includes("product");
+  const hasProductProvider =
+    matrixItems.some((item) => item.providerReferenceRoles.includes("product")) ||
+    artifactProviderRoles.includes("product");
+  if (hasProductRole) {
+    risks.push(hasProductProvider ? "商品形状/Logo/材质" : "商品一致性风险");
+  }
+  const hasModelGroup = planGroups.some((group) =>
+    group.providerRoles.includes("model") ||
+    group.promptOnlyRoles.includes("model") ||
+    /模特|真人|人物|上身|穿搭/.test(group.title)
+  ) || artifactProviderRoles.includes("model") || artifactPromptOnlyRoles.includes("model");
+  if (hasModelGroup) risks.push("模特身份和神态");
+  const burnInCount =
+    matrixItems.filter((item) => item.copyMode === "burn_in").length +
+    getAgentArtifactBurnInCount(visibleArtifacts);
+  if (burnInCount > 0) risks.push("文案安全区");
+  const hasSceneGroup = planGroups.some((group) =>
+    group.providerRoles.includes("scene") ||
+    group.promptOnlyRoles.includes("scene") ||
+    /场景|室内|户外|商场|咖啡|卧室|办公/.test(group.title)
+  ) || artifactProviderRoles.includes("scene") || artifactPromptOnlyRoles.includes("scene");
+  if (hasSceneGroup) risks.push("空间光影");
+  return agentUniqueStrings(risks).slice(0, 4);
+}
+
+function buildAgentMissingInputHints(
+  missingInputs: WorkflowPlanPreviewAgentMissingInput[],
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[],
+  requiredRoles: string[],
+  assetGroups: WorkflowPlanPreviewAgentAssetGroup[]
+): string[] {
+  const missingById = new Map(missingInputs.map((input) => [input.id, input]));
+  const roleCounts = new Map<string, number>();
+  for (const item of matrixItems) {
+    for (const id of item.missingInputIds ?? []) {
+      const input = missingById.get(id);
+      const label = input?.label || id;
+      roleCounts.set(label, (roleCounts.get(label) ?? 0) + 1);
+    }
+  }
+
+  const hints = missingInputs
+    .filter((input) => input.blocking)
+    .map((input) => {
+      const count = roleCounts.get(input.label) ?? 0;
+      const prefix = count > 0 ? `${count} 张图缺 ${input.label}` : `缺 ${input.label}`;
+      return `${prefix}：${getAgentMissingInputAction(input.role)}`;
+    });
+
+  for (const role of requiredRoles) {
+    const hasProviderAsset = assetGroups.some((group) =>
+      group.role === role && group.available && group.providerUsable
+    );
+    if (hasProviderAsset) continue;
+    hints.push(`缺 ${getAgentPlanRoleLabel(role)}：${getAgentMissingInputAction(role)}`);
+  }
+
+  return hints.length > 0 ? agentUniqueStrings(hints) : [];
+}
+
+function getAgentMissingInputAction(role?: string): string {
+  if (role === "product") return "上传或拖入真实商品图，用来锁商品身份。";
+  if (role === "model") return "上传或生成一个模特资产，用来保持同一人物。";
+  if (role === "scene") return "上传或生成场景参考，用来确定空间和光影。";
+  if (role === "style") return "补一张风格参考，或把风格写进需求。";
+  if (role === "copy") return "补卖点/文案资产，或在需求里说明要写什么。";
+  return "补齐对应素材后再执行。";
+}
+
+function buildAgentQaSummaryItems({
+  visibleOutputCount,
+  visibleArtifacts,
+  activeJobCount,
+  planGroups,
+  matrixItems,
+}: {
+  visibleOutputCount: number;
+  visibleArtifacts: PersistedGeneratedArtifact[];
+  activeJobCount: number;
+  planGroups: AgentPlanGroup[];
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+}): AgentQaSummaryItem[] {
+  if (visibleOutputCount <= 0 || activeJobCount > 0) return [];
+
+  const artifactProviderRoles = getAgentArtifactProviderReferenceRoles(visibleArtifacts);
+  const artifactPromptOnlyRoles = getAgentArtifactPromptOnlyReferenceRoles(visibleArtifacts);
+  const hasProductProvider =
+    matrixItems.some((item) => item.providerReferenceRoles.includes("product")) ||
+    artifactProviderRoles.includes("product");
+  const hasModelProvider =
+    matrixItems.some((item) => item.providerReferenceRoles.includes("model")) ||
+    artifactProviderRoles.includes("model");
+  const hasSceneProvider =
+    matrixItems.some((item) => item.providerReferenceRoles.includes("scene")) ||
+    artifactProviderRoles.includes("scene");
+  const burnInCount =
+    matrixItems.filter((item) => item.copyMode === "burn_in").length +
+    getAgentArtifactBurnInCount(visibleArtifacts);
+  const failedCount = getAgentArtifactFailureCount(visibleArtifacts);
+  const modelGroup = planGroups.find((group) => group.providerRoles.includes("model") || group.promptOnlyRoles.includes("model"));
+  const hasPromptOnlyModel =
+    matrixItems.some((item) => item.referenceRoles.includes("model") && !item.providerReferenceRoles.includes("model")) ||
+    artifactPromptOnlyRoles.includes("model");
+  const visualQaItems = getAgentVisualQaSummaryItems(visibleArtifacts);
+
+  return [
+    ...visualQaItems,
+    {
+      label: "商品",
+      tone: hasProductProvider ? "success" : "warn",
+      text: hasProductProvider
+        ? "已检测到商品强参考；重点看多角度图有没有改形状、Logo、材质和五金。"
+        : "未检测到商品强参考；如果是真实商品项目，建议先补商品图再重跑。"
+    },
+    {
+      label: "模特",
+      tone: hasModelProvider ? "success" : "default",
+      text: hasModelProvider
+        ? "已检测到模特参考；如果神态太死，点选对应图说具体眼神、头部和手部动作。"
+        : modelGroup || hasPromptOnlyModel ? "模特更偏文字约束；适合概念图，不适合严格同一人物。" : "本轮没有强模特约束。"
+    },
+    {
+      label: "文案",
+      tone: burnInCount > 0 ? "warn" : "default",
+      text: burnInCount > 0
+        ? `${burnInCount} 张计划烧字；检查文案在画面安全区，不要写到商品包装标签上。`
+        : "当前文案默认不烧进图或作为图层；需要成片带字时直接说“这组文案烧进图”。"
+    },
+    {
+      label: "光影",
+      tone: hasSceneProvider ? "success" : "default",
+      text: hasSceneProvider
+        ? "已使用场景参考；重点看人物脸、手、商品和地面的阴影是否来自同一光源。"
+        : "没有强场景参考时，空间和光影更依赖 prompt，可点图单张修。"
+    },
+    {
+      label: "重做",
+      tone: failedCount > 0 ? "warn" : "default",
+      text: failedCount > 0
+        ? `有 ${failedCount} 张失败或不可用，先点对应图重试；如果只是审美不满意，再点图说具体要改哪里。`
+        : "如果只是一张不满意，点图后说“这张重做”；如果一组重复，点该组说“换一批姿势/场景”。"
+    },
+  ];
+}
+
+function formatAgentVisualQaSummary(artifacts: PersistedGeneratedArtifact[]): string {
+  if (artifacts.length === 0) return "";
+  const counts = new Map<ArtifactVisualQaStatus, number>();
+  for (const artifact of artifacts) {
+    const status = getArtifactVisualQaSummary(artifact).status;
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return (["fail", "warn", "pending", "pass"] as const)
+    .flatMap((status) => {
+      const count = counts.get(status) ?? 0;
+      return count > 0 ? [`${getArtifactVisualQaStatusLabel(status)} ${count}`] : [];
+    })
+    .join(" / ");
+}
+
+function getAgentVisualQaRiskLabels(artifacts: PersistedGeneratedArtifact[]): string[] {
+  const labels: string[] = [];
+  for (const artifact of artifacts) {
+    const qa = getArtifactVisualQaSummary(artifact);
+    if (qa.status !== "fail" && qa.status !== "warn") continue;
+    for (const issue of qa.issues) {
+      if (issue.status !== "fail" && issue.status !== "warn") continue;
+      labels.push(issue.label);
+    }
+  }
+  return agentUniqueStrings(labels).slice(0, 4);
+}
+
+function getAgentVisualQaSummaryItems(artifacts: PersistedGeneratedArtifact[]): AgentQaSummaryItem[] {
+  const issueCounts = new Map<string, { label: string; fail: number; warn: number }>();
+  for (const artifact of artifacts) {
+    const qa = getArtifactVisualQaSummary(artifact);
+    for (const issue of qa.issues) {
+      if (issue.status !== "fail" && issue.status !== "warn") continue;
+      const entry = issueCounts.get(issue.dimension) ?? { label: issue.label, fail: 0, warn: 0 };
+      if (issue.status === "fail") entry.fail += 1;
+      if (issue.status === "warn") entry.warn += 1;
+      issueCounts.set(issue.dimension, entry);
+    }
+  }
+
+  return Array.from(issueCounts.values())
+    .slice(0, 4)
+    .map((entry) => {
+      const countText = [
+        entry.fail > 0 ? `${entry.fail} 张失败` : "",
+        entry.warn > 0 ? `${entry.warn} 张风险` : "",
+      ].filter(Boolean).join("，");
+      return {
+        label: entry.label,
+        tone: entry.fail > 0 ? "warn" : "default",
+        text: `${countText || "有风险"}；可以点对应图“让 Agent 修改这张图”，或在分组上说“只重做这一组”。`,
+      };
+    });
+}
+
+function getAgentArtifactVisualQaRiskText(artifact: PersistedGeneratedArtifact): string {
+  const qa = getArtifactVisualQaSummary(artifact);
+  const issue = qa.issues.find((item) => item.status === "fail") ??
+    qa.issues.find((item) => item.status === "warn");
+  return issue ? `${issue.label}：${issue.summary}` : qa.label;
+}
+
+function getAgentArtifactProviderReferenceRoles(artifacts: PersistedGeneratedArtifact[]): string[] {
+  const roles: string[] = [];
+  for (const artifact of artifacts) {
+    const metadata = artifact.metadata ?? {};
+    roles.push(...getOutputPreviewProviderReferenceImages(metadata).map((image) => image.role));
+    roles.push(...getStringArray(getRecordValue(metadata.assetInvocationPlan).providerReferenceRoles));
+    roles.push(
+      ...getOutputPreviewAssetInvocationDecisions(metadata)
+        .filter((decision) => decision.providerInput)
+        .map((decision) => decision.role)
+    );
+  }
+  return agentUniqueStrings(roles);
+}
+
+function getAgentArtifactPromptOnlyReferenceRoles(artifacts: PersistedGeneratedArtifact[]): string[] {
+  const roles: string[] = [];
+  for (const artifact of artifacts) {
+    const metadata = artifact.metadata ?? {};
+    roles.push(...getOutputPreviewPromptOnlyReferenceImages(metadata).map((image) => image.role));
+    roles.push(...getStringArray(getRecordValue(metadata.assetInvocationPlan).promptOnlyRoles));
+    roles.push(
+      ...getOutputPreviewAssetInvocationDecisions(metadata)
+        .filter((decision) => !decision.providerInput)
+        .map((decision) => decision.role)
+    );
+  }
+  return agentUniqueStrings(roles);
+}
+
+function getAgentArtifactBurnInCount(artifacts: PersistedGeneratedArtifact[]): number {
+  return artifacts.filter((artifact) =>
+    getOutputPreviewCopyRenderPolicy(artifact.metadata ?? {})?.mode === "burn_in"
+  ).length;
+}
+
+function getAgentArtifactFailureCount(artifacts: PersistedGeneratedArtifact[]): number {
+  return artifacts.filter((artifact) => {
+    const status = artifact.status.toLowerCase();
+    return status === "failed" || status === "error" || status === "cancelled" || Boolean(artifact.metadata?.error);
+  }).length;
+}
+
+function getAgentUsableArtifactLabels(artifacts: PersistedGeneratedArtifact[]): string[] {
+  const approved = artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "approved");
+  const candidates = approved.length > 0
+    ? approved
+    : artifacts.filter((artifact) => {
+        const reviewStatus = getArtifactReviewStatus(artifact);
+        return reviewStatus === "pending" && !isAgentArtifactFailed(artifact);
+      });
+  return candidates
+    .slice(0, 3)
+    .map((artifact, index) => formatAgentArtifactPointer(artifact, index));
+}
+
+function getAgentSuggestedRedoTarget(
+  artifacts: PersistedGeneratedArtifact[],
+  candidateGroups: string[]
+): { label: string; reason: string; artifactId?: string; jobId?: string; groupTitle?: string } | null {
+  const indexedArtifacts = artifacts.map((artifact, index) => ({ artifact, index }));
+  const manuallyMarked = indexedArtifacts.find(({ artifact }) => getArtifactReviewStatus(artifact) === "needs_redo");
+  if (manuallyMarked) {
+    return {
+      label: formatAgentArtifactPointer(manuallyMarked.artifact, manuallyMarked.index),
+      reason: "你已经标记为建议重做",
+      artifactId: manuallyMarked.artifact.id,
+      jobId: manuallyMarked.artifact.jobId,
+    };
+  }
+
+  const failed = indexedArtifacts.find(({ artifact }) => isAgentArtifactFailed(artifact));
+  if (failed) {
+    return {
+      label: formatAgentArtifactPointer(failed.artifact, failed.index),
+      reason: "先排除失败或不可用",
+      artifactId: failed.artifact.id,
+      jobId: failed.artifact.jobId,
+    };
+  }
+
+  const visualQaRisk = indexedArtifacts.find(({ artifact }) => {
+    const qa = getArtifactVisualQaSummary(artifact);
+    return getArtifactReviewStatus(artifact) === "pending" && (qa.status === "fail" || qa.status === "warn");
+  });
+  if (visualQaRisk) {
+    return {
+      label: formatAgentArtifactPointer(visualQaRisk.artifact, visualQaRisk.index),
+      reason: getAgentArtifactVisualQaRiskText(visualQaRisk.artifact),
+      artifactId: visualQaRisk.artifact.id,
+      jobId: visualQaRisk.artifact.jobId,
+    };
+  }
+
+  const burnInPoster = indexedArtifacts.find(({ artifact }) =>
+    getArtifactReviewStatus(artifact) === "pending" &&
+    getOutputPreviewCopyRenderPolicy(artifact.metadata ?? {})?.mode === "burn_in" &&
+    /海报|卖点|封面|文案|poster|banner|cover/i.test(getAgentArtifactSearchText(artifact))
+  );
+  if (burnInPoster) {
+    return {
+      label: formatAgentArtifactPointer(burnInPoster.artifact, burnInPoster.index),
+      reason: "先检查烧字位置和文案安全区",
+      artifactId: burnInPoster.artifact.id,
+      jobId: burnInPoster.artifact.jobId,
+    };
+  }
+
+  const commerceLead = indexedArtifacts.find(({ artifact }) =>
+    getArtifactReviewStatus(artifact) === "pending" &&
+    /主图|海报|卖点|详情|封面|hero|poster|feature|detail/i.test(getAgentArtifactSearchText(artifact))
+  );
+  if (commerceLead) {
+    return {
+      label: formatAgentArtifactPointer(commerceLead.artifact, commerceLead.index),
+      reason: "这张最影响首屏转化",
+      artifactId: commerceLead.artifact.id,
+      jobId: commerceLead.artifact.jobId,
+    };
+  }
+
+  if (candidateGroups[0]) {
+    return {
+      label: candidateGroups[0],
+      reason: "这是最靠前的关键图组",
+      groupTitle: candidateGroups[0],
+    };
+  }
+
+  return null;
+}
+
+function buildAgentExecutableReviewSuggestions({
+  visibleArtifacts,
+  planGroups,
+  matrixItems,
+  activeJobCount,
+}: {
+  visibleArtifacts: PersistedGeneratedArtifact[];
+  planGroups: AgentPlanGroup[];
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[];
+  activeJobCount: number;
+}): AgentExecutableReviewSuggestion[] {
+  if (activeJobCount > 0 || visibleArtifacts.length === 0) return [];
+
+  const suggestions: AgentExecutableReviewSuggestion[] = [];
+  const seen = new Set<string>();
+  const indexedArtifacts = visibleArtifacts.map((artifact, index) => ({ artifact, index }));
+  const add = (suggestion: AgentExecutableReviewSuggestion | null | undefined) => {
+    if (!suggestion || seen.has(suggestion.id)) return;
+    seen.add(suggestion.id);
+    suggestions.push(suggestion);
+  };
+  const buildArtifactSuggestion = (
+    artifact: PersistedGeneratedArtifact,
+    index: number,
+    kind: string,
+    titlePrefix: string,
+    body: string,
+    actions: AgentReviewSuggestionAction[],
+    tone: AgentExecutableReviewSuggestion["tone"] = "default",
+    editBrief?: string
+  ): AgentExecutableReviewSuggestion => ({
+    id: `${kind}:${artifact.id}`,
+    title: `${titlePrefix}：${formatAgentArtifactPointer(artifact, index)}`,
+    body,
+    tone,
+    artifactId: artifact.id,
+    jobId: artifact.jobId,
+    editBrief,
+    actions,
+  });
+
+  const manuallyMarked = indexedArtifacts.find(({ artifact }) => getArtifactReviewStatus(artifact) === "needs_redo");
+  if (manuallyMarked) {
+    add(buildArtifactSuggestion(
+      manuallyMarked.artifact,
+      manuallyMarked.index,
+      "marked-redo",
+      "你已标记重做",
+      "按原参考图、比例和图组用途重做这张；其他已保留图片不受影响。",
+      ["redo", "edit", "reject", "approve"],
+      "warn"
+    ));
+  }
+
+  const failed = indexedArtifacts.find(({ artifact }) => isAgentArtifactFailed(artifact));
+  if (failed) {
+    add(buildArtifactSuggestion(
+      failed.artifact,
+      failed.index,
+      "failed",
+      "先处理失败图",
+      "这张失败或不可用，建议先按原上下文重试，避免后面挑图时混在一起。",
+      ["redo", "reject"],
+      "warn"
+    ));
+  }
+
+  const visualQaRisk = indexedArtifacts.find(({ artifact }) => {
+    const qa = getArtifactVisualQaSummary(artifact);
+    return getArtifactReviewStatus(artifact) === "pending" && (qa.status === "fail" || qa.status === "warn");
+  });
+  if (visualQaRisk) {
+    const riskText = getAgentArtifactVisualQaRiskText(visualQaRisk.artifact);
+    add(buildArtifactSuggestion(
+      visualQaRisk.artifact,
+      visualQaRisk.index,
+      "visual-qa",
+      "视觉 QA 风险",
+      `${riskText}。建议先让 Agent 只修这张，或标记为重做。`,
+      ["edit", "mark_needs_redo", "approve"],
+      "warn",
+      `只修改这张图的 QA 风险：${riskText}。保留原商品、模特、场景、比例和图组用途。`
+    ));
+  }
+
+  const burnInPoster = indexedArtifacts.find(({ artifact }) =>
+    getArtifactReviewStatus(artifact) === "pending" &&
+    getOutputPreviewCopyRenderPolicy(artifact.metadata ?? {})?.mode === "burn_in" &&
+    /海报|卖点|封面|文案|poster|banner|cover/i.test(getAgentArtifactSearchText(artifact))
+  );
+  if (burnInPoster) {
+    add(buildArtifactSuggestion(
+      burnInPoster.artifact,
+      burnInPoster.index,
+      "copy-risk",
+      "检查烧字图",
+      "这张含画面文字，优先检查文案是否在安全区，不要改到商品包装标签。",
+      ["copy", "mark_needs_redo", "approve"],
+      "warn"
+    ));
+  }
+
+  const commerceLead = indexedArtifacts.find(({ artifact }) =>
+    getArtifactReviewStatus(artifact) === "pending" &&
+    /主图|海报|卖点|详情|封面|hero|poster|feature|detail/i.test(getAgentArtifactSearchText(artifact))
+  );
+  if (commerceLead) {
+    add(buildArtifactSuggestion(
+      commerceLead.artifact,
+      commerceLead.index,
+      "commerce-lead",
+      "优先挑关键图",
+      "这张更影响首屏或转化，建议先点开看商品一致性、构图和文案。",
+      ["edit", "approve", "reject"]
+    ));
+  }
+
+  add(buildAgentExecutableGroupSuggestion(visibleArtifacts, planGroups, matrixItems));
+
+  return suggestions.slice(0, 4);
+}
+
+function buildAgentExecutableGroupSuggestion(
+  artifacts: PersistedGeneratedArtifact[],
+  planGroups: AgentPlanGroup[],
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[]
+): AgentExecutableReviewSuggestion | null {
+  const explicitGroup = planGroups.find((group) => (group.artifactIds?.length ?? 0) > 1);
+  if (explicitGroup) {
+    return {
+      id: `group:${explicitGroup.title}`,
+      title: `调整「${explicitGroup.title}」这组`,
+      body: `这组有 ${explicitGroup.artifactIds?.length ?? explicitGroup.count} 张。可以只重做这组，或让 Agent 换姿势、换场景、调整烧字策略。`,
+      groupTitle: explicitGroup.title,
+      artifactIds: explicitGroup.artifactIds,
+      editBrief: `调整「${explicitGroup.title}」：只改这一组，其他已保留图片不变。`,
+      actions: ["group_edit", "group_redo"],
+    };
+  }
+
+  const byGroup = new Map<string, PersistedGeneratedArtifact[]>();
+  for (const artifact of artifacts) {
+    const group = getAgentArtifactResultGroupLabel(artifact);
+    byGroup.set(group, [...(byGroup.get(group) ?? []), artifact]);
+  }
+  const candidate = Array.from(byGroup.entries())
+    .filter(([, items]) => items.length > 1)
+    .sort((a, b) => getAgentResultGroupSuggestionRank(a[0], a[1], matrixItems) - getAgentResultGroupSuggestionRank(b[0], b[1], matrixItems))[0];
+  if (!candidate) return null;
+
+  const [groupTitle, groupArtifacts] = candidate;
+  const hasRisk = groupArtifacts.some((artifact) => isArtifactVisualQaRisk(artifact) || getArtifactReviewStatus(artifact) === "needs_redo");
+  return {
+    id: `group:${groupTitle}:${groupArtifacts.map((artifact) => artifact.id).join("-")}`,
+    title: `检查「${groupTitle}」这一组`,
+    body: hasRisk
+      ? `这组里有图片被标记为风险或建议重做。可以只调整这组，不影响其他图。`
+      : `这组有 ${groupArtifacts.length} 张，适合批量换动作、换场景或统一文案策略。`,
+    tone: hasRisk ? "warn" : "default",
+    groupTitle,
+    artifactIds: groupArtifacts.map((artifact) => artifact.id),
+    editBrief: `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`,
+    actions: ["group_edit", "group_redo"],
+  };
+}
+
+function getAgentArtifactResultGroupLabel(artifact: PersistedGeneratedArtifact): string {
+  const text = getAgentArtifactSearchText(artifact).toLowerCase();
+  if (/main|hero|主图|主视觉/.test(text)) return "主图";
+  if (/poster|campaign|海报|封面/.test(text)) return "海报";
+  if (/material|macro|texture|材质|细节|微距|特写/.test(text)) return "细节图";
+  if (/detail|详情页|详情图|长图/.test(text)) return "详情图";
+  if (/model|wear|look|真人|模特|上身|佩戴/.test(text)) return "模特图";
+  if (/scene|lifestyle|street|cafe|room|场景|街拍|生活/.test(text)) return "场景图";
+  if (/feature|selling|proof|卖点|证据/.test(text)) return "卖点图";
+  if (/copy|text|info|文案|信息/.test(text)) return "文案图";
+  return "成片";
+}
+
+function getAgentResultGroupSuggestionRank(
+  groupTitle: string,
+  artifacts: PersistedGeneratedArtifact[],
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[]
+): number {
+  if (artifacts.some((artifact) => isArtifactVisualQaRisk(artifact) || getArtifactReviewStatus(artifact) === "needs_redo")) return 0;
+  if (/主图|海报|卖点/.test(groupTitle)) return 1;
+  if (/模特|场景/.test(groupTitle)) return 2;
+  if (matrixItems.some((item) => item.title.includes(groupTitle))) return 3;
+  return 4;
+}
+
+function formatAgentArtifactReviewSummary(artifacts: PersistedGeneratedArtifact[]): string {
+  if (artifacts.length === 0) return "";
+  const counts = new Map<ArtifactReviewStatus, number>();
+  for (const artifact of artifacts) {
+    const status = getArtifactReviewStatus(artifact);
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return (["approved", "pending", "needs_redo", "rejected", "failed"] as const)
+    .flatMap((status) => {
+      const count = counts.get(status) ?? 0;
+      return count > 0 ? [`${getArtifactReviewStatusLabel(status)} ${count}`] : [];
+    })
+    .join(" / ");
+}
+
+function isAgentArtifactFailed(artifact: PersistedGeneratedArtifact): boolean {
+  const status = artifact.status.toLowerCase();
+  return status === "failed" || status === "error" || status === "cancelled" || Boolean(artifact.metadata?.error);
+}
+
+function formatAgentArtifactPointer(artifact: PersistedGeneratedArtifact, index: number): string {
+  return `第 ${index + 1} 张「${truncateRevisionText(artifact.title || "未命名成片", 18)}」`;
+}
+
+function getAgentArtifactSearchText(artifact: PersistedGeneratedArtifact): string {
+  const metadata = artifact.metadata ?? {};
+  return [
+    artifact.title,
+    artifact.type,
+    getStringValue(metadata.planItemTitle),
+    getStringValue(metadata.batchJobTitle),
+    getStringValue(metadata.outputSlotId),
+    getStringValue(metadata.exportSpecId),
+  ].filter(Boolean).join(" ");
+}
+
+function agentUniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function buildProjectAwareAgentBrief({
+  projectStarterPrompt,
+  userBrief,
+}: {
+  projectStarterPrompt?: string;
+  userBrief: string;
+}): string {
+  const starter = (projectStarterPrompt ?? "").trim();
+  const brief = userBrief.trim();
+  if (!starter) return brief;
+  if (!brief) return starter;
+  if (brief.includes(starter)) return brief;
+  return [`项目模板意图：${starter}`, `用户本次需求：${brief}`].join("\n\n");
+}
+
+function buildAgentPlanRevisionBrief(
+  preview: WorkflowPlanPreview,
+  userBrief: string
+): string {
+  const cleanUserBrief = userBrief.trim();
+  const itemSummary = preview.items
+    .slice(0, 8)
+    .map((item, index) => `${index + 1}. ${item.title}，${item.ratio || "自适应比例"}，${item.purpose}`)
+    .join("\n");
+  const agentMatrixSummary = preview.agentPlan?.generationMatrix
+    ?.slice(0, 8)
+    .map((item, index) => {
+      const references = item.referenceRoles.length
+        ? item.referenceRoles.map(getAgentPlanRoleLabel).join("、")
+        : "无明确参考";
+      return `${index + 1}. ${item.title}，${item.ratio || "自适应比例"}，参考：${references}，文案：${getCopyModeLabel(item.copyMode)}`;
+    })
+    .join("\n");
+
+  return [
+    "请基于当前已生成的制作计划进行修改，而不是从零理解为无上下文的新项目。",
+    `当前计划：${preview.title}，预计 ${preview.estimatedCount} 张图。`,
+    preview.summary ? `当前计划摘要：${preview.summary}` : "",
+    agentMatrixSummary ? `当前执行清单：\n${agentMatrixSummary}` : itemSummary ? `当前图组：\n${itemSummary}` : "",
+    `用户本次修改要求：${cleanUserBrief}`,
+    "请输出一版新的商业图组计划：保留用户没有否定的资产、参考图、商品身份和项目方向；只调整用户明确提出要改的数量、用途、比例、场景、文案是否进图或质量风格。",
+  ].filter(Boolean).join("\n\n");
+}
+
+function inferAgentCopyRenderMode(
+  brief: string,
+  explicitBurnInRequested: boolean
+): "layout_layer" | "burn_in" | "metadata_only" {
+  const text = brief.toLowerCase();
+  if (
+    /(文案|文字).{0,8}(不|别|不要|无需|不需要).{0,8}(进图|入图|烧字|烧进|渲染|写进|出字|放进图)/.test(text) ||
+    /(不|别|不要|无需|不需要).{0,8}(烧字|烧进|把字放进图|把文案放进图|把文字放进图|直接出字|直接生成文字|出字|进图)/.test(text)
+  ) {
+    return "layout_layer";
+  }
+  if (explicitBurnInRequested) return "burn_in";
+  if (
+    [
+      "烧进",
+      "烧字",
+      "带字",
+      "带文案",
+      "短文案",
+      "文案进图",
+      "直接出字",
+      "直接生成文字",
+      "把字放进图",
+      "图中文字",
+      "画面文字",
+      "封面标题",
+      "海报标题",
+      "短标题",
+      "in-image",
+      "burn in",
+      "burn-in",
+      "render text",
+    ].some((term) => text.includes(term))
+  ) {
+    return "burn_in";
+  }
+  return "layout_layer";
+}
+
+function getCompositionModeLabel(mode: string): string {
+  const labels: Record<string, string> = {
+    single_product: "单商品",
+    single_product_multi_scene: "单商品多场景",
+    single_model_multi_product: "单模特多商品",
+    multi_product_separate: "多商品拆分",
+    multi_product_bundle: "多商品组合",
+    multi_scene_variation: "多场景发散",
+    multi_model_variation: "多模特发散",
+    custom_matrix: "自定义矩阵",
+    product_only: "商品图",
+    product_model: "商品+模特",
+    product_scene: "商品+场景",
+    product_model_scene: "商品+模特+场景",
+    style_campaign: "风格组图",
+    copy_layout: "文案图层",
+    text_only: "纯文本规划",
+  };
+  return labels[mode] ?? mode;
 }
 
 function InspectorPanel({
@@ -7109,6 +11687,7 @@ function InspectorPanel({
   const [projectFormMessage, setProjectFormMessage] = useState("");
   const [activeProductionTab, setActiveProductionTab] = useState<ProductionPanelTab>("plan");
   const [showAdvancedControls, setShowAdvancedControls] = useState(false);
+  const [showDrawerAdvancedTools, setShowDrawerAdvancedTools] = useState(false);
   const [activeDrawerTool, setActiveDrawerTool] = useState<DrawerToolId | null>(null);
   const activeDrawerToolConfig = drawerToolOptions.find((tool) => tool.id === activeDrawerTool);
   const recentJobs = jobs.slice(0, 4);
@@ -7243,7 +11822,10 @@ function InspectorPanel({
     if (!showAdvancedControls && activeDrawerTool) {
       setActiveDrawerTool(null);
     }
-  }, [activeDrawerTool, showAdvancedControls]);
+    if (!showAdvancedControls && showDrawerAdvancedTools) {
+      setShowDrawerAdvancedTools(false);
+    }
+  }, [activeDrawerTool, showAdvancedControls, showDrawerAdvancedTools]);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -7790,7 +12372,7 @@ function InspectorPanel({
                         </p>
                       </div>
                       <span className="shrink-0 rounded bg-warm-paper px-1.5 py-0.5 text-[10px] text-warm-muted">
-                        {selectedIsGenerationFrame ? "生成框" : selectedNode.data.kind === "asset" ? "资产" : "节点"}
+                        {selectedIsGenerationFrame ? "任务" : selectedNode.data.kind === "asset" ? "资产" : "节点"}
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1">
@@ -7807,7 +12389,7 @@ function InspectorPanel({
                 </div>
                 {selectedIsGenerationFrame ? (
                   <div className="mt-3 rounded-md border border-warm-line/50 bg-warm-paper px-3 py-2 text-xs leading-5 text-warm-muted">
-                    生成框的资产、需求和图组结果都在画布里直接处理。
+                    这是后台 Agent 任务；素材和需求从右上角进入，结果会回到画布图片墙。
                   </div>
                 ) : selectedReferenceContext ? (
                   <ReferenceContextMiniPanel context={selectedReferenceContext} />
@@ -7815,7 +12397,7 @@ function InspectorPanel({
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-warm-line bg-warm-bg px-3 py-4 text-xs leading-5 text-warm-muted">
-                在画布右键新建生成框，或把商品节点连到空白处创建图组。
+                上传或拖入素材后，在右上角告诉 Agent 你要做什么。
               </div>
             )}
 
@@ -7862,7 +12444,7 @@ function InspectorPanel({
                 <p className="mt-1 text-xs leading-snug text-warm-muted">
                   {activeDrawerToolConfig
                     ? activeDrawerToolConfig.description
-                    : "按需打开后台能力，不打断画布里的生成框。"}
+                    : "按需打开后台能力，不打断画布结果。"}
                 </p>
               </div>
               {activeDrawerTool ? (
@@ -7891,30 +12473,71 @@ function InspectorPanel({
                 {activeDrawerToolConfig?.label}
               </div>
             ) : (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {drawerToolOptions.map((tool) => {
-                  const ToolIcon = tool.icon;
-                  return (
-                    <button
-                      key={tool.id}
-                      type="button"
-                      onClick={() => setActiveDrawerTool(tool.id)}
-                      className="min-w-0 rounded-lg border border-warm-line/50 bg-warm-bg p-2.5 text-left transition hover:border-warm-primary/35 hover:bg-warm-soft/45"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-warm-primary-soft text-warm-primary">
-                          <ToolIcon className="h-3.5 w-3.5" />
-                        </span>
-                        <span className="min-w-0 truncate text-xs font-medium text-warm-ink">
-                          {tool.label}
-                        </span>
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-warm-muted">
-                        {tool.description}
-                      </p>
-                    </button>
-                  );
-                })}
+              <div className="mt-3 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {drawerPrimaryToolOptions.map((tool) => {
+                    const ToolIcon = tool.icon;
+                    return (
+                      <button
+                        key={tool.id}
+                        type="button"
+                        onClick={() => setActiveDrawerTool(tool.id)}
+                        className="min-w-0 rounded-lg border border-warm-line/50 bg-warm-bg p-2.5 text-left transition hover:border-warm-primary/35 hover:bg-warm-soft/45"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-warm-primary-soft text-warm-primary">
+                            <ToolIcon className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="min-w-0 truncate text-xs font-medium text-warm-ink">
+                            {tool.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-warm-muted">
+                          {tool.description}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowDrawerAdvancedTools((value) => !value)}
+                  className="flex w-full items-center justify-between rounded-md border border-warm-line/45 bg-warm-bg/70 px-2.5 py-2 text-left text-xs font-medium text-warm-muted transition hover:border-warm-primary/35 hover:text-warm-primary"
+                >
+                  <span>高级工具</span>
+                  <ChevronRight
+                    className={cn("h-3.5 w-3.5 transition", showDrawerAdvancedTools && "rotate-90")}
+                  />
+                </button>
+
+                {showDrawerAdvancedTools && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {drawerAdvancedToolOptions.map((tool) => {
+                      const ToolIcon = tool.icon;
+                      return (
+                        <button
+                          key={tool.id}
+                          type="button"
+                          onClick={() => setActiveDrawerTool(tool.id)}
+                          className="min-w-0 rounded-lg border border-warm-line/50 bg-warm-bg p-2.5 text-left transition hover:border-warm-primary/35 hover:bg-warm-soft/45"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-warm-soft text-warm-muted">
+                              <ToolIcon className="h-3.5 w-3.5" />
+                            </span>
+                            <span className="min-w-0 truncate text-xs font-medium text-warm-ink">
+                              {tool.label}
+                            </span>
+                          </div>
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-warm-muted">
+                            {tool.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -8982,14 +13605,14 @@ function InspectorPanel({
                           if (item.job) onRetryImageJob(item.job);
                         }}
                         className="mt-2 inline-flex items-center gap-1 rounded border border-warm-line/60 bg-warm-bg px-2 py-1 text-[11px] font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-50"
-                        title="带参考图重试失败图片"
+                        title="带参考图重做当前图片"
                       >
                         {runningJobId === item.job.id ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
                           <RotateCcw className="h-3 w-3" />
                         )}
-                        带参考图重试
+                        带参考图重做
                       </button>
                     )}
                   </div>
@@ -9155,7 +13778,7 @@ function InspectorPanel({
                         type="button"
                         disabled={runningJobId === job.id}
                         onClick={() => onRetryImageJob(job)}
-                        title="带参考图重试失败图片"
+                        title="带参考图重做当前图片"
                         className="rounded bg-warm-paper px-1.5 py-0.5 text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink disabled:opacity-50"
                       >
                         {runningJobId === job.id ? (
@@ -9432,6 +14055,33 @@ function getConnectionPointer(event: MouseEvent | TouchEvent): { x: number; y: n
   return { x: event.clientX, y: event.clientY };
 }
 
+function readLastCanvasWorkflowId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage?.getItem?.(LAST_CANVAS_WORKFLOW_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLastCanvasWorkflowId(workflowId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage?.setItem?.(LAST_CANVAS_WORKFLOW_STORAGE_KEY, workflowId);
+  } catch {
+    // Some embedded browser contexts disable storage; restore=1 still works without this cache.
+  }
+}
+
+function clearLastCanvasWorkflowId(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage?.removeItem?.(LAST_CANVAS_WORKFLOW_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors in embedded browser contexts.
+  }
+}
+
 function duplicateCanvasNode(
   node: CanvasWorkbenchNode,
   index: number
@@ -9451,65 +14101,6 @@ function duplicateCanvasNode(
   };
 }
 
-function createGenerationFrameNode({
-  action,
-  sourceNode,
-  position,
-  index,
-}: {
-  action: LineGenerationAction;
-  sourceNode: CanvasWorkbenchNode;
-  position: XYPosition;
-  index: number;
-}): CanvasWorkbenchNode {
-  const stamp = Date.now();
-  const sourceType = getCanvasNodeSemanticType(sourceNode) ?? "unknown";
-  const generationFrame = bindNodeToGenerationFrameSlot(
-    migrateLegacyGenerationFrameData(
-      {
-        label: action.label,
-        caption: action.caption,
-        kind: "output",
-        status: "ready",
-        metrics: action.metrics,
-        iconName: action.iconName,
-        generationActionId: action.id,
-        generationOutputType: action.outputType,
-        promptPlaceholder: `描述你希望 ${sourceNode.data.label} 生成成什么画面`,
-      },
-      `generation-frame-${action.id}-${stamp}-${index}`
-    ),
-    sourceNode
-  );
-  const frameId = generationFrame.frameId ?? `generation-frame-${action.id}-${stamp}-${index}`;
-
-  return {
-    id: frameId,
-    position: {
-      x: position.x + 36,
-      y: position.y - 24,
-    },
-    data: {
-      label: action.label,
-      caption: action.caption,
-      kind: "output",
-      status: "ready",
-      metrics: action.metrics,
-      iconName: action.iconName,
-      type: "output",
-      componentType: "generation_frame",
-      source: "line-action-menu",
-      generationActionId: action.id,
-      generationOutputType: action.outputType,
-      sourceNodeId: sourceNode.id,
-      sourceNodeLabel: sourceNode.data.label,
-      sourceNodeType: sourceType,
-      promptPlaceholder: `描述你希望 ${sourceNode.data.label} 生成成什么画面`,
-      generationFrame,
-    },
-  };
-}
-
 function createDefaultGenerationFrameNode({
   productAsset,
   index,
@@ -9522,7 +14113,7 @@ function createDefaultGenerationFrameNode({
   const baseId = `generation-frame-default-${index}`;
   const baseFrame = migrateLegacyGenerationFrameData(
     {
-      label: "图组生成框",
+      label: "图组",
       caption: "拖进素材，说一句需求。",
       kind: "output",
       status: "ready",
@@ -9541,7 +14132,7 @@ function createDefaultGenerationFrameNode({
     id: baseId,
     position: position ?? { x: 320, y: 64 },
     data: {
-      label: "图组生成框",
+      label: "图组",
       caption: "拖进素材，说一句需求。",
       kind: "output",
       status: "ready",
@@ -9661,13 +14252,6 @@ function getGenerationRoleFromContextAction(
   return undefined;
 }
 
-function getFrameActionIdFromContextAction(
-  action: CanvasContextMenuAction
-): LineGenerationActionId | undefined {
-  if (action === "create-frame-custom-template") return "custom_template";
-  return undefined;
-}
-
 function isRetryableGenerationFrameOutput(output: GenerationFrameOutput): boolean {
   return Boolean(
     output.jobId &&
@@ -9692,6 +14276,56 @@ function updateGenerationFrameMetrics(metrics: string[], prompt: string): string
   return request
     ? [...base.slice(0, 3), `需求 ${Math.min(request.length, 99)}字`]
     : base;
+}
+
+function getGenerationFramePrompt(node: CanvasWorkbenchNode): string {
+  const frame = migrateLegacyGenerationFrameData(node.data, node.id);
+  return frame.prompt || getStringValue(node.data.generationUserRequest) || "";
+}
+
+function applyPromptToGenerationFrameNode(
+  node: CanvasWorkbenchNode,
+  prompt: string
+): CanvasWorkbenchNode {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      generationUserRequest: prompt,
+      generationFrame: {
+        ...migrateLegacyGenerationFrameData(node.data, node.id),
+        prompt,
+        updatedAt: new Date().toISOString(),
+      },
+      metrics: updateGenerationFrameMetrics(node.data.metrics, prompt),
+    },
+  };
+}
+
+function prepareGenerationFrameNodeForNewBatch(
+  node: CanvasWorkbenchNode,
+  batchId: string
+): CanvasWorkbenchNode {
+  const frame = {
+    ...migrateLegacyGenerationFrameData(node.data, node.id),
+    status: "queued" as const,
+    outputs: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      status: "queued",
+      generationFrame: frame,
+      generationFrameActiveBatchId: batchId,
+      metrics: updateGenerationFrameOutputMetrics(
+        updateGenerationFrameSlotMetrics(node.data.metrics, frame),
+        []
+      ),
+    },
+  };
 }
 
 function updateGenerationFrameSlotMetrics(
@@ -9750,17 +14384,29 @@ function buildGenerationFramePlanItems(
           "No model, no hands, no scene props, no marketing text, no extra product variants, no invented logos.",
         ].join("\n")
       : "";
+  const setContextPrompt = buildGenerationFrameSetContextPrompt(basePrompt);
 
   return presets.map((preset, index) => {
-    const copyText = preset.copyText ?? "";
-    return {
-      itemId: `${preset.id}-${index + 1}`,
-      title: preset.title,
+      const copyText = preset.copyText ?? "";
+      const itemReferenceRoles: GenerationReferenceRole[] = [
+        "product",
+        ...(preset.modelRequired ? (["model"] as const) : []),
+        ...(!preset.whiteBackground ? (["scene", "style"] as const) : []),
+        ...(preset.textAllowed || copyText ? (["copy"] as const) : []),
+      ];
+      const itemProviderReferenceRoles = itemReferenceRoles.filter((role) =>
+        role === "product" ||
+        role === "scene" ||
+        (role === "model" && preset.modelRequired)
+      );
+      return {
+        itemId: `${preset.id}-${index + 1}`,
+        title: preset.title,
       type: preset.type,
       copyText,
       copyRenderMode: preset.copyRenderMode,
       prompt: [
-        basePrompt,
+        setContextPrompt,
         productAssetSop,
         "Single-image execution rule: render exactly one finished image for this item only. Do not create a collage, multi-panel board, contact sheet, grid, storyboard, tiled layout, comparison sheet, moodboard, or one image containing multiple deliverables. The requested set count means multiple separate jobs, not multiple panels inside this image.",
         `Image set item ${index + 1}/${presets.length}: ${preset.title}.`,
@@ -9771,10 +14417,12 @@ function buildGenerationFramePlanItems(
       naming: `${preset.id}_${index + 1}`,
       size: preset.size,
       ratio: preset.ratio,
-      whiteBackground: preset.whiteBackground,
-      textAllowed: preset.textAllowed,
-      modelRequired: preset.modelRequired,
-      qualityRules: [
+        whiteBackground: preset.whiteBackground,
+        textAllowed: preset.textAllowed,
+        modelRequired: preset.modelRequired,
+        referenceRoles: itemReferenceRoles,
+        providerReferenceRoles: itemProviderReferenceRoles,
+        qualityRules: [
         "Keep product identity stable.",
         "Avoid malformed hands, distorted logos, and inconsistent material.",
         "Keep the visual language consistent across the set.",
@@ -9784,15 +14432,344 @@ function buildGenerationFramePlanItems(
         frameOutputIndex: index + 1,
         plannedFrameOutput: true,
         copyRenderMode: preset.copyRenderMode,
+        shotIntentText: [
+          preset.title,
+          preset.type,
+          preset.instruction,
+          copyText,
+        ].filter(Boolean).join(" "),
       },
     };
   });
 }
 
+function buildGenerationFrameSetContextPrompt(basePrompt: string): string {
+  return basePrompt
+    .split("\n")
+    .filter((line) => !line.startsWith("User generation request:"))
+    .join("\n")
+    .trim();
+}
+
+function buildAgentImageRevisionPrompt(target: AgentImageEditTarget, userRequest: string): string {
+  const originalPrompt = truncateRevisionText(target.prompt, 1200);
+  const purposeText = getAgentRevisionPurposeText(target.metadata ?? {}, target.title);
+  const metadata = target.metadata ?? {};
+  const ratioText = getAgentRevisionRatioText(metadata);
+  const copyPolicyText = getAgentRevisionCopyPolicyText(metadata);
+  const referenceText = getAgentRevisionReferenceText(metadata);
+  const qaText = getAgentRevisionVisualQaText(target);
+  return [
+    "基于参考图进行再修改，不要从零重画。",
+    `参考图：${target.title}`,
+    purposeText ? `原图组用途：${purposeText}` : "",
+    ratioText ? `原比例：${ratioText}` : "",
+    copyPolicyText ? `原文案策略：${copyPolicyText}` : "",
+    referenceText ? `原参考图角色：${referenceText}` : "",
+    qaText ? `原视觉 QA 问题：${qaText}` : "",
+    originalPrompt ? `原始生成 prompt：${originalPrompt}` : "",
+    `用户修改要求：${userRequest.trim()}`,
+    "本次只修改这张成片，不扩展为整套项目重做，也不要改变其它图组的规划。",
+    "保留参考图里已经正确的主体、产品、人物、场景关系、构图、透视和商业质感；只修改用户明确要求的部分。",
+    "如果需要加广告文案，把文案放在画面安全区；不要改商品包装标签，除非用户明确要求修改包装。",
+    "输出一张完成图。",
+  ].filter(Boolean).join("\n");
+}
+
+function getAgentRevisionRatioText(metadata: Record<string, unknown>): string {
+  const ratio =
+    getStringValue(metadata.ratio) ||
+    getStringValue(metadata.aspectRatioLabel) ||
+    getStringValue(metadata.outputRatio) ||
+    getStringValue(metadata.size);
+  return ratio || "";
+}
+
+function getAgentRevisionCopyPolicyText(metadata: Record<string, unknown>): string {
+  const policy = getOutputPreviewCopyRenderPolicy(metadata);
+  if (!policy) return "";
+  const modeLabel =
+    policy.mode === "burn_in" ? "文案烧进图" :
+      policy.mode === "layout_layer" ? "文案图层" :
+        policy.mode === "metadata_only" ? "文案不进图" :
+          policy.mode || "沿用原策略";
+  const copyText = [
+    ...(policy.inImageText ?? []),
+    ...(policy.sellingPoints ?? []),
+  ].slice(0, 4).join(" / ");
+  return [modeLabel, copyText ? `画面文字：${copyText}` : ""].filter(Boolean).join("；");
+}
+
+function getAgentRevisionReferenceText(metadata: Record<string, unknown>): string {
+  const providerRoles = getOutputPreviewProviderReferenceImages(metadata)
+    .map((image) => getGenerationReferenceRoleLabel(image.role));
+  const promptOnlyRoles = getOutputPreviewPromptOnlyReferenceImages(metadata)
+    .map((image) => getGenerationReferenceRoleLabel(image.role));
+  const parts = [
+    providerRoles.length > 0 ? `强参考 ${agentUniqueStrings(providerRoles).join("、")}` : "",
+    promptOnlyRoles.length > 0 ? `文字参考 ${agentUniqueStrings(promptOnlyRoles).join("、")}` : "",
+  ].filter(Boolean);
+  return parts.join("；");
+}
+
+function getAgentRevisionVisualQaText(target: AgentImageEditTarget): string {
+  const source: PersistedGeneratedArtifact = {
+    id: target.artifactId || target.outputId || target.jobId || "revision-target",
+    workflowId: undefined,
+    nodeId: target.nodeId,
+    jobId: target.jobId,
+    assetId: undefined,
+    type: getStringValue(target.metadata?.planItemType) || getStringValue(target.metadata?.imageType) || "image_revision",
+    title: target.title,
+    status: target.status || "done",
+    url: target.url,
+    prompt: target.prompt || "",
+    provider: getStringValue(target.metadata?.provider),
+    model: getStringValue(target.metadata?.model),
+    metadata: target.metadata ?? {},
+    createdAt: "",
+    updatedAt: "",
+  };
+  const qa = getArtifactVisualQaSummary(source);
+  return qa.issues
+    .filter((issue) => issue.status === "fail" || issue.status === "warn")
+    .map((issue) => `${issue.label}：${issue.summary}`)
+    .slice(0, 4)
+    .join("；");
+}
+
+function buildAgentGroupRevisionPromptContext(
+  group: AgentPlanGroup,
+  targets: AgentImageEditTarget[],
+  currentTarget: AgentImageEditTarget
+): string {
+  const groupRatios = agentUniqueStrings([
+    ...group.ratios,
+    ...targets.map((target) => getAgentRevisionRatioText(target.metadata ?? {})),
+  ]);
+  const copyModes = agentUniqueStrings([
+    ...group.copyModes,
+    ...targets.map((target) => getAgentRevisionCopyPolicyText(target.metadata ?? {})),
+  ]);
+  const providerRoles = agentUniqueStrings(group.providerRoles);
+  const promptOnlyRoles = agentUniqueStrings(group.promptOnlyRoles);
+  return [
+    `分组修改范围：只重做「${group.title}」这一组，共 ${targets.length} 张。`,
+    "不要重写整个项目计划，不要影响其它已保留图片或其它结果分组。",
+    `当前正在重做：${currentTarget.title}。`,
+    groupRatios.length > 0 ? `本组原比例：${groupRatios.slice(0, 5).join(" / ")}。` : "",
+    providerRoles.length > 0 || promptOnlyRoles.length > 0
+      ? `本组参考角色：${[
+        providerRoles.length > 0 ? `强参考 ${providerRoles.join("、")}` : "",
+        promptOnlyRoles.length > 0 ? `文字参考 ${promptOnlyRoles.join("、")}` : "",
+      ].filter(Boolean).join("；")}。`
+      : "",
+    copyModes.length > 0 ? `本组文案策略：${copyModes.slice(0, 4).join(" / ")}。` : "",
+    "如果用户说动作重复，只替换这一组的姿势、角度和表情节奏；商品、模特身份、场景和风格沿用原上下文。",
+  ].filter(Boolean).join("\n");
+}
+
+function getAgentRevisionPurposeText(metadata: Record<string, unknown>, fallbackTitle = ""): string {
+  const title =
+    getStringValue(metadata.planItemTitle) ||
+    getStringValue(metadata.batchJobTitle) ||
+    getStringValue(metadata.exportSpecTitle) ||
+    fallbackTitle;
+  const type =
+    getStringValue(metadata.planItemType) ||
+    getStringValue(metadata.imageType) ||
+    getStringValue(metadata.useCase);
+  const slot =
+    getStringValue(metadata.outputSlotId) ||
+    getStringValue(metadata.exportSpecId) ||
+    getStringValue(metadata.exportItemId);
+  const parts = [
+    title ? title : "",
+    type && type !== title ? getAgentRevisionPurposeTypeLabel(type) : "",
+    slot && slot !== title && slot !== type ? slot : "",
+  ].filter(Boolean);
+  return agentUniqueStrings(parts).slice(0, 3).join(" / ");
+}
+
+function getAgentRevisionPurposeTypeLabel(type: string): string {
+  const normalized = type.toLowerCase();
+  if (/main|hero|主图|主视觉/.test(normalized)) return "主图/主视觉";
+  if (/poster|cover|海报|封面|feature|卖点/.test(normalized)) return "海报/卖点";
+  if (/detail|macro|material|细节|材质/.test(normalized)) return "详情/细节";
+  if (/model|模特|真人/.test(normalized)) return "模特展示";
+  if (/scene|lifestyle|场景|生活/.test(normalized)) return "场景图";
+  if (/revision|rerun/.test(normalized)) return "再修改图";
+  return type;
+}
+
+function buildAgentImageRevisionReferenceContext(target: AgentImageEditTarget): GenerationReferenceContext {
+  const originalContext =
+    normalizeGenerationReferenceContext(target.metadata?.referenceContext) ??
+    normalizeGenerationReferenceContext(target.metadata);
+  const originalProviderImages = target.metadata
+    ? getOutputPreviewProviderReferenceImages(target.metadata)
+    : [];
+  const originalPromptOnlyImages = target.metadata
+    ? getOutputPreviewPromptOnlyReferenceImages(target.metadata)
+    : [];
+  const roleContext: GenerationReferenceRoleContext = {
+    role: "style",
+    title: "上一版成片",
+    sourceNodeIds: target.nodeId ? [target.nodeId] : [],
+    componentIds: [],
+    assetIds: [],
+    parameters: {
+      revisionSource: true,
+      outputId: target.outputId,
+      artifactId: target.artifactId,
+      jobId: target.jobId,
+    },
+    promptFragments: [
+      "Use the reference image as the previous finished image to revise.",
+    ],
+    constraints: [
+      "Preserve the existing subject, product identity, composition, perspective, and commercial finish unless the user explicitly asks to change them.",
+      "Only change the parts requested by the user.",
+    ],
+    negativeRules: [
+      "Do not redraw the whole image from scratch.",
+      "Do not redesign the product.",
+      "Do not move advertising copy onto product packaging labels unless explicitly requested.",
+    ],
+    qualityRules: [
+      "The revised image should still look like the same production set.",
+    ],
+  };
+  const originalStyleRole = originalContext?.roles.style;
+  const mergedStyleRole: GenerationReferenceRoleContext = originalStyleRole
+    ? {
+        ...roleContext,
+        sourceNodeIds: dedupeStrings([...originalStyleRole.sourceNodeIds, ...roleContext.sourceNodeIds]),
+        componentIds: dedupeStrings([...originalStyleRole.componentIds, ...roleContext.componentIds]),
+        assetIds: dedupeStrings([...originalStyleRole.assetIds, ...roleContext.assetIds]),
+        parameters: {
+          ...originalStyleRole.parameters,
+          ...roleContext.parameters,
+        },
+        promptFragments: dedupeStrings([...roleContext.promptFragments, ...originalStyleRole.promptFragments]),
+        constraints: dedupeStrings([...roleContext.constraints, ...originalStyleRole.constraints]),
+        negativeRules: dedupeStrings([...roleContext.negativeRules, ...originalStyleRole.negativeRules]),
+        qualityRules: dedupeStrings([...roleContext.qualityRules, ...originalStyleRole.qualityRules]),
+      }
+    : roleContext;
+  const images = dedupeReferenceImages([
+    {
+      role: "style",
+      title: "上一版成片",
+      url: target.url,
+      providerUsable: true,
+      providerMode: "provider_input",
+      source: "generated-output",
+      nodeId: target.nodeId,
+    },
+    ...originalProviderImages.map((image) => ({
+      ...image,
+      title: image.title || `${getGenerationReferenceRoleLabel(image.role)}原始参考`,
+      source: image.source || "original-generation-reference",
+      providerUsable: true,
+      providerMode: "provider_input" as const,
+    })),
+    ...originalPromptOnlyImages.map((image) => ({
+      ...image,
+      title: image.title || `${getGenerationReferenceRoleLabel(image.role)}文字参考`,
+      source: image.source || "original-generation-reference",
+      providerUsable: false,
+      providerMode: "prompt_only" as const,
+    })),
+  ]);
+
+  return {
+    version: 1,
+    source: "canvas-workbench",
+    targetNodeId: target.nodeId,
+    targetNodeLabel: target.title,
+    images,
+    roles: {
+      ...originalContext?.roles,
+      style: mergedStyleRole,
+    },
+    promptFragments: dedupeStrings([
+      ...roleContext.promptFragments,
+      ...(originalContext?.promptFragments ?? []),
+    ]),
+    constraints: dedupeStrings([
+      ...roleContext.constraints,
+      ...(originalContext?.constraints ?? []),
+    ]),
+    negativeRules: dedupeStrings([
+      ...roleContext.negativeRules,
+      ...(originalContext?.negativeRules ?? []),
+    ]),
+    qualityRules: dedupeStrings([
+      ...roleContext.qualityRules,
+      ...(originalContext?.qualityRules ?? []),
+    ]),
+  };
+}
+
+function buildAgentImageRevisionAssetInvocationPlan(referenceContext: GenerationReferenceContext) {
+  const imagesByRole = new Map<GenerationReferenceRole, GenerationReferenceImage[]>();
+  for (const image of referenceContext.images) {
+    imagesByRole.set(image.role, [...(imagesByRole.get(image.role) ?? []), image]);
+  }
+
+  const decisions = generationFrameRoles
+    .filter((role) => referenceContext.roles[role] || imagesByRole.has(role))
+    .map((role) => {
+      const images = imagesByRole.get(role) ?? [];
+      const providerInput = images.some((image) => image.providerUsable || image.providerMode === "provider_input");
+      return {
+        role,
+        mode: getRevisionAssetInvocationMode(role, providerInput),
+        providerInput,
+        reason: providerInput
+          ? `${getGenerationReferenceRoleLabel(role)}会作为再修改任务的参考输入。`
+          : `${getGenerationReferenceRoleLabel(role)}只作为 prompt 和约束继承。`,
+        imageCount: images.length,
+      };
+    });
+
+  return {
+    mode: "agent_image_revision_v1",
+    referenceRoles: decisions.map((decision) => decision.role),
+    providerReferenceRoles: decisions.filter((decision) => decision.providerInput).map((decision) => decision.role),
+    decisions,
+  };
+}
+
+function getRevisionAssetInvocationMode(role: GenerationReferenceRole, providerInput: boolean): string {
+  if (role === "product") return providerInput ? "hard_reference" : "prompt_only";
+  if (role === "model") return providerInput ? "identity_reference" : "prompt_only";
+  if (role === "scene") return providerInput ? "lighting_space" : "prompt_only";
+  if (role === "style") return providerInput ? "style_finish" : "prompt_only";
+  if (role === "copy") return "copy_layer";
+  return "prompt_only";
+}
+
+function truncateRevisionText(value: string | undefined, maxLength: number): string {
+  const text = value?.trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
+}
+
+function formatRevisionTextForSentence(value: string | undefined, maxLength: number): string {
+  return truncateRevisionText(value, maxLength).replace(/[。.!?！？；;，,]+$/, "");
+}
+
 function getNextLibraryInsertPosition(
   nodes: CanvasWorkbenchNode[],
-  selectedNode?: CanvasWorkbenchNode
+  selectedNode?: CanvasWorkbenchNode,
+  category?: CanvasLibraryCategory
 ): XYPosition {
+  if (category) {
+    return getNextCategoryLanePosition(nodes, category);
+  }
+
   if (selectedNode) {
     return {
       x: selectedNode.position.x + 72,
@@ -9804,6 +14781,68 @@ function getNextLibraryInsertPosition(
     x: 80 + (nodes.length % 4) * 32,
     y: 160 + (nodes.length % 5) * 36,
   };
+}
+
+function getNextCategoryLanePosition(
+  nodes: CanvasWorkbenchNode[],
+  category: CanvasLibraryCategory
+): XYPosition {
+  const categoryNodeCount = nodes.filter((node) => (
+    getStringValue(node.data.category) === category &&
+    getStringValue(node.data.source) !== "artifact-history"
+  )).length;
+
+  return getCategoryLanePosition(category, categoryNodeCount);
+}
+
+function getCategoryLanePosition(
+  category: CanvasLibraryCategory,
+  index: number
+): XYPosition {
+  const basePositions: Record<CanvasLibraryCategory, XYPosition> = {
+    商品: { x: 80, y: 560 },
+    模特: { x: 430, y: 560 },
+    场景: { x: 780, y: 560 },
+    风格: { x: 1130, y: 560 },
+    文案: { x: 1480, y: 560 },
+    平台: { x: 2040, y: 560 },
+    质检: { x: 2380, y: 560 },
+  };
+  const base = basePositions[category];
+
+  return {
+    x: base.x,
+    y: base.y + index * 390,
+  };
+}
+
+function getCanvasNodeLibraryCategory(node: CanvasWorkbenchNode): CanvasLibraryCategory | undefined {
+  const category = getStringValue(node.data.category);
+  if (isCanvasLibraryCategoryValue(category)) return category;
+
+  const role = getNodeReferenceRole(node);
+  if (role === "product") return "商品";
+  if (role === "model") return "模特";
+  if (role === "scene") return "场景";
+  if (role === "style") return "风格";
+  if (role === "copy") return "文案";
+  return undefined;
+}
+
+function isCanvasBackstageNode(node: Pick<CanvasWorkbenchNode, "data"> & { id?: string }): boolean {
+  const nodeId = typeof node.id === "string" ? node.id : "";
+  const kind = getStringValue(node.data.kind);
+  const source = getStringValue(node.data.source);
+  const category = getStringValue(node.data.category);
+  const componentType = getStringValue(node.data.componentType);
+  const nodeType = getStringValue(node.data.type);
+  if (source === "artifact-history" || nodeId.startsWith("artifact-node-")) return false;
+  if (/^(image_recipe|platform_rule|quality_rule|output_pack)$/.test(nodeId)) return true;
+  if (category === "平台" || category === "质检") return true;
+  if (/recipe|rule|quality|compliance|output_pack|export_pack/.test(`${componentType} ${nodeType}`)) return true;
+  return kind === "factory" ||
+    kind === "platform" ||
+    kind === "quality";
 }
 
 function getCreateJobButtonLabel(isGenerationFrame: boolean, isExportPack: boolean): string {
@@ -9820,21 +14859,6 @@ function getGenerationFrameSlotSummary(
   return roles.length > 0
     ? roles.map((role) => getGenerationReferenceRoleLabel(role)).join(" + ")
     : "等待资产";
-}
-
-function getGenerationFrameSlotItems(context: GenerationReferenceContext | undefined) {
-  return generationFrameRoles.map((role) => {
-    const roleContext = context?.roles[role];
-    const images = context?.images.filter((image) => image.role === role) ?? [];
-    return {
-      role,
-      label: getGenerationReferenceRoleLabel(role),
-      title: roleContext?.title || "空槽位",
-      ready: Boolean(roleContext),
-      imageCount: images.length,
-      providerImageCount: images.filter((image) => image.providerUsable).length,
-    };
-  });
 }
 
 function isGenerationFrameRoleValue(value: unknown): value is GenerationFrameRole {
@@ -9855,40 +14879,6 @@ function getGenerationFrameRoleFromComponent(
   if (category === "场景") return "scene";
   if (category === "文案") return "copy";
   return undefined;
-}
-
-function getGenerationFramePlanLabel(node: CanvasWorkbenchNode): string {
-  const outputType = getStringValue(node.data.generationOutputType);
-  if (outputType === "model_try_on") return "模特穿着图组 · 先建 1 个可审核任务";
-  if (outputType === "handheld_product") return "手持产品图组 · 先建 1 个可审核任务";
-  if (outputType === "scene_display") return "场景多角度图组 · 默认 5 张";
-  if (outputType === "white_background") return "白底主图 · 先建 1 个可审核任务";
-  if (outputType === "detail_page") return "详情页图组 · 先建 1 个可审核任务";
-  if (outputType === "xiaohongshu_cover") return "小红书封面 · 先建 1 个可审核任务";
-  if (outputType === "poster_set") return "海报组图 · 先建 1 个可审核任务";
-  return "图组输出 · 先建 1 个可审核任务";
-}
-
-function getGenerationFrameCostHint(context: GenerationReferenceContext | undefined): string {
-  const imageCount = context?.images.length ?? 0;
-  const providerImageCount = context?.images.filter((image) => image.providerUsable).length ?? 0;
-  return `创建后会出现在任务队列里；真正运行时预计 1 次图片生成调用。已带 ${imageCount} 张引用，${providerImageCount} 张可直接用于图生图。`;
-}
-
-function getGenerationFrameReferenceHint(context: GenerationReferenceContext | undefined): string {
-  const productImages = context?.images.filter((image) => image.role === "product") ?? [];
-  const providerProductImages = productImages.filter((image) => image.providerUsable);
-
-  if (providerProductImages.length > 0) {
-    return "商品图可直接作为视觉参考，模特、风格、场景会一起写入提示词和约束。";
-  }
-  if (productImages.length > 0) {
-    return "商品已进入提示词和约束；当前图片类型只做文字锁定，不会直接传入图生图。";
-  }
-  if (context?.roles.product) {
-    return "商品槽已有规则信息；补一张本地生成图后，图生图参考会更稳。";
-  }
-  return "建议先接入商品槽位，再创建任务，能减少只靠文字生成的偏差。";
 }
 
 function createExportPackNode(
@@ -10193,6 +15183,999 @@ function mapWorkflowPlanPreview(payload: unknown): WorkflowPlanPreview | null {
   };
 }
 
+async function enrichWorkflowPlanPreviewWithAgentPlan({
+  preview,
+            draft,
+            brief,
+            userBrief,
+  projectStarterPrompt,
+  copyRenderMode,
+  referenceContext,
+}: {
+  preview: WorkflowPlanPreview;
+  draft: WorkflowComposeDraft;
+  brief: string;
+  userBrief?: string;
+  projectStarterPrompt?: string;
+  copyRenderMode: "layout_layer" | "burn_in" | "metadata_only";
+  referenceContext: GenerationReferenceContext;
+}): Promise<AgentPlanEnrichmentResult> {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : undefined;
+  const timeout = controller
+    ? window.setTimeout(() => controller.abort(), 12_000)
+    : undefined;
+  try {
+    const response = await apiFetch("/api/agent-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller?.signal,
+      body: JSON.stringify(buildAgentPlanPreviewRequest({
+        preview,
+        draft,
+        brief,
+        userBrief,
+        projectStarterPrompt,
+        copyRenderMode,
+        referenceContext,
+      })),
+    });
+    if (!response.ok) {
+      return buildAgentPlanFallbackPreviewResult(
+        preview,
+        `Agent 规划接口返回 ${response.status}，已先展示基础计划`,
+        copyRenderMode,
+        userBrief || brief
+      );
+    }
+    const payload = await response.json();
+    const enrichedPreview = mergeAgentPlanIntoWorkflowPlanPreview(preview, payload);
+    const validationFallbackReason = getAgentPlanValidationFallbackReason(
+      enrichedPreview,
+      userBrief || brief
+    );
+    if (validationFallbackReason) {
+      return buildAgentPlanFallbackPreviewResult(preview, validationFallbackReason, copyRenderMode, userBrief || brief);
+    }
+    return {
+      preview: enrichedPreview,
+      fallbackUsed: enrichedPreview.agentPlan?.summary?.fallbackUsed === true,
+      fallbackReason: enrichedPreview.agentPlan?.summary?.fallbackReason,
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return buildAgentPlanFallbackPreviewResult(preview, "Agent 规划超时，已先展示基础计划", copyRenderMode, userBrief || brief);
+    }
+    console.warn("Agent plan preview enrichment failed:", error instanceof Error ? error.message : error);
+    return buildAgentPlanFallbackPreviewResult(preview, "Agent 深度规划失败，已先展示基础计划", copyRenderMode, userBrief || brief);
+  } finally {
+    if (timeout !== undefined) window.clearTimeout(timeout);
+  }
+}
+
+function buildAgentPlanFallbackPreviewResult(
+  preview: WorkflowPlanPreview,
+  reason: string,
+  copyRenderMode?: "layout_layer" | "burn_in" | "metadata_only",
+  brief = ""
+): AgentPlanEnrichmentResult {
+  return {
+    preview: markWorkflowPlanPreviewAgentFallback(preview, reason, copyRenderMode, brief),
+    fallbackUsed: true,
+    fallbackReason: reason,
+  };
+}
+
+function getAgentPlanValidationFallbackReason(
+  preview: WorkflowPlanPreview,
+  brief: string
+): string | undefined {
+  const requestedCount = parseRequestedAgentSampleCount(brief);
+  if (requestedCount && preview.estimatedCount < Math.ceil(requestedCount * 0.6)) {
+    return `高级理解结果不完整（只覆盖 ${preview.estimatedCount}/${requestedCount} 张），已先展示基础计划`;
+  }
+
+  const matrixItems = preview.agentPlan?.generationMatrix?.length
+    ? preview.agentPlan.generationMatrix
+    : buildAgentMatrixFromPreviewItems(preview.items);
+  const modelRequested = hasFallbackModelIntent(brief.toLowerCase());
+  const modelPresent = matrixItems.some((item) =>
+    item.referenceRoles.includes("model") ||
+    item.providerReferenceRoles.includes("model") ||
+    /模特|真人|人物|上身|穿搭|model/.test(`${item.title} ${item.type} ${item.summary}`.toLowerCase())
+  );
+  if (modelRequested && !modelPresent) {
+    return "高级理解没有覆盖模特展示，已先展示基础计划";
+  }
+
+  return undefined;
+}
+
+function shouldFallbackSuppressModelSlots(brief: string): boolean {
+  const text = brief.toLowerCase();
+  if (hasFallbackModelIntent(text)) return false;
+  return /(手机|数码|电子|硬件|电脑|键盘|鼠标|耳机|相机|平板|充电器|显示器|路由器|音箱|phone|laptop|keyboard|mouse|headphone|camera|tablet|charger|monitor|speaker)/.test(text) ||
+    /(纯商品|商品静物|只要商品|仅商品|无模特|无人物|不要模特|不要人物|不需要模特|不用模特|不带模特|product[-_ ]?only|no model|no person)/.test(text);
+}
+
+function hasFallbackModelIntent(text: string): boolean {
+  if (/(无模特|无人物|不要模特|不要人物|不需要模特|不用模特|不带模特|no model|no person|without model|without person)/.test(text)) {
+    return false;
+  }
+  return /(模特|真人|人物|上身|穿搭|试穿|背着|拿着|手持|佩戴|lookbook|model|person|human|wearing|holding|carrying)/.test(text);
+}
+
+function injectFallbackModelIntentIntoMatrix(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  brief: string
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  const text = brief.toLowerCase();
+  if (!hasFallbackModelIntent(text)) return items;
+  if (items.some((item) => item.referenceRoles.includes("model"))) return items;
+
+  let injected = false;
+  const nextItems = items.map((item) => {
+    if (!isFallbackModelFriendlyMatrixItem(item)) return item;
+    injected = true;
+    return addModelRoleToFallbackMatrixItem(item);
+  });
+
+  if (injected) return nextItems;
+  return items.map((item, index) => index === 0 ? addModelRoleToFallbackMatrixItem(item) : item);
+}
+
+function isFallbackModelFriendlyMatrixItem(item: WorkflowPlanPreviewAgentMatrixItem): boolean {
+  const text = `${item.title} ${item.type} ${item.outputSlotId ?? ""} ${item.summary}`.toLowerCase();
+  if (/(详情|细节|材质|特写|工艺|detail|macro|material)/.test(text)) return false;
+  return /(场景|生活|使用|海报|卖点|封面|主图|收尾|scene|lifestyle|poster|feature|cover|hero|main|closing)/.test(text);
+}
+
+function addModelRoleToFallbackMatrixItem(
+  item: WorkflowPlanPreviewAgentMatrixItem
+): WorkflowPlanPreviewAgentMatrixItem {
+  return {
+    ...item,
+    referenceRoles: agentUniqueStrings([...item.referenceRoles, "model"]),
+    summary: mergeAgentPlanContentInstruction(item.summary, "包含用户要求的模特出镜和商品佩戴/手持关系"),
+  };
+}
+
+function removeFallbackModelSlotsFromPreview(preview: WorkflowPlanPreview): WorkflowPlanPreview {
+  const items = preview.items.filter((item) => !isFallbackModelPreviewItem(item));
+  if (items.length === 0 || items.length === preview.items.length) return preview;
+  const itemIds = new Set(items.map((item) => item.id));
+  const itemSlots = new Set(items.flatMap((item) => [item.slot, getPreviewItemBaseSlotId(item.slot)]));
+  const agentPlan = preview.agentPlan;
+  const filteredImages = preview.images.filter((item) => itemIds.has(item.id) || !isFallbackModelPreviewItem(item));
+  return {
+    ...preview,
+    items,
+    images: filteredImages.length > 0 ? filteredImages : items,
+    estimatedCount: items.length,
+    agentPlan: agentPlan
+      ? {
+          ...agentPlan,
+          sampleCount: Math.min(agentPlan.sampleCount, items.length),
+          fullCount: Math.min(agentPlan.fullCount, items.length),
+          outputSlots: agentPlan.outputSlots.filter((slot) =>
+            itemSlots.has(slot.id) || !isFallbackModelSlotText(`${slot.id} ${slot.label} ${slot.purpose}`)
+          ),
+          generationMatrix: agentPlan.generationMatrix?.filter((item) =>
+            itemIds.has(item.itemId) ||
+            itemSlots.has(item.outputSlotId || "") ||
+            !isFallbackModelSlotText(`${item.itemId} ${item.outputSlotId ?? ""} ${item.type} ${item.title} ${item.summary}`)
+          ),
+        }
+      : undefined,
+  };
+}
+
+function isFallbackModelPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return isFallbackModelSlotText(`${item.id} ${item.slot} ${item.title} ${item.purpose}`);
+}
+
+function isFallbackModelSlotText(text: string): boolean {
+  return /(^|[\s_-])(model|model_display|model-showcase)([\s_-]|$)|模特|真人|人物|上身|穿搭/.test(text.toLowerCase());
+}
+
+function ensureFallbackSceneSlotsFromBrief(
+  preview: WorkflowPlanPreview,
+  brief: string,
+  copyRenderMode?: "layout_layer" | "burn_in" | "metadata_only"
+): WorkflowPlanPreview {
+  if (!hasFallbackSceneExpansionIntent(brief)) return preview;
+  const scenes = extractFallbackSceneNames(brief);
+  if (scenes.length === 0) return preview;
+  const shouldReplaceGenericScene = scenes.length > 1 || scenes[0] !== "多场景";
+  if (preview.items.some(isFallbackScenePreviewItem) && !shouldReplaceGenericScene) return preview;
+
+  const perSceneCount = getFallbackPerSceneCount(brief);
+  const sceneCopyMode = getFallbackSceneCopyMode(brief, copyRenderMode);
+  const sceneOnlyPlan = shouldUseSceneOnlyFallbackPlan(brief, preview, scenes, perSceneCount);
+  const baseItems = sceneOnlyPlan
+    ? []
+    : shouldReplaceGenericScene
+    ? preview.items.filter((item) => !isFallbackScenePreviewItem(item))
+    : preview.items;
+  const baseImages = sceneOnlyPlan
+    ? []
+    : shouldReplaceGenericScene
+    ? preview.images.filter((item) => !isFallbackScenePreviewItem(item))
+    : preview.images;
+  const startIndex = baseItems.length + 1;
+  const sceneItems = scenes.flatMap((scene, sceneIndex) =>
+    Array.from({ length: perSceneCount }, (_, itemIndex): WorkflowPlanPreviewItem => {
+      const ordinal = startIndex + sceneIndex * perSceneCount + itemIndex;
+      const sceneTitle = sceneCopyMode === "burn_in"
+        ? `${scene}场景海报 ${itemIndex + 1}`
+        : `${scene}场景 ${itemIndex + 1}`;
+      return {
+        id: `scene_fallback_${ordinal}`,
+        title: sceneTitle,
+        purpose: sceneCopyMode === "burn_in"
+          ? `展示商品在${scene}场景里的空间、光影和使用氛围，并承载海报短文案`
+          : `展示商品在${scene}场景里的空间、光影和使用氛围`,
+        slot: `scene_${sceneIndex + 1}_${itemIndex + 1}`,
+        ratio: "4:5",
+        copyMode: sceneCopyMode,
+        platform: preview.items[0]?.platform,
+        componentRefs: [],
+        qualityChecks: [],
+      };
+    })
+  );
+  const sceneReferenceRoles = sceneCopyMode === "burn_in"
+    ? ["product", "style", "scene", "copy"]
+    : ["product", "style", "scene"];
+  const sceneMatrix = sceneItems.map((item): WorkflowPlanPreviewAgentMatrixItem => ({
+    id: `matrix_${item.id}`,
+    itemId: item.id,
+    title: item.title,
+    type: item.slot,
+    outputSlotId: getPreviewItemBaseSlotId(item.slot),
+    ratio: item.ratio,
+    size: item.size,
+    referenceRoles: sceneReferenceRoles,
+    providerReferenceRoles: [],
+    assetGroupIds: [],
+    copyMode: sceneCopyMode,
+    missingInputIds: [],
+    status: "ready",
+    summary: item.purpose,
+  }));
+  const sceneSlots = scenes.map((scene, index) => ({
+    id: `scene_${index + 1}`,
+    label: `${scene}场景`,
+    purpose: `让商品进入${scene}场景，验证空间、光影和使用氛围`,
+    ratio: "4:5",
+    samplePhase: true,
+  }));
+  const agentPlan = preview.agentPlan;
+  const nextItems = [...baseItems, ...sceneItems];
+  const baseMatrix = sceneOnlyPlan
+    ? []
+    : agentPlan?.generationMatrix?.length
+    ? agentPlan.generationMatrix
+    : buildAgentMatrixFromPreviewItems(baseItems);
+  const nextMatrixBase = sceneOnlyPlan
+    ? []
+    : shouldReplaceGenericScene
+    ? baseMatrix.filter((item) => !isFallbackScenePlanItem(item))
+    : baseMatrix;
+  return {
+    ...preview,
+    items: nextItems,
+    images: [...baseImages, ...sceneItems],
+    estimatedCount: nextItems.length,
+    agentPlan: agentPlan
+      ? {
+          ...agentPlan,
+          sampleCount: Math.max(agentPlan.sampleCount, nextItems.length),
+          fullCount: Math.max(agentPlan.fullCount, nextItems.length),
+          optionalAssetRoles: agentUniqueStrings([...agentPlan.optionalAssetRoles, "scene"]),
+          outputSlots: [
+            ...(sceneOnlyPlan
+              ? []
+              : shouldReplaceGenericScene
+              ? agentPlan.outputSlots.filter((slot) => !isFallbackSceneSlotText(`${slot.id} ${slot.label} ${slot.purpose}`))
+              : agentPlan.outputSlots),
+            ...sceneSlots,
+          ],
+          generationMatrix: [...nextMatrixBase, ...sceneMatrix],
+        }
+      : preview.agentPlan,
+  };
+}
+
+function shouldUseSceneOnlyFallbackPlan(
+  brief: string,
+  preview: WorkflowPlanPreview,
+  scenes: string[],
+  perSceneCount: number
+): boolean {
+  if (hasFallbackAdditionalNonSceneDeliverable(brief)) return false;
+  const requestedSceneCount = parseRequestedMultiSceneSampleCount(brief);
+  if (!requestedSceneCount || requestedSceneCount !== scenes.length * perSceneCount) return false;
+  if (scenes.length <= 1 || preview.items.length > 3) return false;
+  return preview.items.every(isFallbackGenericPosterPreviewItem);
+}
+
+function hasFallbackAdditionalNonSceneDeliverable(brief: string): boolean {
+  const compact = brief.replace(/\s+/g, "");
+  return /(另外|另做|再做|再来|加一?张|加[0-9一二两三四五六七八九十]+张).*(海报|封面|主图|详情|细节|卖点|poster|cover|detail)/i.test(compact);
+}
+
+function hasFallbackSceneExpansionIntent(brief: string): boolean {
+  const text = brief.toLowerCase();
+  return /(多场景|[0-9一二两三四五六七八九十]+个?场景|场景各|各[0-9一二两三四五六七八九十]+张|办公室|健身房|露营|车库|工具墙|商场|咖啡厅|家居|厨房|卧室|雪山|街拍|户外|室内)/.test(text);
+}
+
+function hasFallbackSceneGroupIntent(brief: string): boolean {
+  return hasFallbackSceneExpansionIntent(brief) ||
+    /(场景图|使用场景|场景化|生活方式|生活场景|scene|lifestyle)/i.test(brief);
+}
+
+function extractFallbackSceneNames(brief: string): string[] {
+  const trailingScenes = extractFallbackSceneNamesBeforeCount(brief);
+  if (trailingScenes.length > 0) return trailingScenes.slice(0, 5);
+
+  const explicitScenes = extractFallbackSceneNamesFromList(brief);
+  if (explicitScenes.length > 0) return explicitScenes.slice(0, 5);
+
+  const sceneTerms = ["办公室", "健身房", "露营", "车库", "工具墙", "商场", "咖啡厅", "家居", "厨房", "卧室", "书桌", "客厅", "雪山", "街拍", "户外", "室内"];
+  const found = sceneTerms.filter((term) => brief.includes(term));
+  return found.length > 0 ? agentUniqueStrings(found).slice(0, 5) : ["多场景"];
+}
+
+function extractFallbackSceneNamesBeforeCount(brief: string): string[] {
+  const match = brief.match(
+    /(?:^|[，,。；;])([^。；;]+?)[0-9一二两三四五六七八九十]+个?场景(?:每个|每场景|场景各|各)?\s*[0-9一二两三四五六七八九十]+\s*张/
+  );
+  return normalizeFallbackSceneNameList(match?.[1]);
+}
+
+function extractFallbackSceneNamesFromList(brief: string): string[] {
+  const explicitSceneList = brief.match(
+    /[0-9一二两三四五六七八九十]+个?场景[：:，,\s]*(.+?)(?:每个|各[0-9一二两三四五六七八九十]+张|另外|再做|不要|更偏|。|；|;|$)/
+  );
+  const genericSceneList = brief.match(
+    /多场景[：:，,\s]*(.+?)(?:每个|各[0-9一二两三四五六七八九十]+张|另外|再做|不要|更偏|。|；|;|$)/
+  );
+  const trailingSceneList = brief.match(
+    /(?:^|[，,。；;])([^。；;]+?)[0-9一二两三四五六七八九十]+个?场景(?:每个|每场景|场景各|各)?\s*[0-9一二两三四五六七八九十]+\s*张/
+  );
+  const match = trailingSceneList ?? explicitSceneList ?? genericSceneList;
+  const listText = match?.[1]?.trim();
+  return normalizeFallbackSceneNameList(listText);
+}
+
+function normalizeFallbackSceneNameList(listText?: string): string[] {
+  if (!listText) return [];
+  return agentUniqueStrings(
+    listText
+      .split(/[、，,\/|]+/)
+      .map((item) => item.replace(/^.*[：:]/, "").replace(/^(分别是|包括|包含|有|和|与)/, "").replace(/场景$/, "").trim())
+      .filter((item) => item.length >= 2 && item.length <= 12)
+  );
+}
+
+function getFallbackPerSceneCount(brief: string): number {
+  const compact = brief.replace(/\s+/g, "");
+  const count = parseAgentPlanEditCount(
+    compact.match(/(?:每个|每个场景|每场景|场景各|各)([0-9一二两三四五六七八九十]+)张/)?.[1]
+  );
+  return count > 0 ? Math.min(count, 4) : 2;
+}
+
+function getFallbackSceneCopyMode(
+  brief: string,
+  copyRenderMode?: "layout_layer" | "burn_in" | "metadata_only"
+): string {
+  const compact = brief.replace(/\s+/g, "");
+  if (
+    hasFallbackAdditionalNonSceneDeliverable(brief) &&
+    !hasFallbackCopyBurnInTargetIntent(brief, "场景|多场景|scene")
+  ) {
+    return "layout_layer";
+  }
+  if (/(海报|封面|poster|cover).*(烧字|烧进|带字|进图)/.test(compact)) return "burn_in";
+  if (/(其他|场景|详情).*(图层|不进图|后期改字)/.test(compact)) return "layout_layer";
+  if (/(场景|多场景).*(烧字|烧进|带字|进图)/.test(compact)) return "burn_in";
+  return copyRenderMode === "metadata_only" ? "metadata_only" : "layout_layer";
+}
+
+function ensureFallbackPosterSlotFromBrief(
+  preview: WorkflowPlanPreview,
+  brief: string
+): WorkflowPlanPreview {
+  const requestedCount = getFallbackExplicitPosterCount(brief) || (hasFallbackExplicitPosterIntent(brief) ? 1 : 0);
+  if (requestedCount <= 0) return preview;
+  const existingPosterCount = preview.items.filter((item) =>
+    isFallbackPosterPreviewItem(item) && !isFallbackScenePreviewItem(item)
+  ).length;
+  if (existingPosterCount >= requestedCount) return preview;
+
+  const target = agentPlanEditTargets.find((item) => item.id === "poster");
+  if (!target) return preview;
+  const existingMatrix = preview.agentPlan?.generationMatrix?.length
+    ? preview.agentPlan.generationMatrix
+    : buildAgentMatrixFromPreviewItems(preview.items);
+  const created = createAgentPlanItemsForNewTarget({
+    target,
+    count: requestedCount - existingPosterCount,
+    instruction: "卖点海报，短文案放画面安全区",
+    existingItems: preview.items,
+    existingMatrix,
+  });
+  const items = [...preview.items, ...created.items];
+  const matrix = [...existingMatrix, ...created.matrix];
+  const addedSlots = created.items.map((item) => ({
+    id: item.slot || item.id,
+    label: item.title,
+    purpose: item.purpose,
+    ratio: item.ratio,
+    samplePhase: true,
+  }));
+
+  return {
+    ...preview,
+    items,
+    images: [...preview.images, ...created.items],
+    estimatedCount: items.length,
+    agentPlan: preview.agentPlan
+      ? {
+          ...preview.agentPlan,
+          sampleCount: Math.max(preview.agentPlan.sampleCount, items.length),
+          fullCount: Math.max(preview.agentPlan.fullCount, items.length),
+          outputSlots: [...preview.agentPlan.outputSlots, ...addedSlots],
+          generationMatrix: matrix,
+        }
+      : preview.agentPlan,
+  };
+}
+
+function hasFallbackExplicitPosterIntent(brief: string): boolean {
+  const compact = brief.replace(/\s+/g, "");
+  return /(海报|封面|poster|cover)/i.test(compact) &&
+    /(再加|另外|另做|加一?张|带短标题|短标题|海报写|封面写|文案烧进图|烧字|烧进|带字|进图)/i.test(compact);
+}
+
+function applyFallbackExplicitPosterCount(
+  preview: WorkflowPlanPreview,
+  brief: string
+): WorkflowPlanPreview {
+  const count = getFallbackExplicitPosterCount(brief);
+  if (count <= 0) return preview;
+  const posterItems = preview.items.filter((item) =>
+    isFallbackPosterPreviewItem(item) && !isFallbackScenePreviewItem(item)
+  );
+  if (posterItems.length <= count) return preview;
+
+  const keptPosterIds = new Set(posterItems.slice(0, count).map((item) => item.id));
+  const items = preview.items.filter((item) =>
+    !isFallbackPosterPreviewItem(item) || isFallbackScenePreviewItem(item) || keptPosterIds.has(item.id)
+  );
+  const itemIds = new Set(items.map((item) => item.id));
+  const itemSlots = new Set(items.flatMap((item) => [item.slot, getPreviewItemBaseSlotId(item.slot)]));
+  const agentPlan = preview.agentPlan;
+
+  return {
+    ...preview,
+    items,
+    images: preview.images.filter((item) => itemIds.has(item.id) || !isFallbackPosterPreviewItem(item)),
+    estimatedCount: items.length,
+    agentPlan: agentPlan
+      ? {
+          ...agentPlan,
+          sampleCount: Math.min(agentPlan.sampleCount, items.length),
+          fullCount: Math.min(agentPlan.fullCount, items.length),
+          outputSlots: agentPlan.outputSlots.filter((slot) =>
+            itemSlots.has(slot.id) || !isFallbackPosterSlotText(`${slot.id} ${slot.label} ${slot.purpose}`)
+          ),
+          generationMatrix: agentPlan.generationMatrix?.filter((item) =>
+            itemIds.has(item.itemId) ||
+            itemSlots.has(item.outputSlotId || "") ||
+            !isFallbackPosterSlotText(`${item.itemId} ${item.outputSlotId ?? ""} ${item.type} ${item.title} ${item.summary}`)
+          ),
+        }
+      : preview.agentPlan,
+  };
+}
+
+function getFallbackExplicitPosterCount(brief: string): number {
+  const compact = brief.replace(/\s+/g, "");
+  const count = parseAgentPlanEditCount(
+    compact.match(/([0-9一二两三四五六七八九十]+)张(?:商品)?(?:海报|poster|封面)/i)?.[1] ??
+      compact.match(/([0-9一二两三四五六七八九十]+)张[^，。；;]*(?:海报|poster|封面)/i)?.[1] ??
+      compact.match(/(?:海报|poster|封面)(?:要|做|来)?([0-9一二两三四五六七八九十]+)张/i)?.[1]
+  );
+  return count > 0 && count <= 20 ? count : 0;
+}
+
+function isFallbackPosterPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return isFallbackPosterSlotText(`${item.id} ${item.slot} ${item.title} ${item.purpose}`);
+}
+
+function isFallbackGenericPosterPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return /(海报|封面|banner|poster|cover|hero|主视觉|标题区|vertical|横版|竖版)/i.test(
+    `${item.id} ${item.slot} ${item.title} ${item.purpose}`.toLowerCase()
+  );
+}
+
+function isFallbackPosterSlotText(text: string): boolean {
+  return /(海报|封面|banner|poster|cover|hero|主视觉|标题区)/i.test(text.toLowerCase());
+}
+
+function applyFallbackExplicitTotalCount(
+  preview: WorkflowPlanPreview,
+  brief: string
+): WorkflowPlanPreview {
+  const requestedCount = parseRequestedStandaloneAgentSampleCount(brief);
+  if (!requestedCount || requestedCount <= 0 || requestedCount > maxAgentSampleOutputCount) return preview;
+  if (hasFallbackSceneExpansionIntent(brief) && requestedCount < preview.items.length) return preview;
+  let normalizedPreview = preview.items.length < requestedCount
+    ? ensureFallbackBriefTargetGroups(preview, brief, requestedCount)
+    : preview;
+  if (normalizedPreview.items.length === requestedCount) return normalizedPreview;
+  if (normalizedPreview.items.length === 0) return normalizedPreview;
+
+  if (normalizedPreview.items.length > requestedCount) {
+    const items = normalizedPreview.items.slice(0, requestedCount);
+    const itemIds = new Set(items.map((item) => item.id));
+    return {
+      ...normalizedPreview,
+      items,
+      images: normalizedPreview.images.filter((item) => itemIds.has(item.id)),
+      estimatedCount: items.length,
+    };
+  }
+
+  const sourceItem = getFallbackTotalCountExpansionSourceItem(normalizedPreview.items, brief);
+  const extraItems = Array.from(
+    { length: requestedCount - normalizedPreview.items.length },
+    (_, index) => cloneFallbackTotalCountItem(sourceItem, normalizedPreview.items.length + index + 1, index + 1)
+  );
+  const items = [...normalizedPreview.items, ...extraItems];
+  return {
+    ...normalizedPreview,
+    items,
+    images: [...normalizedPreview.images, ...extraItems],
+    estimatedCount: items.length,
+  };
+}
+
+function ensureFallbackBriefTargetGroups(
+  preview: WorkflowPlanPreview,
+  brief: string,
+  requestedCount: number
+): WorkflowPlanPreview {
+  const specs = getFallbackBriefTargetGroupSpecs(brief);
+  if (specs.length === 0) return preview;
+
+  let items = [...preview.items];
+  let matrix = preview.agentPlan?.generationMatrix?.length
+    ? [...preview.agentPlan.generationMatrix]
+    : buildAgentMatrixFromPreviewItems(items);
+  let remaining = Math.max(0, requestedCount - items.length);
+  if (remaining === 0) return preview;
+
+  for (const spec of specs) {
+    if (remaining <= 0) break;
+    const hasTarget =
+      items.some((item) => agentPlanPreviewItemMatchesTarget(item, spec.target)) ||
+      matrix.some((item) => agentPlanMatrixItemMatchesTarget(item, spec.target));
+    if (hasTarget) continue;
+    const count = Math.min(spec.count, remaining);
+    const created = createAgentPlanItemsForNewTarget({
+      target: spec.target,
+      count,
+      instruction: spec.instruction,
+      existingItems: items,
+      existingMatrix: matrix,
+    });
+    items = [...items, ...created.items];
+    matrix = [...matrix, ...created.matrix];
+    remaining -= created.items.length;
+  }
+
+  if (items.length === preview.items.length) return preview;
+  const outputSlots = items.map((item) => ({
+    id: item.slot || item.id,
+    label: item.title,
+    purpose: item.purpose,
+    ratio: item.ratio,
+    samplePhase: true,
+  }));
+  return {
+    ...preview,
+    items,
+    images: [...preview.images, ...items.filter((item) => !preview.items.some((existing) => existing.id === item.id))],
+    estimatedCount: items.length,
+    agentPlan: preview.agentPlan
+      ? {
+          ...preview.agentPlan,
+          sampleCount: items.length,
+          fullCount: Math.max(preview.agentPlan.fullCount, items.length),
+          outputSlots,
+          generationMatrix: matrix,
+        }
+      : preview.agentPlan,
+  };
+}
+
+function getFallbackBriefTargetGroupSpecs(
+  brief: string
+): Array<{ target: AgentPlanEditTarget; count: number; instruction: string }> {
+  const text = brief.toLowerCase();
+  const specs: Array<{ target: AgentPlanEditTarget; count: number; instruction: string }> = [];
+  const push = (targetId: AgentPlanEditTarget["id"], count: number, instruction: string) => {
+    const target = agentPlanEditTargets.find((item) => item.id === targetId);
+    if (!target || specs.some((item) => item.target.id === target.id)) return;
+    specs.push({ target, count, instruction });
+  };
+
+  if (/(主图|白底|main|hero)/i.test(text)) push("main", 1, "商品主图/白底主图");
+  if (hasFallbackModelIntent(text)) push("model", 3, "同一个模特出镜，动作和神态要有变化");
+  if (/(详情|细节|材质|特写|参数|detail|macro|material|spec)/i.test(text)) {
+    push("detail", 2, "商品细节、材质、参数和做工证据");
+  }
+  if (/(海报|卖点|封面|poster|feature|cover)/i.test(text)) {
+    push("poster", getFallbackExplicitPosterCount(brief) || 2, "卖点海报，短文案放画面安全区");
+  }
+  if (hasFallbackSceneGroupIntent(brief)) push("scene", 2, "场景化使用氛围");
+  return specs;
+}
+
+function getFallbackTotalCountExpansionSourceItem(
+  items: WorkflowPlanPreviewItem[],
+  brief: string
+): WorkflowPlanPreviewItem {
+  const text = brief.toLowerCase();
+  const pick = (pattern: RegExp) =>
+    items.find((item) => pattern.test(`${item.title} ${item.purpose} ${item.slot}`.toLowerCase()));
+  if (/详情|细节|参数|detail|spec/.test(text)) {
+    const detail = pick(/详情|细节|材质|参数|detail|macro|spec/);
+    if (detail) return detail;
+  }
+  if (/海报|卖点|封面|poster|cover|feature/.test(text)) {
+    const poster = pick(/海报|卖点|封面|poster|cover|feature/);
+    if (poster) return poster;
+  }
+  if (/场景|生活|街拍|商场|户外|室内|scene|lifestyle/.test(text)) {
+    const scene = pick(/场景|生活|使用|scene|lifestyle/);
+    if (scene) return scene;
+  }
+  return [...items].reverse().find((item) => !isFallbackClosingPreviewItem(item)) ?? items[items.length - 1] ?? items[0];
+}
+
+function cloneFallbackTotalCountItem(
+  item: WorkflowPlanPreviewItem,
+  ordinal: number,
+  sequence: number
+): WorkflowPlanPreviewItem {
+  return {
+    ...item,
+    id: `${item.id}_explicit_${sequence}`,
+    title: `${item.title} ${sequence + 1}`,
+    slot: `${item.slot}_explicit_${sequence}`,
+    purpose: `${item.purpose}（按用户要求补足总张数）`,
+  };
+}
+
+function isFallbackClosingPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return /(收尾|closing|转化尾图)/i.test(`${item.title} ${item.purpose} ${item.slot}`);
+}
+
+function markWorkflowPlanPreviewAgentFallback(
+  preview: WorkflowPlanPreview,
+  reason: string,
+  copyRenderMode?: "layout_layer" | "burn_in" | "metadata_only",
+  brief = ""
+): WorkflowPlanPreview {
+  let normalizedPreview = shouldFallbackSuppressModelSlots(brief)
+    ? removeFallbackModelSlotsFromPreview(preview)
+    : preview;
+  normalizedPreview = ensureFallbackSceneSlotsFromBrief(normalizedPreview, brief, copyRenderMode);
+  normalizedPreview = ensureFallbackPosterSlotFromBrief(normalizedPreview, brief);
+  normalizedPreview = applyFallbackExplicitPosterCount(normalizedPreview, brief);
+  normalizedPreview = applyFallbackExplicitTotalCount(normalizedPreview, brief);
+  const existing = normalizedPreview.agentPlan;
+  const rawFallbackMatrixBase = existing?.generationMatrix?.length
+    && existing.generationMatrix.length === normalizedPreview.items.length
+    ? existing.generationMatrix
+    : buildAgentMatrixFromPreviewItems(normalizedPreview.items);
+  const rawFallbackMatrix = injectFallbackModelIntentIntoMatrix(rawFallbackMatrixBase, brief);
+  const fallbackMatrix = copyRenderMode && copyRenderMode !== "layout_layer"
+    ? rawFallbackMatrix.map((item) => ({
+        ...item,
+        copyMode: copyRenderMode === "burn_in" && shouldFallbackMatrixItemBurnInCopy(item, brief)
+          ? "burn_in"
+          : copyRenderMode === "metadata_only"
+            ? "metadata_only"
+            : "layout_layer",
+      }))
+    : rawFallbackMatrix;
+  const fallbackOutputSlots = existing?.outputSlots?.length
+    && existing.outputSlots.length === normalizedPreview.items.length
+    ? existing.outputSlots
+    : normalizedPreview.items.map((item) => ({
+        id: getPreviewItemBaseSlotId(item.slot || item.id),
+        label: getAgentPlanGroupDisplayTitle(item.title, getPreviewItemBaseSlotId(item.slot || item.id)),
+        purpose: item.purpose,
+        ratio: item.ratio,
+        samplePhase: true,
+      }));
+  const fallbackCopyMode = copyRenderMode ?? existing?.copyPolicy?.requestedMode ?? "layout_layer";
+  const fallbackCopyPolicy = existing?.copyPolicy
+    ? {
+        ...existing.copyPolicy,
+        requestedMode: fallbackCopyMode,
+        allowBurnIn: existing.copyPolicy.allowBurnIn || fallbackCopyMode === "burn_in",
+        note: fallbackCopyMode === "burn_in"
+          ? "用户已要求文案烧进图；fallback 计划会保留该策略，生成时需检查安全区。"
+          : existing.copyPolicy.note,
+      }
+    : {
+        defaultMode: "layout_layer",
+        requestedMode: fallbackCopyMode,
+        allowBurnIn: fallbackCopyMode === "burn_in",
+        note: fallbackCopyMode === "burn_in"
+          ? "用户已要求文案烧进图；fallback 计划会保留该策略，生成时需检查安全区。"
+          : "文案默认作为图层，Agent 会按需求判断是否烧进图。",
+      };
+
+  return {
+    ...normalizedPreview,
+    estimatedCount: fallbackMatrix.length || normalizedPreview.estimatedCount,
+    agentPlan: {
+      skillId: existing?.skillId || "agent-plan-fallback",
+      title: existing?.title || "基础计划",
+      shortLabel: existing?.shortLabel || "基础计划",
+      compositionMode: existing?.compositionMode || "unknown",
+      summary: {
+        mode: existing?.summary?.mode || "deterministic_agent_plan_v1",
+        fallbackUsed: true,
+        fallbackReason: reason,
+        text: "Agent 深度规划暂不可用，已先展示基础制作计划。",
+        itemCount: fallbackMatrix.length,
+        readyItemCount: fallbackMatrix.filter((item) => item.status === "ready").length,
+        blockedItemCount: fallbackMatrix.filter((item) => item.status === "blocked").length,
+      },
+      sampleCount: fallbackMatrix.length || existing?.sampleCount || normalizedPreview.estimatedCount,
+      fullCount: fallbackMatrix.length || existing?.fullCount || normalizedPreview.estimatedCount,
+      requiredAssetRoles: existing?.requiredAssetRoles ?? [],
+      optionalAssetRoles: existing?.optionalAssetRoles ?? [],
+      copyPolicy: fallbackCopyPolicy,
+      phases: existing?.phases ?? [],
+      outputSlots: fallbackOutputSlots,
+      assetGroups: existing?.assetGroups ?? [],
+      generationMatrix: fallbackMatrix,
+      missingInputs: existing?.missingInputs ?? [],
+    },
+  };
+}
+
+function buildAgentPlanPreviewRequest({
+  preview,
+  draft,
+  brief,
+  userBrief,
+  projectStarterPrompt,
+  copyRenderMode,
+  referenceContext,
+}: {
+  preview: WorkflowPlanPreview;
+  draft: WorkflowComposeDraft;
+  brief: string;
+  userBrief?: string;
+  projectStarterPrompt?: string;
+  copyRenderMode: "layout_layer" | "burn_in" | "metadata_only";
+  referenceContext: GenerationReferenceContext;
+}) {
+  const metadata = draft.metadata ?? {};
+  const platforms = getStringArray(metadata.platforms);
+  const outputPacks = getStringArray(metadata.outputPacks);
+  const campaignBible = getRecordValue(metadata.campaignBible);
+  const shotList = Array.isArray(metadata.shotList) ? metadata.shotList : undefined;
+
+  return {
+    workflowId: `agent_preview_${Date.now()}`,
+    frameNodeId: "agent-preview-frame",
+    batchId: "agent-preview-batch",
+    request: brief,
+    userRequest: userBrief || brief,
+    brief,
+    projectStarterPrompt: projectStarterPrompt || undefined,
+    projectIntent: projectStarterPrompt || undefined,
+    platforms,
+    outputPacks,
+    copyRenderMode,
+    referenceContext,
+    campaignBible: Object.keys(campaignBible).length > 0 ? campaignBible : undefined,
+    shotList,
+    items: preview.items.map((item) => ({
+      itemId: item.id,
+      id: item.id,
+      title: item.title,
+      type: item.slot || item.id,
+      prompt: item.purpose,
+      ratio: item.ratio === "auto" ? undefined : item.ratio,
+      size: item.size,
+      copyRenderMode,
+      metadata: {
+        planPreviewSlot: item.slot,
+        platform: item.platform,
+      },
+    })),
+    agentPlanMode: "llm",
+  };
+}
+
+function mergeAgentPlanIntoWorkflowPlanPreview(
+  preview: WorkflowPlanPreview,
+  payload: unknown
+): WorkflowPlanPreview {
+  const record = getRecordValue(payload);
+  const agentRecord = getRecordValue(record.agentPlan);
+  if (Object.keys(agentRecord).length === 0) return preview;
+  const existing = preview.agentPlan;
+  const summary = getRecordValue(agentRecord.summary);
+  const selectedSkillIds = getStringArray(agentRecord.selectedSkillIds);
+  const skillId = existing?.skillId || selectedSkillIds[0] || "agent-plan";
+
+  return {
+    ...preview,
+    agentPlan: {
+      skillId,
+      title: existing?.title || skillId,
+      shortLabel: existing?.shortLabel || "Agent",
+      sampleCount: existing?.sampleCount ?? preview.estimatedCount,
+      fullCount: existing?.fullCount ?? preview.estimatedCount,
+      requiredAssetRoles: existing?.requiredAssetRoles ?? [],
+      optionalAssetRoles: existing?.optionalAssetRoles ?? [],
+      copyPolicy: existing?.copyPolicy ?? {
+        defaultMode: "layout_layer",
+        requestedMode: "layout_layer",
+        allowBurnIn: false,
+        note: "文案默认作为图层，Agent 会按需求判断是否烧进图。",
+      },
+      phases: existing?.phases ?? [],
+      outputSlots: existing?.outputSlots ?? [],
+      compositionMode: getStringValue(agentRecord.compositionMode),
+      summary: {
+        mode: getStringValue(summary.mode),
+        fallbackUsed: summary.fallbackUsed === true,
+        fallbackReason: getStringValue(summary.fallbackReason),
+        text: getStringValue(summary.text),
+        itemCount: getFiniteNumber(summary.itemCount),
+        readyItemCount: getFiniteNumber(summary.readyItemCount),
+        blockedItemCount: getFiniteNumber(summary.blockedItemCount),
+      },
+      assetGroups: mapAgentPlanAssetGroups(agentRecord.assetGroups),
+      generationMatrix: mapAgentPlanMatrixItems(agentRecord.generationMatrix),
+      missingInputs: mapAgentPlanMissingInputs(agentRecord.missingInputs),
+    },
+  };
+}
+
+function shouldFallbackMatrixItemBurnInCopy(
+  item: WorkflowPlanPreviewAgentMatrixItem,
+  brief: string
+): boolean {
+  if (!item.referenceRoles.includes("copy")) return false;
+  const text = `${item.title} ${item.type} ${item.outputSlotId ?? ""} ${item.summary}`.toLowerCase();
+  if (hasFallbackCopyLayerTargetIntent(brief, "详情页|商品详情") && /(详情|细节|材质|参数|场景|detail|macro|material|spec|scene)/i.test(text)) {
+    return false;
+  }
+  if (hasFallbackCopyLayerTargetIntent(brief, "场景|多场景|scene") && /(场景|scene|lifestyle)/i.test(text)) {
+    return false;
+  }
+  if (hasFallbackCopyLayerTargetIntent(brief, "海报|封面|poster|cover") && /(海报|封面|poster|cover)/i.test(text)) {
+    return false;
+  }
+  if (hasFallbackCopyBurnInTargetIntent(brief, "全部|所有|整套")) return true;
+  if (hasFallbackCopyBurnInTargetIntent(brief, "详情页|商品详情") && /(详情|细节|材质|参数|detail|macro|material|spec)/i.test(text)) {
+    return true;
+  }
+  if (hasFallbackCopyBurnInTargetIntent(brief, "海报|封面|poster|cover")) {
+    return /(海报|封面|主视觉|poster|cover|banner)/i.test(text);
+  }
+  if (hasFallbackCopyBurnInTargetIntent(brief, "卖点|feature")) {
+    return /(卖点|feature)/i.test(text);
+  }
+  if (hasFallbackCopyBurnInTargetIntent(brief, "收尾|转化尾图|closing")) {
+    return /(收尾|转化尾图|closing)/i.test(text);
+  }
+  if (hasFallbackCopyBurnInTargetIntent(brief, "主图|白底|main|hero")) {
+    return /(主图|白底|main|hero)/i.test(text);
+  }
+  if (hasFallbackCopyBurnInTargetIntent(brief, "细节|详情|参数|detail|macro|spec")) {
+    return /(细节|详情|参数|detail|macro|spec)/i.test(text);
+  }
+  return /(海报|封面|主视觉|poster|cover|banner)/i.test(text);
+}
+
+function hasFallbackCopyBurnInTargetIntent(brief: string, targetPattern: string): boolean {
+  const compact = brief.replace(/\s+/g, "").toLowerCase();
+  const localGap = "[^，。；、:：,.!?\\n]{0,12}";
+  const copyPattern = "烧字|烧进|进图|带字|出字";
+  return new RegExp(`(?:${targetPattern})${localGap}(?:${copyPattern})|(?:${copyPattern})${localGap}(?:${targetPattern})`, "i").test(compact);
+}
+
+function hasFallbackCopyLayerTargetIntent(brief: string, targetPattern: string): boolean {
+  const compact = brief.replace(/\s+/g, "").toLowerCase();
+  const localGap = "[^，。；、:：,.!?\\n]{0,14}";
+  const layerPattern = "图层|不进图|不入图|不烧字|不烧进|后期改字|可编辑";
+  return new RegExp(`(?:${targetPattern})${localGap}(?:${layerPattern})|(?:${layerPattern})${localGap}(?:${targetPattern})`, "i").test(compact);
+}
+
+function mapAgentPlanAssetGroups(value: unknown): WorkflowPlanPreviewAgentAssetGroup[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): WorkflowPlanPreviewAgentAssetGroup[] => {
+    const record = getRecordValue(item);
+    const id = getStringValue(record.id);
+    const role = getStringValue(record.role);
+    if (!id || !role) return [];
+    return [{
+      id,
+      role,
+      title: getStringValue(record.title) || role,
+      required: record.required === true,
+      available: record.available === true,
+      providerUsable: record.providerUsable === true,
+      usage: getStringValue(record.usage) || "optional",
+      imageCount: getFiniteNumber(record.imageCount) ?? 0,
+      assetIds: getStringArray(record.assetIds),
+      sourceNodeIds: getStringArray(record.sourceNodeIds),
+      componentIds: getStringArray(record.componentIds),
+      notes: getStringArray(record.notes),
+    }];
+  });
+}
+
+function mapAgentPlanMatrixItems(value: unknown): WorkflowPlanPreviewAgentMatrixItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): WorkflowPlanPreviewAgentMatrixItem[] => {
+    const record = getRecordValue(item);
+    const id = getStringValue(record.id);
+    const itemId = getStringValue(record.itemId);
+    if (!id || !itemId) return [];
+    return [{
+      id,
+      itemId,
+      title: getStringValue(record.title) || itemId,
+      type: getStringValue(record.type) || "image",
+      ratio: getStringValue(record.ratio),
+      size: getStringValue(record.size),
+      skillId: getStringValue(record.skillId),
+      outputSlotId: getStringValue(record.outputSlotId),
+      referenceRoles: getStringArray(record.referenceRoles),
+      providerReferenceRoles: getStringArray(record.providerReferenceRoles),
+      assetGroupIds: getStringArray(record.assetGroupIds),
+      copyMode: getStringValue(record.copyMode),
+      missingInputIds: getStringArray(record.missingInputIds),
+      status: getStringValue(record.status) === "blocked" ? "blocked" : "ready",
+      summary: getStringValue(record.summary) || "",
+    }];
+  });
+}
+
+function mapAgentPlanMissingInputs(value: unknown): WorkflowPlanPreviewAgentMissingInput[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): WorkflowPlanPreviewAgentMissingInput[] => {
+    const record = getRecordValue(item);
+    const id = getStringValue(record.id);
+    if (!id) return [];
+    return [{
+      id,
+      label: getStringValue(record.label) || id,
+      role: getStringValue(record.role),
+      required: record.required === true,
+      reason: getStringValue(record.reason) || "",
+      blocking: record.blocking === true,
+    }];
+  });
+}
+
 function updatePlanPreviewParameter(
   preview: WorkflowPlanPreview | null,
   nodeId: string,
@@ -10244,6 +16227,1478 @@ function updateWorkflowDraftParameter(
       };
     }),
   };
+}
+
+function applyAgentNaturalLanguagePlanEdit({
+  preview,
+  draft,
+  userBrief,
+}: {
+  preview: WorkflowPlanPreview;
+  draft: WorkflowComposeDraft | null;
+  userBrief: string;
+}): {
+  preview: WorkflowPlanPreview;
+  draft: WorkflowComposeDraft | null;
+  changed: boolean;
+  message: string;
+  diff?: AgentPlanDiff;
+} {
+  const text = normalizeAgentPlanEditText(userBrief);
+  if (!text) {
+    return { preview, draft, changed: false, message: "" };
+  }
+
+  let nextItems = [...preview.items];
+  let nextMatrix = [...(preview.agentPlan?.generationMatrix ?? [])];
+  const editsUseMatrix = nextMatrix.length > 0;
+  const changes: string[] = [];
+
+  const originalCount = editsUseMatrix ? nextMatrix.length : nextItems.length;
+  const namedSceneEdit = applyAgentNamedScenePlanEdits({
+    text,
+    items: nextItems,
+    matrix: nextMatrix,
+    editsUseMatrix,
+  });
+  nextItems = namedSceneEdit.items;
+  nextMatrix = namedSceneEdit.matrix;
+  changes.push(...namedSceneEdit.changes);
+
+  const removalTargets = getAgentPlanRemovalTargets(text).filter((target) =>
+    !(target.id === "scene" && namedSceneEdit.handledSceneRemoval)
+  );
+  for (const target of removalTargets) {
+    const beforeItems = nextItems.length;
+    const beforeMatrix = nextMatrix.length;
+    if (editsUseMatrix) {
+      nextMatrix = nextMatrix.filter((item) => !agentPlanMatrixItemMatchesTarget(item, target));
+    } else {
+      nextItems = nextItems.filter((item) => !agentPlanPreviewItemMatchesTarget(item, target));
+    }
+    let removed = editsUseMatrix ? beforeMatrix - nextMatrix.length : beforeItems - nextItems.length;
+    if (removed === 0 && target.id === "scene") {
+      if (editsUseMatrix) {
+        nextMatrix = nextMatrix.filter((item) => !isFallbackScenePlanItem(item));
+        removed = beforeMatrix - nextMatrix.length;
+      } else {
+        nextItems = nextItems.filter((item) => !isFallbackScenePreviewItem(item));
+        removed = beforeItems - nextItems.length;
+      }
+    }
+    if (removed > 0) changes.push(`删除${target.label} ${removed} 张`);
+  }
+
+  const relativeCountEdits = getAgentPlanRelativeCountEditsForTargets(text).filter((edit) =>
+    !(edit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)
+  );
+  const relativeTargetIds = new Set(relativeCountEdits.map((edit) => edit.target.id));
+  for (const edit of relativeCountEdits) {
+    const currentCount = getAgentPlanTargetCount({
+      items: nextItems,
+      matrix: nextMatrix,
+      editsUseMatrix,
+      target: edit.target,
+    });
+    const minCount = edit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
+    const nextCount = Math.max(minCount, currentCount + edit.delta);
+    if (currentCount > 0 && nextCount !== currentCount) {
+      if (editsUseMatrix) {
+        nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, nextCount);
+      } else {
+        nextItems = adjustAgentPlanItemsToCount(nextItems, edit.target, nextCount);
+      }
+      const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
+      if (instruction) {
+        nextMatrix = applyAgentPlanContentInstructionToMatrix(nextMatrix, edit.target, instruction);
+        nextItems = applyAgentPlanContentInstructionToItems(nextItems, edit.target, instruction);
+      }
+      changes.push(`${edit.target.label}${edit.label}，剩 ${nextCount} 张${instruction ? `，方向：${instruction}` : ""}`);
+    } else if (currentCount === 0 && edit.delta > 0) {
+      const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
+      const added = createAgentPlanItemsForNewTarget({
+        target: edit.target,
+        count: edit.delta,
+        instruction,
+        existingItems: nextItems,
+        existingMatrix: nextMatrix,
+      });
+      nextItems = [...nextItems, ...added.items];
+      if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
+      changes.push(`新增${edit.target.label} ${edit.delta} 张${instruction ? `，方向：${instruction}` : ""}`);
+    }
+  }
+
+  const countEdits = getAgentPlanCountEdits(text).filter((edit) => !relativeTargetIds.has(edit.target.id));
+  for (const edit of countEdits) {
+    const beforeItems = nextItems.length;
+    const beforeMatrix = nextMatrix.length;
+    if (editsUseMatrix) {
+      nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, edit.count);
+    } else {
+      nextItems = adjustAgentPlanItemsToCount(nextItems, edit.target, edit.count);
+    }
+    if ((editsUseMatrix && nextMatrix.length !== beforeMatrix) || (!editsUseMatrix && nextItems.length !== beforeItems)) {
+      changes.push(`${edit.target.label}改为 ${edit.count} 张`);
+    }
+  }
+
+  const focusedTarget = getFocusedAgentPlanEditTarget(text);
+  const relativeCountEdit = getAgentPlanRelativeCountEdit(text);
+  if (focusedTarget && relativeCountEdit) {
+    const currentCount = getAgentPlanTargetCount({
+      items: nextItems,
+      matrix: nextMatrix,
+      editsUseMatrix,
+      target: focusedTarget,
+    });
+    const minCount = relativeCountEdit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
+    const nextCount = Math.max(minCount, currentCount + relativeCountEdit.delta);
+    if (currentCount > 0 && nextCount !== currentCount) {
+      if (editsUseMatrix) {
+        nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, focusedTarget, nextCount);
+      } else {
+        nextItems = adjustAgentPlanItemsToCount(nextItems, focusedTarget, nextCount);
+      }
+      const instruction = focusedTarget.id === "scene" ? getAgentPlanTargetInstruction(text, focusedTarget) : "";
+      if (instruction) {
+        nextMatrix = applyAgentPlanContentInstructionToMatrix(nextMatrix, focusedTarget, instruction);
+        nextItems = applyAgentPlanContentInstructionToItems(nextItems, focusedTarget, instruction);
+      }
+      changes.push(`${focusedTarget.label}${relativeCountEdit.label}，剩 ${nextCount} 张${instruction ? `，方向：${instruction}` : ""}`);
+    } else if (currentCount === 0 && relativeCountEdit.delta > 0) {
+      const instruction = focusedTarget.id === "scene" ? getAgentPlanTargetInstruction(text, focusedTarget) : "";
+      const added = createAgentPlanItemsForNewTarget({
+        target: focusedTarget,
+        count: relativeCountEdit.delta,
+        instruction,
+        existingItems: nextItems,
+        existingMatrix: nextMatrix,
+      });
+      nextItems = [...nextItems, ...added.items];
+      if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
+      changes.push(`新增${focusedTarget.label} ${relativeCountEdit.delta} 张${instruction ? `，方向：${instruction}` : ""}`);
+    }
+  }
+
+  const copyEdit = getAgentPlanCopyEdit(text);
+  if (copyEdit) {
+    nextMatrix = nextMatrix.map((item) =>
+      copyEdit.targets.length === 0 || copyEdit.targets.some((target) => agentPlanMatrixItemMatchesTarget(item, target))
+        ? { ...item, copyMode: copyEdit.mode }
+        : item
+    );
+    const targetLabel = copyEdit.targets.length > 0
+      ? `${copyEdit.targets.map((target) => target.label).join("、")} `
+      : "";
+    changes.push(copyEdit.mode === "burn_in" ? `${targetLabel}文案改为烧进图` : `${targetLabel}文案改为图层/不进图`);
+  }
+
+  const contentEdit = getAgentPlanContentEdit(text);
+  if (contentEdit && !(contentEdit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)) {
+    if (editsUseMatrix) {
+      nextMatrix = nextMatrix.map((item) =>
+        agentPlanMatrixItemMatchesTarget(item, contentEdit.target)
+          ? {
+              ...item,
+              summary: mergeAgentPlanContentInstruction(item.summary, contentEdit.instruction),
+            }
+          : item
+      );
+    }
+    nextItems = nextItems.map((item) =>
+      agentPlanPreviewItemMatchesTarget(item, contentEdit.target)
+        ? {
+            ...item,
+            purpose: mergeAgentPlanContentInstruction(item.purpose, contentEdit.instruction),
+          }
+        : item
+    );
+    changes.push(`${contentEdit.target.label}换成${contentEdit.instruction}`);
+  }
+
+  if (changes.length === 0) {
+    const fallbackEdit = applyAgentPlanEditFallback({
+      text,
+      items: nextItems,
+      matrix: nextMatrix,
+      editsUseMatrix,
+    });
+    nextItems = fallbackEdit.items;
+    nextMatrix = fallbackEdit.matrix;
+    changes.push(...fallbackEdit.changes);
+  }
+
+  if (changes.length === 0 || nextItems.length === 0) {
+    return { preview, draft, changed: false, message: "" };
+  }
+
+  if (editsUseMatrix) {
+    nextItems = syncEditedPlanItemsFromMatrix(nextItems, nextMatrix);
+  }
+
+  if (changes.length === 0 || nextItems.length === 0 || (editsUseMatrix && nextMatrix.length === 0)) {
+    return { preview, draft, changed: false, message: "" };
+  }
+
+  const normalizedItems = nextItems.map((item, index) => normalizeEditedPlanItem(item, index, nextMatrix));
+  const normalizedMatrix = normalizeEditedAgentMatrix(nextMatrix, normalizedItems);
+  const nextPreview: WorkflowPlanPreview = {
+    ...preview,
+    items: normalizedItems,
+    images: normalizedItems,
+    estimatedCount: normalizedItems.length,
+    summary: `${preview.summary} 已按用户修改：${changes.join("；")}。`,
+    agentPlan: preview.agentPlan
+      ? {
+          ...preview.agentPlan,
+          sampleCount: normalizedItems.length,
+          fullCount: Math.max(preview.agentPlan.fullCount, normalizedItems.length),
+          outputSlots: preview.agentPlan.outputSlots.filter((slot) =>
+            normalizedItems.some((item) => item.slot === slot.id || item.id === slot.id)
+          ),
+          generationMatrix: normalizedMatrix,
+          summary: {
+            ...preview.agentPlan.summary,
+            text: `已按用户修改：${changes.join("；")}。`,
+            itemCount: normalizedItems.length,
+            readyItemCount: normalizedMatrix.filter((item) => item.status === "ready").length,
+            blockedItemCount: normalizedMatrix.filter((item) => item.status === "blocked").length,
+          },
+        }
+      : preview.agentPlan,
+  };
+
+  return {
+    preview: nextPreview,
+    draft: draft ? applyEditedPlanItemsToWorkflowDraft(draft, normalizedItems, normalizedMatrix) : null,
+    changed: true,
+    message: `已按你的话调整计划：${changes.join("；")}。`,
+    diff: buildAgentPlanDiff(changes, originalCount, normalizedItems.length),
+  };
+}
+
+function normalizeAgentPlanEditText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function applyAgentNamedScenePlanEdits({
+  text,
+  items,
+  matrix,
+  editsUseMatrix,
+}: {
+  text: string;
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  editsUseMatrix: boolean;
+}): {
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  changes: string[];
+  handledSceneRemoval: boolean;
+  handledSceneIncrease: boolean;
+} {
+  const removeTerms = extractAgentNamedSceneTerms(text, "remove");
+  const increaseTerms = extractAgentNamedSceneTerms(text, "increase");
+  let nextItems = items;
+  let nextMatrix = matrix;
+  const changes: string[] = [];
+
+  for (const term of removeTerms) {
+    if (editsUseMatrix) {
+      const before = nextMatrix.length;
+      nextMatrix = nextMatrix.filter((item) => !agentPlanMatrixItemMatchesNamedScene(item, term.keywords));
+      const removed = before - nextMatrix.length;
+      if (removed > 0) changes.push(`删除${term.label}场景 ${removed} 张`);
+    } else {
+      const before = nextItems.length;
+      nextItems = nextItems.filter((item) => !agentPlanPreviewItemMatchesNamedScene(item, term.keywords));
+      const removed = before - nextItems.length;
+      if (removed > 0) changes.push(`删除${term.label}场景 ${removed} 张`);
+    }
+  }
+
+  for (const term of increaseTerms) {
+    if (editsUseMatrix) {
+      const matching = nextMatrix.filter((item) => agentPlanMatrixItemMatchesNamedScene(item, term.keywords));
+      const seedItems = matching.length > 0 ? matching : nextMatrix.filter(isAgentNamedSceneSeedMatrixItem);
+      if (seedItems.length > 0) {
+        nextMatrix = insertAgentPlanNamedSceneMatrixClonesAfterLastMatch(nextMatrix, seedItems, term);
+        changes.push(`${term.label}场景增加 ${term.count} 张`);
+      }
+    } else {
+      const matching = nextItems.filter((item) => agentPlanPreviewItemMatchesNamedScene(item, term.keywords));
+      const seedItems = matching.length > 0 ? matching : nextItems.filter(isAgentNamedSceneSeedPreviewItem);
+      if (seedItems.length > 0) {
+        nextItems = insertAgentPlanNamedScenePreviewClonesAfterLastMatch(nextItems, seedItems, term);
+        changes.push(`${term.label}场景增加 ${term.count} 张`);
+      }
+    }
+  }
+
+  return {
+    items: nextItems,
+    matrix: nextMatrix,
+    changes,
+    handledSceneRemoval: removeTerms.length > 0,
+    handledSceneIncrease: changes.some((change) => /场景增加/.test(change)),
+  };
+}
+
+function extractAgentNamedSceneTerms(
+  text: string,
+  mode: "remove" | "increase"
+): Array<{ label: string; keywords: string[]; count: number }> {
+  const clauses = text.split(/[，。；、,.!?\n]/).map((item) => item.trim()).filter(Boolean);
+  const terms: Array<{ label: string; keywords: string[]; count: number }> = [];
+  for (const clause of clauses) {
+    const compact = clause.replace(/\s+/g, "");
+    const hasIntent = mode === "remove"
+      ? /(不要|删除|去掉|不用|取消|别做|拿掉)/.test(compact)
+      : /(多|加|增加|新增|再来|补)/.test(compact);
+    if (!hasIntent) continue;
+    const keywords = getAgentNamedSceneKeywords(compact);
+    if (keywords.length === 0) continue;
+    const countMatch = compact.match(/([0-9一二两三四五六七八九十]+)(?:张|组|个)/);
+    terms.push({
+      label: getAgentNamedSceneLabel(keywords),
+      keywords,
+      count: mode === "increase" ? Math.max(1, parseAgentPlanEditCount(countMatch?.[1]) || 1) : 1,
+    });
+  }
+  return terms;
+}
+
+function getAgentNamedSceneKeywords(text: string): string[] {
+  const keywords = [
+    "茶室",
+    "庭院",
+    "商场",
+    "快闪",
+    "咖啡",
+    "街拍",
+    "雪山",
+    "家居",
+    "办公室",
+    "露营",
+    "门店",
+    "展厅",
+    "厨房",
+    "卧室",
+    "客厅",
+    "书房",
+    "花店",
+    "天台",
+    "海边",
+    "室内",
+    "户外",
+  ].filter((keyword) => text.includes(keyword));
+  return agentUniqueStrings(keywords).slice(0, 3);
+}
+
+function getAgentNamedSceneLabel(keywords: string[]): string {
+  const specific = keywords.filter((keyword) => keyword !== "室内" && keyword !== "户外" && keyword !== "快闪");
+  return (specific[0] || keywords[0] || "指定") ;
+}
+
+function agentPlanMatrixItemMatchesNamedScene(
+  item: WorkflowPlanPreviewAgentMatrixItem,
+  keywords: string[]
+): boolean {
+  const text = planItemText([item.title, item.type, item.outputSlotId, item.summary]).join(" ");
+  return isAgentNamedSceneTextMatch(text, keywords);
+}
+
+function agentPlanPreviewItemMatchesNamedScene(
+  item: WorkflowPlanPreviewItem,
+  keywords: string[]
+): boolean {
+  const text = planItemText([item.title, item.purpose, item.slot, item.platform]).join(" ");
+  return isAgentNamedSceneTextMatch(text, keywords);
+}
+
+function isAgentNamedSceneTextMatch(text: string, keywords: string[]): boolean {
+  if (keywords.length === 0) return false;
+  const hasSceneSurface = isAgentSceneLikeText(text);
+  return hasSceneSurface && keywords.some((keyword) => text.includes(keyword.toLowerCase()));
+}
+
+function isAgentSceneLikeMatrixItem(item: WorkflowPlanPreviewAgentMatrixItem): boolean {
+  return isAgentSceneLikeText(planItemText([item.title, item.type, item.outputSlotId, item.summary]).join(" "));
+}
+
+function isAgentSceneLikePreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return isAgentSceneLikeText(planItemText([item.title, item.purpose, item.slot, item.platform]).join(" "));
+}
+
+function isAgentNamedSceneSeedMatrixItem(item: WorkflowPlanPreviewAgentMatrixItem): boolean {
+  const text = planItemText([item.title, item.type, item.outputSlotId, item.summary]).join(" ");
+  return isAgentSceneLikeText(text) && !isAgentMarketingPosterLikeText(text);
+}
+
+function isAgentNamedSceneSeedPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  const text = planItemText([item.title, item.purpose, item.slot, item.platform]).join(" ");
+  return isAgentSceneLikeText(text) && !isAgentMarketingPosterLikeText(text);
+}
+
+function isAgentSceneLikeText(text: string): boolean {
+  return /(场景|scene|lifestyle|海报|poster|环境|空间|茶室|庭院|商场|咖啡|街拍|雪山|家居|办公室|露营|门店|展厅)/i.test(text);
+}
+
+function isAgentMarketingPosterLikeText(text: string): boolean {
+  return /(海报|poster|cover|hero|banner|卖点|feature|收尾|closing|文案|copy)/i.test(text);
+}
+
+function insertAgentPlanNamedSceneMatrixClonesAfterLastMatch(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  matching: WorkflowPlanPreviewAgentMatrixItem[],
+  term: { label: string; count: number }
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  const anchor = matching[matching.length - 1];
+  return items.flatMap((item) =>
+    item === anchor
+      ? [
+          item,
+          ...Array.from({ length: term.count }, (_, index) =>
+            renameAgentPlanMatrixSceneClone(
+              cloneAgentPlanMatrixItem(anchor, matching.length + index + 1),
+              term.label
+            )
+          ),
+        ]
+      : [item]
+  );
+}
+
+function insertAgentPlanNamedScenePreviewClonesAfterLastMatch(
+  items: WorkflowPlanPreviewItem[],
+  matching: WorkflowPlanPreviewItem[],
+  term: { label: string; count: number }
+): WorkflowPlanPreviewItem[] {
+  const anchor = matching[matching.length - 1];
+  return items.flatMap((item) =>
+    item === anchor
+      ? [
+          item,
+          ...Array.from({ length: term.count }, (_, index) =>
+            renameAgentPlanPreviewSceneClone(
+              cloneAgentPlanPreviewItem(anchor, matching.length + index + 1),
+              term.label
+            )
+          ),
+        ]
+      : [item]
+  );
+}
+
+function renameAgentPlanMatrixSceneClone(
+  item: WorkflowPlanPreviewAgentMatrixItem,
+  label: string
+): WorkflowPlanPreviewAgentMatrixItem {
+  const slotId = getAgentNamedSceneSlotId(label);
+  return {
+    ...item,
+    id: `${item.id}_${slotId}`,
+    itemId: `${item.itemId}_${slotId}`,
+    title: `${label}场景`,
+    type: slotId,
+    outputSlotId: slotId,
+    referenceRoles: agentUniqueStrings([...item.referenceRoles, "scene"]),
+    copyMode: item.copyMode === "burn_in" ? "layout_layer" : item.copyMode,
+    summary: `补充${label}场景，用来验证商品在不同环境里的空间、光影和使用氛围`,
+  };
+}
+
+function renameAgentPlanPreviewSceneClone(
+  item: WorkflowPlanPreviewItem,
+  label: string
+): WorkflowPlanPreviewItem {
+  const slotId = getAgentNamedSceneSlotId(label);
+  return {
+    ...item,
+    id: `${item.id}_${slotId}`,
+    title: `${label}场景`,
+    slot: slotId,
+    copyMode: item.copyMode === "burn_in" ? "layout_layer" : item.copyMode,
+    purpose: `补充${label}场景，用来验证商品在不同环境里的空间、光影和使用氛围`,
+  };
+}
+
+function getAgentNamedSceneSlotId(label: string): string {
+  const known: Record<string, string> = {
+    商场: "mall",
+    茶室: "tea_room",
+    庭院: "courtyard",
+    咖啡: "cafe",
+    街拍: "street",
+    雪山: "snow_mountain",
+    家居: "home",
+    办公室: "office",
+    露营: "camping",
+    露营地: "camping",
+    门店: "store",
+    展厅: "showroom",
+    厨房: "kitchen",
+    卧室: "bedroom",
+    客厅: "living_room",
+    书房: "study",
+    花店: "flower_shop",
+    天台: "rooftop",
+    海边: "seaside",
+    室内: "indoor",
+    户外: "outdoor",
+  };
+  const key = known[label] || label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return `scene_${key || "named"}`;
+}
+
+function buildAgentPlanDiff(changes: string[], beforeCount: number, afterCount: number): AgentPlanDiff {
+  const additions: string[] = [];
+  const removals: string[] = [];
+  const countChanges: string[] = [];
+  const copyChanges: string[] = [];
+  const otherChanges: string[] = [];
+
+  for (const change of changes) {
+    if (/文案|烧字|进图|图层/.test(change)) {
+      copyChanges.push(change);
+    } else if (/删除|去掉|不要|取消|减少|减掉|删掉/.test(change)) {
+      removals.push(change);
+    } else if (/增加|新增|添加|加/.test(change)) {
+      additions.push(change);
+    } else if (/改为|改成|调整为|剩\s*\d+\s*张/.test(change)) {
+      countChanges.push(change);
+    } else {
+      otherChanges.push(change);
+    }
+  }
+
+  return {
+    summary: beforeCount === afterCount
+      ? `总张数保持 ${afterCount} 张。`
+      : `计划从 ${beforeCount} 张调整为 ${afterCount} 张。`,
+    scopeSummary: buildAgentPlanDiffScopeSummary({ additions, removals, countChanges, copyChanges, otherChanges }),
+    preservedSummary: "未提到的图组、比例和参考图角色保持不变。",
+    nextAction: buildAgentPlanDiffNextAction({ additions, removals, countChanges, copyChanges, otherChanges }),
+    additions,
+    removals,
+    countChanges,
+    copyChanges,
+    otherChanges,
+  };
+}
+
+function buildAgentPlanDiffScopeSummary({
+  additions,
+  removals,
+  countChanges,
+  copyChanges,
+  otherChanges,
+}: Pick<AgentPlanDiff, "additions" | "removals" | "countChanges" | "copyChanges" | "otherChanges">): string {
+  const structuralChangeCount = additions.length + removals.length + countChanges.length + otherChanges.length;
+  if (copyChanges.length > 0 && structuralChangeCount === 0) {
+    return "只调整文案策略，图组数量和参考角色不变。";
+  }
+  const affected: string[] = [];
+  if (additions.length > 0) affected.push("新增图组");
+  if (removals.length > 0) affected.push("删除图组");
+  if (countChanges.length > 0) affected.push("数量");
+  if (copyChanges.length > 0) affected.push("文案策略");
+  if (otherChanges.length > 0) affected.push("点名方向");
+  return affected.length > 0
+    ? `只调整本次点名的${affected.join("、")}。`
+    : "这次没有识别到明确改动，原计划保持不变。";
+}
+
+function buildAgentPlanDiffNextAction({
+  additions,
+  removals,
+  countChanges,
+  copyChanges,
+}: Pick<AgentPlanDiff, "additions" | "removals" | "countChanges" | "copyChanges" | "otherChanges">): string {
+  if (copyChanges.some((change) => /烧字|进图/.test(change))) {
+    return "下一步先检查烧字安全区，再执行生成。";
+  }
+  if (additions.length > 0) {
+    return "下一步确认新增图组是否需要商品、模特或场景参考。";
+  }
+  if (removals.length > 0 || countChanges.length > 0) {
+    return "下一步可以直接应用计划，或继续微调数量。";
+  }
+  return "下一步可以继续补充场景、风格或直接执行。";
+}
+
+function applyAgentNaturalLanguagePlanEditFallbackOnly({
+  preview,
+  draft,
+  userBrief,
+}: {
+  preview: WorkflowPlanPreview;
+  draft: WorkflowComposeDraft | null;
+  userBrief: string;
+}): {
+  preview: WorkflowPlanPreview;
+  draft: WorkflowComposeDraft | null;
+  changed: boolean;
+  message: string;
+  diff?: AgentPlanDiff;
+} {
+  const text = normalizeAgentPlanEditText(userBrief);
+  const baseMatrix = [...(preview.agentPlan?.generationMatrix ?? [])];
+  const editsUseMatrix = baseMatrix.length > 0;
+  const fallbackEdit = applyAgentPlanEditFallback({
+    text,
+    items: [...preview.items],
+    matrix: baseMatrix,
+    editsUseMatrix,
+  });
+  if (fallbackEdit.changes.length === 0) {
+    return { preview, draft, changed: false, message: "" };
+  }
+
+  const nextItems = editsUseMatrix
+    ? syncEditedPlanItemsFromMatrix(fallbackEdit.items, fallbackEdit.matrix)
+    : fallbackEdit.items;
+  if (nextItems.length === 0 || (editsUseMatrix && fallbackEdit.matrix.length === 0)) {
+    return { preview, draft, changed: false, message: "" };
+  }
+
+  const normalizedItems = nextItems.map((item, index) =>
+    normalizeEditedPlanItem(item, index, fallbackEdit.matrix)
+  );
+  const normalizedMatrix = normalizeEditedAgentMatrix(fallbackEdit.matrix, normalizedItems);
+  const nextPreview: WorkflowPlanPreview = {
+    ...preview,
+    items: normalizedItems,
+    images: normalizedItems,
+    estimatedCount: normalizedItems.length,
+    summary: `${preview.summary} 已按用户修改：${fallbackEdit.changes.join("；")}。`,
+    agentPlan: preview.agentPlan
+      ? {
+          ...preview.agentPlan,
+          sampleCount: normalizedItems.length,
+          fullCount: Math.max(preview.agentPlan.fullCount, normalizedItems.length),
+          outputSlots: preview.agentPlan.outputSlots.filter((slot) =>
+            normalizedItems.some((item) => item.slot === slot.id || item.id === slot.id)
+          ),
+          generationMatrix: normalizedMatrix,
+          summary: {
+            ...preview.agentPlan.summary,
+            text: `已按用户修改：${fallbackEdit.changes.join("；")}。`,
+            itemCount: normalizedItems.length,
+            readyItemCount: normalizedMatrix.filter((item) => item.status === "ready").length,
+            blockedItemCount: normalizedMatrix.filter((item) => item.status === "blocked").length,
+          },
+        }
+      : preview.agentPlan,
+  };
+
+  return {
+    preview: nextPreview,
+    draft: draft ? applyEditedPlanItemsToWorkflowDraft(draft, normalizedItems, normalizedMatrix) : null,
+    changed: true,
+    message: `已按你的话调整计划：${fallbackEdit.changes.join("；")}。`,
+    diff: buildAgentPlanDiff(fallbackEdit.changes, preview.estimatedCount, normalizedItems.length),
+  };
+}
+
+const agentPlanEditTargets = [
+  {
+    id: "amazon",
+    label: "Amazon 图组",
+    keywords: ["amazon", "亚马逊", "listing", "asin"],
+  },
+  {
+    id: "xiaohongshu",
+    label: "小红书封面",
+    keywords: ["小红书", "种草", "笔记", "xiaohongshu", "xhs"],
+  },
+  {
+    id: "model",
+    label: "模特展示",
+    keywords: ["模特", "上身", "真人", "model"],
+  },
+  {
+    id: "detail",
+    label: "商品细节",
+    keywords: ["细节", "详情", "材质", "特写", "结构", "工艺", "detail", "material", "macro"],
+  },
+  {
+    id: "closing",
+    label: "收尾图",
+    keywords: ["收尾", "closing", "转化尾图"],
+  },
+  {
+    id: "poster",
+    label: "海报/卖点图",
+    keywords: ["海报", "卖点", "封面", "poster", "feature", "cover", "hero"],
+  },
+  {
+    id: "scene",
+    label: "场景图",
+    keywords: ["场景", "生活方式", "桌面", "商场", "室内", "户外", "scene", "lifestyle"],
+  },
+  {
+    id: "main",
+    label: "商品主图",
+    keywords: ["主图", "白底", "主视觉", "main"],
+  },
+] satisfies Array<{
+  id: string;
+  label: string;
+  keywords: string[];
+}>;
+
+type AgentPlanEditTarget = (typeof agentPlanEditTargets)[number];
+
+function getAgentPlanRemovalTargets(text: string): AgentPlanEditTarget[] {
+  let targets = agentPlanEditTargets.filter((target) =>
+    targetHasLocalIntent(text, target, ["不要", "删除", "去掉", "不用", "取消", "别做", "拿掉"])
+  );
+  const compactText = text.replace(/\s+/g, "");
+  const ensureTarget = (targetId: AgentPlanEditTarget["id"], pattern: RegExp) => {
+    if (!pattern.test(compactText)) return;
+    const target = agentPlanEditTargets.find((item) => item.id === targetId);
+    if (target && !targets.some((item) => item.id === target.id)) targets.push(target);
+  };
+  ensureTarget("scene", /(?:(?:场景图|场景|scene|lifestyle)(?:不要|删除|去掉|不用|取消|别做|拿掉)|(?:不要|删除|去掉|不用|取消|别做|拿掉)(?:场景图|场景|scene|lifestyle))/i);
+  ensureTarget("closing", /(?:(?:收尾图|收尾|closing)(?:不要|删除|去掉|不用|取消|别做|拿掉)|(?:不要|删除|去掉|不用|取消|别做|拿掉)(?:收尾图|收尾|closing))/i);
+  ensureTarget("poster", /(?:(?:海报|封面|poster|cover)(?:不要|删除|去掉|不用|取消|别做|拿掉)|(?:不要|删除|去掉|不用|取消|别做|拿掉)(?:海报|封面|poster|cover))/i);
+  if (targets.some((target) => target.id === "xiaohongshu")) {
+    targets = targets.filter((target) => target.id !== "poster");
+  }
+  return targets;
+}
+
+function getAgentPlanCountEdits(text: string): Array<{ target: AgentPlanEditTarget; count: number }> {
+  return agentPlanEditTargets.flatMap((target) => {
+    const keywordPattern = target.keywords.map(escapeRegExp).join("|");
+    const localGap = "[^，。；、:：,.!?\\n]{0,12}";
+    const patterns = [
+      new RegExp(`(?:${keywordPattern})${localGap}(?:改成|改为|变成|调整为|要|来|做)?\\s*([0-9一二两三四五六七八九十]+)\\s*张`, "i"),
+      new RegExp(`([0-9一二两三四五六七八九十]+)\\s*张${localGap}(?:${keywordPattern})`, "i"),
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      const count = parseAgentPlanEditCount(match?.[1]);
+      if (count > 0 && count <= 20) return [{ target, count }];
+    }
+    return [];
+  });
+}
+
+function getFocusedAgentPlanEditTarget(text: string): AgentPlanEditTarget | null {
+  const targetLabel = text.match(/调整[「\"]([^」\"]+)[」\"]/)?.[1]?.trim();
+  if (!targetLabel) return null;
+  return agentPlanEditTargets.find((target) => {
+    if (target.label === targetLabel || targetLabel.includes(target.label) || target.label.includes(targetLabel)) {
+      return true;
+    }
+    return target.keywords.some((keyword) => targetLabel.toLowerCase().includes(keyword.toLowerCase()));
+  }) ?? null;
+}
+
+function getAgentPlanRelativeCountEdit(text: string): { delta: number; label: string } | null {
+  const compactText = text.replace(/\s+/g, "");
+  const decreaseMatch = compactText.match(/(?:少|减少|减掉|删掉|去掉)([0-9一二两三四五六七八九十]+)(?:张|组|个)?/);
+  const increaseMatch = compactText.match(/(?:加|增加|新增|多|再来)([0-9一二两三四五六七八九十]+)(?:张|组|个)?/);
+  if (decreaseMatch) {
+    const count = parseAgentPlanEditCount(decreaseMatch[1]);
+    return count > 0 ? { delta: -count, label: `减少 ${count} 张` } : null;
+  }
+  if (increaseMatch) {
+    const count = parseAgentPlanEditCount(increaseMatch[1]);
+    return count > 0 ? { delta: count, label: `增加 ${count} 张` } : null;
+  }
+  if (/(少一点|少一些|减少一点|少做一点)/.test(compactText)) return { delta: -1, label: "减少 1 张" };
+  if (/(多一点|多一些|加一组|加一张|新增一组|再来一组)/.test(compactText)) return { delta: 1, label: "增加 1 张" };
+  return null;
+}
+
+function getAgentPlanRelativeCountEditsForTargets(text: string): Array<{
+  target: AgentPlanEditTarget;
+  delta: number;
+  label: string;
+}> {
+  return agentPlanEditTargets.flatMap((target) => {
+    const keywordPattern = target.keywords.map(escapeRegExp).join("|");
+    const localGap = "[^，。；、:：,.!?\\n]{0,12}";
+  const patterns = [
+      {
+        regex: new RegExp(`(?:${keywordPattern})${localGap}(?:少|减少|减掉|少做|删掉|去掉)([0-9一二两三四五六七八九十]+)\\s*(?:张|组|个)?`, "i"),
+        sign: -1,
+        verb: "减少",
+      },
+      {
+        regex: new RegExp(`(?:少|减少|减掉|少做|删掉|去掉)([0-9一二两三四五六七八九十]+)\\s*(?:张|组|个)?${localGap}(?:${keywordPattern})`, "i"),
+        sign: -1,
+        verb: "减少",
+      },
+      {
+        regex: new RegExp(`(?:${keywordPattern})${localGap}(?:加|增加|新增|多|再来)([0-9一二两三四五六七八九十]+)\\s*(?:张|组|个)?`, "i"),
+        sign: 1,
+        verb: "增加",
+      },
+      {
+        regex: new RegExp(`(?:加|增加|新增|多|再来)([0-9一二两三四五六七八九十]+)\\s*(?:张|组|个)?${localGap}(?:${keywordPattern})`, "i"),
+        sign: 1,
+        verb: "增加",
+      },
+    ];
+
+    for (const pattern of patterns) {
+      const count = parseAgentPlanEditCount(text.match(pattern.regex)?.[1]);
+      if (count > 0 && count <= 20) {
+        return [{
+          target,
+          delta: pattern.sign * count,
+          label: `${pattern.verb} ${count} 张`,
+        }];
+      }
+    }
+    const softDelta = getAgentPlanSoftRelativeDelta(text, target);
+    return softDelta ? [{ target, ...softDelta }] : [];
+  });
+}
+
+function getAgentPlanSoftRelativeDelta(
+  text: string,
+  target: AgentPlanEditTarget
+): { delta: number; label: string } | null {
+  if (targetHasLocalIntent(text, target, ["少一点", "少一些", "减少一点", "少做一点"])) {
+    return { delta: -1, label: "减少 1 张" };
+  }
+  if (targetHasLocalIntent(text, target, ["多一点", "多一些", "加一组", "加一张", "新增一组", "再来一组"])) {
+    return { delta: 1, label: "增加 1 张" };
+  }
+  return null;
+}
+
+function isSoftReduceAgentPlanEdit(text: string): boolean {
+  return /(少一点|少一些|减少一点|少做一点)/.test(text.replace(/\s+/g, ""));
+}
+
+function getAgentPlanCopyEdit(text: string): { mode: "burn_in" | "layout_layer"; targets: AgentPlanEditTarget[] } | null {
+  const compactText = text.replace(/\s+/g, "");
+  const wantsNoBurn = hasLocalKeywordIntent(text, ["烧字", "烧进", "进图", "带字", "出字"], ["不", "别", "不要", "无需", "不需要"]);
+  const wantsBurn =
+    /(烧字|烧进|进图|带字|出字|文案.*图)/.test(compactText) ||
+    ((compactText.includes("文案") || compactText.includes("文字")) && /(烧|进图|带字|出字)/.test(compactText));
+  if (!wantsNoBurn && !wantsBurn) return null;
+  const copyIntentTerms = wantsNoBurn
+    ? ["图层", "不进图", "不入图", "不烧字", "不烧进", "后期改字", "可编辑", "文案", "文字"]
+    : ["烧字", "烧进", "进图", "带字", "出字", "文案", "文字"];
+  const targets = agentPlanEditTargets.filter((target) =>
+    targetHasLocalIntent(text, target, copyIntentTerms)
+  );
+  const isExplicitGlobalCopyIntent = /(全部|所有|整套|全局)/.test(compactText);
+  return {
+    mode: wantsNoBurn ? "layout_layer" : "burn_in",
+    targets: isExplicitGlobalCopyIntent ? [] : targets,
+  };
+}
+
+function getAgentPlanContentEdit(text: string): { target: AgentPlanEditTarget; instruction: string } | null {
+  const focusedTarget = getFocusedAgentPlanEditTarget(text);
+  const target = focusedTarget ?? getFocusedAgentPlanEditTargetByKeyword(text);
+  if (!target) return null;
+
+  const instruction = extractAgentPlanContentInstruction(text);
+  if (!instruction) return null;
+
+  return { target, instruction };
+}
+
+function getFocusedAgentPlanEditTargetByKeyword(text: string): AgentPlanEditTarget | null {
+  return agentPlanEditTargets.find((target) =>
+    targetHasLocalIntent(text, target, ["换成", "改成", "改为", "变成", "换到", "改到"])
+  ) ?? null;
+}
+
+function extractAgentPlanContentInstruction(text: string): string {
+  const match = text.match(/(?:换成|改成|改为|变成|换到|改到)([^，。；、,.!?\n]{2,28})/);
+  const value = match?.[1]?.trim() ?? "";
+  if (!value) return "";
+  if (/^[0-9一二两三四五六七八九十]+\s*张/.test(value)) return "";
+  return value.replace(/^(一个|一组|一些|那种|这种)\s*/, "").trim();
+}
+
+function mergeAgentPlanContentInstruction(current: string | undefined, instruction: string): string {
+  const cleanCurrent = (current ?? "").trim();
+  if (!cleanCurrent) return instruction;
+  if (cleanCurrent.includes(instruction)) return cleanCurrent;
+  return `${cleanCurrent}；本组调整：${instruction}`;
+}
+
+function getAgentPlanTargetInstruction(text: string, target: AgentPlanEditTarget): string {
+  if (target.id === "scene") {
+    const sceneTerms = ["商场场景", "商场", "室外街拍", "户外街拍", "咖啡厅", "北欧家居", "雪山", "室内场景"];
+    const term = sceneTerms.find((value) => text.includes(value));
+    if (term) return term.endsWith("场景") || term.includes("街拍") ? term : `${term}场景`;
+  }
+  const match = text.match(/(?:换成|改成|改为|变成|换到|改到|加一组|新增一组|再来一组|加一张|新增一张)([^，。；、,.!?\n]{2,28})/);
+  const value = match?.[1]?.trim() ?? "";
+  if (!value || /^[0-9一二两三四五六七八九十]+\s*(张|组|个)?/.test(value)) return "";
+  return value.replace(/^(一个|一组|一些|那种|这种)\s*/, "").trim();
+}
+
+function applyAgentPlanContentInstructionToMatrix(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  target: AgentPlanEditTarget,
+  instruction: string
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  return items.map((item) =>
+    agentPlanMatrixItemMatchesTarget(item, target)
+      ? { ...item, summary: mergeAgentPlanContentInstruction(item.summary, instruction) }
+      : item
+  );
+}
+
+function applyAgentPlanContentInstructionToItems(
+  items: WorkflowPlanPreviewItem[],
+  target: AgentPlanEditTarget,
+  instruction: string
+): WorkflowPlanPreviewItem[] {
+  return items.map((item) =>
+    agentPlanPreviewItemMatchesTarget(item, target)
+      ? { ...item, purpose: mergeAgentPlanContentInstruction(item.purpose, instruction) }
+      : item
+  );
+}
+
+function getAgentPlanTargetCount({
+  items,
+  matrix,
+  editsUseMatrix,
+  target,
+}: {
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  editsUseMatrix: boolean;
+  target: AgentPlanEditTarget;
+}): number {
+  if (editsUseMatrix) {
+    return matrix.filter((item) => agentPlanMatrixItemMatchesTarget(item, target)).length;
+  }
+  return items.filter((item) => agentPlanPreviewItemMatchesTarget(item, target)).length;
+}
+
+function createAgentPlanItemsForNewTarget({
+  target,
+  count,
+  instruction,
+  existingItems,
+  existingMatrix,
+}: {
+  target: AgentPlanEditTarget;
+  count: number;
+  instruction: string;
+  existingItems: WorkflowPlanPreviewItem[];
+  existingMatrix: WorkflowPlanPreviewAgentMatrixItem[];
+}): {
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+} {
+  const safeCount = Math.max(1, Math.min(count, 20));
+  const startIndex = existingItems.length + 1;
+  const titleBase = instruction || getAgentPlanNewTargetTitle(target);
+  const copyMode = getAgentPlanNewTargetCopyMode(target, existingMatrix, existingItems);
+  const missingInputIds = getAgentPlanInheritedMissingInputIds(target, existingMatrix);
+  const referenceRoles = getAgentPlanNewTargetReferenceRoles(target, copyMode);
+  const ratio = getAgentPlanNewTargetRatio(target);
+  const items = Array.from({ length: safeCount }, (_, index): WorkflowPlanPreviewItem => {
+    const ordinal = startIndex + index;
+    const title = safeCount > 1 ? `${titleBase} ${index + 1}` : titleBase;
+    return {
+      id: `${target.id}_extra_${ordinal}`,
+      title,
+      purpose: buildAgentPlanNewTargetPurpose(target, instruction),
+      slot: `${target.id}_extra_${ordinal}`,
+      ratio,
+      copyMode,
+      componentRefs: [],
+      qualityChecks: [],
+    };
+  });
+  return {
+    items,
+    matrix: items.map((item): WorkflowPlanPreviewAgentMatrixItem => ({
+      id: `matrix_${item.id}`,
+      itemId: item.id,
+      title: item.title,
+      type: item.slot,
+      outputSlotId: getPreviewItemBaseSlotId(item.slot),
+      ratio: item.ratio,
+      size: item.size,
+      referenceRoles,
+      providerReferenceRoles: [],
+      assetGroupIds: [],
+      copyMode,
+      missingInputIds,
+      status: missingInputIds.length > 0 ? "blocked" : "ready",
+      summary: item.purpose,
+    })),
+  };
+}
+
+function getAgentPlanNewTargetTitle(target: AgentPlanEditTarget): string {
+  if (target.id === "scene") return "新增场景图";
+  if (target.id === "model") return "新增模特展示";
+  if (target.id === "detail") return "新增商品细节";
+  if (target.id === "closing") return "新增收尾图";
+  if (target.id === "poster") return "新增卖点海报";
+  if (target.id === "main") return "新增商品主图";
+  if (target.id === "amazon") return "新增 Amazon 图";
+  if (target.id === "xiaohongshu") return "新增小红书封面";
+  return `新增${target.label}`;
+}
+
+function buildAgentPlanNewTargetPurpose(target: AgentPlanEditTarget, instruction: string): string {
+  const direction = instruction ? `；本组调整：${instruction}` : "";
+  if (target.id === "scene") return `补充一个新的场景表达，用来验证商品在不同环境里的空间、光影和使用氛围${direction}`;
+  if (target.id === "model") return `补充模特展示，用来检查上身比例、动作和情绪是否自然${direction}`;
+  if (target.id === "detail") return `补充商品细节，用来展示材质、结构、工艺和卖点证据${direction}`;
+  if (target.id === "closing") return `补充收尾图，用来承接最终转化和行动提醒${direction}`;
+  if (target.id === "poster") return `补充卖点海报，用来承载短文案和转化信息${direction}`;
+  if (target.id === "main") return `补充商品主图，用来强化第一眼识别和平台点击${direction}`;
+  if (target.id === "amazon") return `补充 Amazon 展示图，用来覆盖 listing 需要的商品信息${direction}`;
+  if (target.id === "xiaohongshu") return `补充小红书封面，用来提高种草场景的点击感${direction}`;
+  return `按用户要求补充新的图组${direction}`;
+}
+
+function getAgentPlanNewTargetRatio(target: AgentPlanEditTarget): string {
+  if (target.id === "main") return "1:1";
+  if (target.id === "amazon") return "1:1";
+  if (target.id === "xiaohongshu") return "3:4";
+  if (target.id === "closing") return "3:4";
+  if (target.id === "poster") return "3:4";
+  return "4:5";
+}
+
+function getAgentPlanNewTargetCopyMode(
+  target: AgentPlanEditTarget,
+  existingMatrix: WorkflowPlanPreviewAgentMatrixItem[],
+  existingItems: WorkflowPlanPreviewItem[]
+): string {
+  if (target.id === "poster" || target.id === "closing" || target.id === "xiaohongshu") {
+    return "burn_in";
+  }
+  return "layout_layer";
+}
+
+function getAgentPlanNewTargetReferenceRoles(target: AgentPlanEditTarget, copyMode: string): string[] {
+  const roles = new Set<string>(["product", "style"]);
+  if (target.id === "model") roles.add("model");
+  if (target.id === "scene") roles.add("scene");
+  if (target.id === "poster" || target.id === "closing" || target.id === "xiaohongshu" || copyMode === "burn_in") roles.add("copy");
+  return Array.from(roles);
+}
+
+function getAgentPlanInheritedMissingInputIds(
+  target: AgentPlanEditTarget,
+  existingMatrix: WorkflowPlanPreviewAgentMatrixItem[]
+): string[] {
+  const wantedRoles = getAgentPlanNewTargetReferenceRoles(target, "layout_layer");
+  const ids = existingMatrix.flatMap((item) => {
+    const itemRoles = new Set(item.referenceRoles);
+    if (!wantedRoles.some((role) => itemRoles.has(role))) return [];
+    return item.missingInputIds ?? [];
+  });
+  return agentUniqueStrings(ids).slice(0, 4);
+}
+
+function applyAgentPlanEditFallback({
+  text,
+  items,
+  matrix,
+  editsUseMatrix,
+}: {
+  text: string;
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  editsUseMatrix: boolean;
+}): {
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  changes: string[];
+} {
+  const compactText = text.replace(/\s+/g, "");
+  let nextItems = [...items];
+  let nextMatrix = [...matrix];
+  const changes: string[] = [];
+
+  if (/(场景|桌面|scene|lifestyle)/i.test(compactText) && /(不要|删除|去掉|不用|取消|别做|拿掉)/.test(compactText)) {
+    if (editsUseMatrix) {
+      const before = nextMatrix.length;
+      nextMatrix = nextMatrix.filter((item) => !isFallbackScenePlanItem(item));
+      if (before !== nextMatrix.length) changes.push(`删除场景图 ${before - nextMatrix.length} 张`);
+    } else {
+      const before = nextItems.length;
+      nextItems = nextItems.filter((item) => !isFallbackScenePreviewItem(item));
+      if (before !== nextItems.length) changes.push(`删除场景图 ${before - nextItems.length} 张`);
+    }
+  }
+
+  const detailCount = parseAgentPlanEditCount(
+    compactText.match(/(?:商品)?(?:细节|详情|feature|detail|卖点|材质|特写)(?:改成|改为|变成|调整为|要|来|做)?([0-9一二两三四五六七八九十]+)张/i)?.[1]
+  );
+  if (detailCount > 0 && detailCount <= 20) {
+    if (editsUseMatrix) {
+      const matching = nextMatrix.filter(isFallbackDetailPlanItem);
+      if (matching.length > 0 && matching.length !== detailCount) {
+        const others = nextMatrix.filter((item) => !isFallbackDetailPlanItem(item));
+        const adjusted = Array.from({ length: detailCount }, (_, index) =>
+          cloneAgentPlanMatrixItem(matching[Math.min(index, matching.length - 1)], index)
+        );
+        nextMatrix = restoreAgentPlanOrder(nextMatrix, others, matching[0], adjusted);
+        changes.push(`商品细节改为 ${detailCount} 张`);
+      }
+    } else {
+      const matching = nextItems.filter(isFallbackDetailPreviewItem);
+      if (matching.length > 0 && matching.length !== detailCount) {
+        const others = nextItems.filter((item) => !isFallbackDetailPreviewItem(item));
+        const adjusted = Array.from({ length: detailCount }, (_, index) =>
+          cloneAgentPlanPreviewItem(matching[Math.min(index, matching.length - 1)], index)
+        );
+        nextItems = restoreAgentPlanOrder(nextItems, others, matching[0], adjusted);
+        changes.push(`商品细节改为 ${detailCount} 张`);
+      }
+    }
+  }
+
+  const wantsCopyLayer = hasLocalKeywordIntent(
+    text,
+    ["烧字", "烧进", "进图", "带字", "出字"],
+    ["不", "别", "不要", "无需", "不需要"]
+  );
+  const wantsCopyBurn =
+    !wantsCopyLayer &&
+    (/(烧字|烧进|进图|带字|出字)/.test(compactText) ||
+      ((compactText.includes("文案") || compactText.includes("文字")) && /(烧|进图|带字|出字)/.test(compactText)));
+  if (wantsCopyLayer || wantsCopyBurn) {
+    const copyMode = wantsCopyLayer ? "layout_layer" : "burn_in";
+    if (editsUseMatrix) {
+      nextMatrix = nextMatrix.map((item) => ({ ...item, copyMode }));
+    }
+    changes.push(copyMode === "burn_in" ? "文案改为烧进图" : "文案改为图层/不进图");
+  }
+
+  return { items: nextItems, matrix: nextMatrix, changes };
+}
+
+function isFallbackDetailPlanItem(item: WorkflowPlanPreviewAgentMatrixItem): boolean {
+  return planItemText([item.title, item.type, item.outputSlotId, item.summary]).some((text) =>
+    /(细节|详情|feature|detail|material|macro|卖点|材质|特写)/i.test(text)
+  );
+}
+
+function isFallbackDetailPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return planItemText([item.title, item.purpose, item.slot, item.platform]).some((text) =>
+    /(细节|详情|feature|detail|material|macro|卖点|材质|特写)/i.test(text)
+  );
+}
+
+function isFallbackScenePlanItem(item: WorkflowPlanPreviewAgentMatrixItem): boolean {
+  return planItemText([item.title, item.type, item.outputSlotId]).some((text) =>
+    isFallbackSceneSlotText(text)
+  );
+}
+
+function isFallbackScenePreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  return planItemText([item.title, item.slot, item.platform]).some((text) =>
+    isFallbackSceneSlotText(text)
+  );
+}
+
+function isFallbackSceneSlotText(text: string): boolean {
+  return /(场景|商品场景|生活方式|^scene(?:$|[-_])|lifestyle)/i.test(text);
+}
+
+function planItemText(values: Array<string | undefined>): string[] {
+  return values.filter((value): value is string => Boolean(value)).map((value) => value.toLowerCase());
+}
+
+function targetHasLocalIntent(text: string, target: AgentPlanEditTarget, intents: string[]): boolean {
+  return hasLocalKeywordIntent(text, target.keywords, intents);
+}
+
+function hasLocalKeywordIntent(text: string, keywords: string[], intents: string[]): boolean {
+  const keywordPattern = keywords.map(escapeRegExp).join("|");
+  const intentPattern = intents.map(escapeRegExp).join("|");
+  const localGap = "[^，。；、:：,.!?\\n]{0,14}";
+  return (
+    new RegExp(`(?:${intentPattern})${localGap}(?:${keywordPattern})`, "i").test(text) ||
+    new RegExp(`(?:${keywordPattern})${localGap}(?:${intentPattern})`, "i").test(text)
+  );
+}
+
+function agentPlanPreviewItemMatchesTarget(item: WorkflowPlanPreviewItem, target: AgentPlanEditTarget): boolean {
+  const text = [
+    item.title,
+    target.id === "scene" ? "" : item.purpose,
+    item.slot,
+    item.platform,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (target.id === "scene") {
+    if (!/(场景|scene|lifestyle|环境|室内|户外|商场)/i.test(text)) return false;
+    if (/(海报|poster|cover|hero|收尾|detail|细节|详情|特写)/i.test(text)) return false;
+    return true;
+  }
+  if (target.id === "detail" && /(海报|poster|cover|hero|收尾|scene|场景|主图|静物|still|模特|真人|人物|上身|穿搭|model)/i.test(text)) {
+    return false;
+  }
+  return target.keywords.some((keyword) => text.includes(keyword.toLowerCase()));
+}
+
+function agentPlanMatrixItemMatchesTarget(
+  item: WorkflowPlanPreviewAgentMatrixItem,
+  target: AgentPlanEditTarget
+): boolean {
+  const summary = target.id === "scene" ? "" : item.summary;
+  const text = [
+    item.title,
+    item.type,
+    item.outputSlotId,
+    summary,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (target.id === "scene") {
+    if (!/(场景|scene|lifestyle|环境|室内|户外|商场)/i.test(text)) return false;
+    if (/(海报|poster|cover|hero|closing|收尾|detail|细节|详情|特写)/i.test(text)) return false;
+    return true;
+  }
+  if (target.id === "detail" && /(海报|poster|cover|hero|closing|收尾|scene|场景|主图|静物|still|模特|真人|人物|上身|穿搭|model)/i.test(text)) {
+    return false;
+  }
+  return target.keywords.some((keyword) => text.includes(keyword.toLowerCase()));
+}
+
+function adjustAgentPlanItemsToCount(
+  items: WorkflowPlanPreviewItem[],
+  target: AgentPlanEditTarget,
+  count: number
+): WorkflowPlanPreviewItem[] {
+  const matching = items.filter((item) => agentPlanPreviewItemMatchesTarget(item, target));
+  if (matching.length === 0) return items;
+  const others = items.filter((item) => !agentPlanPreviewItemMatchesTarget(item, target));
+  const adjusted = Array.from({ length: count }, (_, index) =>
+    cloneAgentPlanPreviewItem(matching[Math.min(index, matching.length - 1)], index)
+  );
+  return restoreAgentPlanOrder(items, others, matching[0], adjusted);
+}
+
+function adjustAgentPlanMatrixToCount(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  target: AgentPlanEditTarget,
+  count: number
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  const matching = items.filter((item) => agentPlanMatrixItemMatchesTarget(item, target));
+  if (matching.length === 0) return items;
+  const others = items.filter((item) => !agentPlanMatrixItemMatchesTarget(item, target));
+  const adjusted = Array.from({ length: count }, (_, index) =>
+    cloneAgentPlanMatrixItem(matching[Math.min(index, matching.length - 1)], index)
+  );
+  return restoreAgentPlanOrder(items, others, matching[0], adjusted);
+}
+
+function restoreAgentPlanOrder<T>(
+  original: T[],
+  others: T[],
+  anchor: T,
+  adjusted: T[]
+): T[] {
+  const result: T[] = [];
+  let inserted = false;
+  for (const item of original) {
+    if (item === anchor) {
+      result.push(...adjusted);
+      inserted = true;
+      continue;
+    }
+    if (others.includes(item)) result.push(item);
+  }
+  return inserted ? result : [...others, ...adjusted];
+}
+
+function cloneAgentPlanPreviewItem(item: WorkflowPlanPreviewItem, index: number): WorkflowPlanPreviewItem {
+  if (index === 0) return item;
+  return {
+    ...item,
+    id: `${item.id}_${index + 1}`,
+    title: item.title,
+    slot: `${item.slot}_${index + 1}`,
+  };
+}
+
+function cloneAgentPlanMatrixItem(
+  item: WorkflowPlanPreviewAgentMatrixItem,
+  index: number
+): WorkflowPlanPreviewAgentMatrixItem {
+  if (index === 0) return item;
+  return {
+    ...item,
+    id: `${item.id}_${index + 1}`,
+    itemId: `${item.itemId}_${index + 1}`,
+    title: item.title,
+  };
+}
+
+function syncEditedPlanItemsFromMatrix(
+  originalItems: WorkflowPlanPreviewItem[],
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[]
+): WorkflowPlanPreviewItem[] {
+  return matrixItems.map((matrixItem, index) => {
+    const matchedItem = originalItems.find((item) =>
+      matrixItem.itemId === item.id ||
+      matrixItem.outputSlotId === item.slot ||
+      matrixItem.title === item.title
+    );
+    return {
+      id: matrixItem.itemId || matchedItem?.id || `plan_item_${index + 1}`,
+      title: matrixItem.title || matchedItem?.title || `图 ${index + 1}`,
+      purpose: matchedItem?.purpose || matrixItem.summary || "",
+      slot: matrixItem.outputSlotId || matchedItem?.slot || matrixItem.type || `image_${index + 1}`,
+      ratio: matrixItem.ratio || matchedItem?.ratio || "auto",
+      size: matrixItem.size || matchedItem?.size,
+      copyMode: matrixItem.copyMode || matchedItem?.copyMode,
+      platform: matchedItem?.platform,
+      componentRefs: matchedItem?.componentRefs ?? [],
+      qualityChecks: matchedItem?.qualityChecks ?? [],
+    };
+  });
+}
+
+function normalizeEditedPlanItem(
+  item: WorkflowPlanPreviewItem,
+  index: number,
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[]
+): WorkflowPlanPreviewItem {
+  const matchedMatrix = matrixItems.find((matrixItem) =>
+    matrixItem.itemId === item.id || matrixItem.outputSlotId === item.slot || matrixItem.title === item.title
+  );
+  return {
+    ...item,
+    id: item.id || `plan_item_${index + 1}`,
+    title: item.title || `图 ${index + 1}`,
+    slot: item.slot || matchedMatrix?.type || `image_${index + 1}`,
+    ratio: matchedMatrix?.ratio || item.ratio || "auto",
+    copyMode: matchedMatrix?.copyMode || item.copyMode,
+  };
+}
+
+function normalizeEditedAgentMatrix(
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[],
+  planItems: WorkflowPlanPreviewItem[]
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  if (matrixItems.length > 0) {
+    return matrixItems.map((item, index) => ({
+      ...item,
+      id: item.id || `matrix_${index + 1}`,
+      itemId: item.itemId || planItems[index]?.id || `plan_item_${index + 1}`,
+      title: item.title || planItems[index]?.title || `图 ${index + 1}`,
+      ratio: item.ratio || planItems[index]?.ratio,
+    }));
+  }
+
+  return planItems.map((item, index) => ({
+    id: `matrix_${item.id || index + 1}`,
+    itemId: item.id,
+    title: item.title,
+    type: item.slot,
+    outputSlotId: getPreviewItemBaseSlotId(item.slot),
+    ratio: item.ratio,
+    size: item.size,
+    referenceRoles: inferPreviewItemReferenceRoles(item),
+    providerReferenceRoles: [],
+    assetGroupIds: [],
+    copyMode: item.copyMode || "layout_layer",
+    missingInputIds: [],
+    status: "ready",
+    summary: item.purpose,
+  }));
+}
+
+function applyEditedPlanItemsToWorkflowDraft(
+  draft: WorkflowComposeDraft,
+  items: WorkflowPlanPreviewItem[],
+  matrixItems: WorkflowPlanPreviewAgentMatrixItem[]
+): WorkflowComposeDraft {
+  const shotList = items.map((item, index) => {
+    const matchedMatrix = matrixItems.find((matrixItem) =>
+      matrixItem.itemId === item.id || matrixItem.outputSlotId === item.slot || matrixItem.title === item.title
+    );
+    const copyMode = matchedMatrix?.copyMode || "layout_layer";
+    return {
+      id: item.id || `shot_${index + 1}`,
+      slot: item.slot || item.id || `image_${index + 1}`,
+      label: item.title,
+      intent: item.purpose,
+      purpose: item.purpose,
+      ratio: item.ratio,
+      size: item.size,
+      samplePhase: true,
+      copyMode,
+      textAllowed: copyMode === "burn_in",
+      referenceRoles: matchedMatrix?.referenceRoles ?? [],
+      promptHints: [],
+      qaRules: item.qualityChecks ?? [],
+      naming: item.slot || item.id || `image_${index + 1}`,
+    };
+  });
+
+  return {
+    ...draft,
+    metadata: {
+      ...draft.metadata,
+      shotList,
+    },
+    nodes: draft.nodes.map((node) => {
+      if (node.data.componentType !== "image_recipe") return node;
+      const parameters = getRecordValue(node.data.parameters);
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          parameters: {
+            ...parameters,
+            outputCount: shotList.length,
+            shotList,
+          },
+        },
+      };
+    }),
+  };
+}
+
+function parseAgentPlanEditCount(value: string | undefined): number {
+  if (!value) return 0;
+  const normalized = value.trim();
+  if (/^\d+$/.test(normalized)) return Number(normalized);
+  const map: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+  if (normalized === "十") return 10;
+  if (normalized.startsWith("十")) return 10 + (map[normalized.slice(1)] ?? 0);
+  if (normalized.endsWith("十")) return (map[normalized.slice(0, 1)] ?? 0) * 10;
+  if (normalized.includes("十")) {
+    const [tens, ones] = normalized.split("十");
+    return (map[tens] ?? 1) * 10 + (map[ones] ?? 0);
+  }
+  return map[normalized] ?? 0;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function formatParameterFieldValue(field: EditableParameterField): string {
@@ -10564,6 +18019,10 @@ function getStringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function getFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function getStoredImagePreviewUrl(metadata: Record<string, unknown> | undefined): string | undefined {
   if (!metadata) return undefined;
   const imageStorage = getRecordValue(metadata.imageStorage);
@@ -10589,10 +18048,6 @@ function getPersistedAssetReferenceUrl(asset: PersistedAsset, metadata: Record<s
     getStringValue(metadata.previewUrl) ||
     asset.url
   );
-}
-
-function getArtifactPreviewUrl(artifact: PersistedGeneratedArtifact): string {
-  return getStoredImagePreviewUrl(artifact.metadata) || artifact.url;
 }
 
 function getJobOutputPreviewUrl(
@@ -10731,6 +18186,10 @@ function mapModelToCanvasAsset(model: AIModel): CanvasAsset {
     ...consistencyRules,
     "Treat this as a person asset; product details must come from product references.",
   ];
+  const downstreamReferenceRules = metadata?.downstreamReferenceRules ?? [
+    "Prefer the downstream identity reference zone for final image generation.",
+    "Preserve identity anchors only; scene lighting and current shot pose override the model card.",
+  ];
   const negativeRules = metadata?.negativeRules ?? [
     "Do not change model identity, hairstyle, age impression, face anchors, or body profile.",
   ];
@@ -10770,35 +18229,24 @@ function mapModelToCanvasAsset(model: AIModel): CanvasAsset {
       safetyRules: metadata?.safetyRules ?? [],
       modelPromptSource: metadata?.source ?? "model-template",
       promptSnapshotAvailable: Boolean(metadata?.promptSnapshot ?? model.promptSnapshot),
+      downstreamReferenceMode:
+        metadata?.downstreamReferenceMode ?? "prefer_zone_b_neutral_identity_reference",
+      downstreamReferenceRules,
       imageUrl: model.imageUrl,
       referenceImage: model.imageUrl,
       referenceImages,
     },
     promptFragments,
-    constraints,
+    constraints: dedupeStrings([...constraints, ...downstreamReferenceRules]),
     negativeRules,
     qualityRules,
   };
 }
 
-async function fetchPersistedJobs(workflowId: string | null): Promise<PersistedGenerationJob[]> {
-  const query = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : "";
-  const response = await apiFetch(`/api/jobs${query}`, { cache: "no-store" });
-  if (!response.ok) return [];
-
-  const payload = await response.json();
-  const list = Array.isArray(payload) ? payload : payload.jobs;
-  return Array.isArray(list)
-    ? (list.map(mapPersistedJob).filter(Boolean) as PersistedGenerationJob[])
-    : [];
-}
-
-async function fetchPersistedJobQueueSnapshot(): Promise<PersistedJobQueueSnapshot | null> {
-  const response = await apiFetch("/api/jobs/queue", { cache: "no-store" });
+async function fetchPersistedJobById(jobId: string): Promise<PersistedGenerationJob | null> {
+  const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
   if (!response.ok) return null;
-
-  const payload = await response.json();
-  return mapPersistedJobQueueSnapshot(payload?.queue);
+  return mapPersistedJob(await response.json());
 }
 
 async function fetchPersistedProjects(): Promise<PersistedProjectDetails[]> {
@@ -10829,28 +18277,6 @@ async function reclaimStaleJobQueueSnapshot(): Promise<{
     queue: mapPersistedJobQueueSnapshot(payload?.queue),
     reclaimedJobIds: getStringArray((reclaim as { reclaimedJobIds?: unknown }).reclaimedJobIds),
   };
-}
-
-async function fetchPersistedArtifacts(
-  workflowId: string | null
-): Promise<PersistedGeneratedArtifact[]> {
-  const query = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : "";
-  const response = await apiFetch(`/api/artifacts${query}`, { cache: "no-store" });
-  if (!response.ok) return [];
-
-  const payload = await response.json();
-  const list = Array.isArray(payload) ? payload : payload.artifacts;
-  return Array.isArray(list)
-    ? (list.map(mapPersistedArtifact).filter(Boolean) as PersistedGeneratedArtifact[])
-    : [];
-}
-
-function getPersistedJobListSignature(jobs: PersistedGenerationJob[]): string {
-  return jobs.map(getStageJobSignature).join("|");
-}
-
-function getPersistedArtifactListSignature(artifacts: PersistedGeneratedArtifact[]): string {
-  return artifacts.map(getStageArtifactSignature).join("|");
 }
 
 async function createCanvasJob({
@@ -11321,7 +18747,8 @@ function withNodeArtifact(
   const previewUrl = getArtifactPreviewUrl(artifact);
   if (
     node.data.artifactId === artifact.id &&
-    node.data.previewUrl === previewUrl
+    node.data.previewUrl === previewUrl &&
+    node.data.referenceUrl === artifact.url
   ) {
     return node;
   }
@@ -11332,6 +18759,7 @@ function withNodeArtifact(
       ...node.data,
       status: "ready",
       previewUrl: previewUrl || node.data.previewUrl,
+      referenceUrl: artifact.url || getStringValue(node.data.referenceUrl),
       previewAlt: artifact.title || node.data.previewAlt,
       artifactId: artifact.id,
       artifactStatus: artifact.status,
@@ -11372,6 +18800,8 @@ function getStageNodeSignature(node: CanvasWorkbenchNode): string {
     node.data.assetId,
     node.data.jobId,
     node.data.source,
+    node.data.category,
+    JSON.stringify(node.data.parameters ?? null),
     node.data.generationUserRequest,
     (node.data.metrics ?? []).join(","),
     getGenerationFrameStateSignature(node.data.generationFrame),
@@ -11392,22 +18822,6 @@ function getStageJobSignature(job: PersistedGenerationJob): string {
     getStringValue(job.metadata.batchJobTitle),
     getStringValue(job.metadata.planItemTitle),
     getStringValue(job.metadata.exportItemTitle),
-  ].join("~");
-}
-
-function getStageArtifactSignature(artifact: PersistedGeneratedArtifact): string {
-  return [
-    artifact.id,
-    artifact.status,
-    artifact.url,
-    getArtifactPreviewUrl(artifact),
-    artifact.nodeId,
-    artifact.jobId,
-    artifact.assetId,
-    artifact.title,
-    artifact.updatedAt,
-    getStringValue(artifact.metadata.exportSpecId),
-    getStringValue(artifact.metadata.naming),
   ].join("~");
 }
 
@@ -11456,9 +18870,33 @@ function getGenerationFrameOutputSignature(outputs: GenerationFrameOutput[] = []
         output.artifactId,
         output.status,
         output.createdAt,
+        getGenerationFrameOutputMetadataSignature(output.metadata),
       ].join("~")
     )
     .join(",");
+}
+
+function getGenerationFrameOutputMetadataSignature(metadata?: Record<string, unknown>): string {
+  if (!metadata) return "";
+  return [
+    getStringValue(metadata.prompt),
+    getStringValue(metadata.provider),
+    getStringValue(metadata.model),
+    getStringValue(metadata.ratio),
+    getStringValue(metadata.size),
+    JSON.stringify(metadata.referenceImages ?? null),
+    JSON.stringify(metadata.referenceContext ?? null),
+    JSON.stringify(metadata.providerReferenceAdapter ?? null),
+    JSON.stringify(metadata.assetInvocationPlan ?? null),
+    JSON.stringify(metadata.providerDiagnostics ?? null),
+  ].join("~");
+}
+
+function isGenerationFrameOutputInBatch(output: GenerationFrameOutput, batchId: string): boolean {
+  return (
+    getStringValue(output.metadata?.batchId) === batchId ||
+    getStringValue(output.metadata?.exportPackId) === batchId
+  );
 }
 
 function enrichGenerationFrameNodesWithJobOutputs(
@@ -11496,12 +18934,26 @@ function enrichGenerationFrameNodesWithJobOutputs(
   let changed = false;
   const nextNodes = nodes.map((node) => {
     if (!isGenerationFrameNode(node)) return node;
-    const outputs = outputsByNodeId.get(node.id);
-    if (!outputs?.length) return node;
+    const activeBatchId = getStringValue(node.data.generationFrameActiveBatchId);
+    const currentFrame = migrateLegacyGenerationFrameData(node.data, node.id);
+    const batchScopedFrame = activeBatchId
+      ? {
+          ...currentFrame,
+          outputs: currentFrame.outputs.filter((output) =>
+            isGenerationFrameOutputInBatch(output, activeBatchId)
+          ),
+        }
+      : currentFrame;
+    const outputs = activeBatchId
+      ? outputsByNodeId.get(node.id)?.filter((output) =>
+          isGenerationFrameOutputInBatch(output, activeBatchId)
+        )
+      : outputsByNodeId.get(node.id);
+    if (!outputs?.length && batchScopedFrame.outputs.length === currentFrame.outputs.length) return node;
 
     const frame = mergeGenerationFrameOutputs(
-      migrateLegacyGenerationFrameData(node.data, node.id),
-      outputs
+      batchScopedFrame,
+      outputs ?? []
     );
     const status = getGenerationFrameStatusFromOutputs(frame.status, frame.outputs);
     const nextFrame = { ...frame, status };
@@ -11511,11 +18963,11 @@ function enrichGenerationFrameNodesWithJobOutputs(
       nextFrame.outputs
     );
 
-    const currentFrame = normalizeGenerationFrameState(node.data.generationFrame);
+    const currentStoredFrame = normalizeGenerationFrameState(node.data.generationFrame);
     const currentStatus = node.data.status;
     if (
       currentStatus === nextStatus &&
-      getGenerationFrameStateSignature(currentFrame) === getGenerationFrameStateSignature(nextFrame) &&
+      getGenerationFrameStateSignature(currentStoredFrame) === getGenerationFrameStateSignature(nextFrame) &&
       stringArraysEqual(node.data.metrics, nextMetrics)
     ) {
       return node;
@@ -11541,229 +18993,6 @@ function stringArraysEqual(first: readonly string[] = [], second: readonly strin
   return first.every((value, index) => value === second[index]);
 }
 
-function getArtifactReconcileSignature(
-  nodes: CanvasWorkbenchNode[],
-  edges: CanvasWorkbenchEdge[],
-  artifacts: PersistedGeneratedArtifact[],
-  hiddenArtifactNodeIds: string[]
-): string {
-  return [
-    artifacts.map(getStageArtifactSignature).join("|"),
-    hiddenArtifactNodeIds.slice().sort().join(","),
-    nodes.map(getArtifactReconcileNodeSignature).join("|"),
-    edges.map((edge) => `${edge.id}~${edge.source}~${edge.target}`).join("|"),
-  ].join("::");
-}
-
-function getArtifactReconcileNodeSignature(node: CanvasWorkbenchNode): string {
-  return [
-    node.id,
-    node.data.source,
-    node.data.artifactId,
-    node.data.previewUrl,
-    node.data.artifactStatus,
-    node.data.jobId,
-    getGenerationFrameOutputSignature(
-      normalizeGenerationFrameState(node.data.generationFrame).outputs
-    ),
-  ].join("~");
-}
-
-function reconcileArtifactResultNodes(
-  nodes: CanvasWorkbenchNode[],
-  edges: CanvasWorkbenchEdge[],
-  artifacts: PersistedGeneratedArtifact[],
-  hiddenArtifactNodeIds: string[] = []
-): { nodes: CanvasWorkbenchNode[]; edges: CanvasWorkbenchEdge[] } {
-  let nextNodes = nodes;
-  let nextEdges = edges;
-  const hiddenIds = new Set(hiddenArtifactNodeIds);
-
-  for (const artifact of artifacts) {
-    if (!artifact.url) continue;
-
-    const sourceNode = artifact.nodeId
-      ? nextNodes.find((node) => node.id === artifact.nodeId)
-      : undefined;
-
-    if (sourceNode) {
-      const enrichedSourceNode = withNodeArtifact(sourceNode, artifact);
-      if (enrichedSourceNode !== sourceNode) {
-        nextNodes = nextNodes.map((node) =>
-          node.id === sourceNode.id ? enrichedSourceNode : node
-        );
-      }
-      if (isGenerationFrameNode(sourceNode)) {
-        continue;
-      }
-    }
-
-    if (hiddenIds.has(artifact.id)) {
-      const hiddenNodeIds = new Set(
-        nextNodes
-          .filter((node) => isHiddenArtifactResultNode(node, hiddenArtifactNodeIds))
-          .map((node) => node.id)
-      );
-      if (hiddenNodeIds.size > 0) {
-        nextNodes = nextNodes.filter((node) => !hiddenNodeIds.has(node.id));
-        nextEdges = nextEdges.filter(
-          (edge) => !hiddenNodeIds.has(edge.source) && !hiddenNodeIds.has(edge.target)
-        );
-      }
-      continue;
-    }
-
-    const resultNodeId = getArtifactResultNodeId(artifact);
-    const existingResultNode = nextNodes.find(
-      (node) => node.id === resultNodeId || (
-        node.data.source === "artifact-history" && node.data.artifactId === artifact.id
-      )
-    );
-
-    if (!sourceNode && !existingResultNode) {
-      continue;
-    }
-
-    if (!existingResultNode) {
-      nextNodes = [
-        ...nextNodes,
-        createArtifactResultNode(artifact, sourceNode, nextNodes.length),
-      ];
-    } else {
-      const updatedResultNode = withArtifactResultNode(existingResultNode, artifact);
-      if (updatedResultNode !== existingResultNode) {
-        nextNodes = nextNodes.map((node) =>
-          node.id === existingResultNode.id ? updatedResultNode : node
-        );
-      }
-    }
-
-    if (sourceNode) {
-      const target = existingResultNode?.id ?? resultNodeId;
-      const edgeId = getArtifactResultEdgeId(sourceNode.id, artifact);
-      if (!nextEdges.some((edge) => edge.id === edgeId || (
-        edge.source === sourceNode.id && edge.target === target
-      ))) {
-        nextEdges = [
-          ...nextEdges,
-          {
-            id: edgeId,
-            source: sourceNode.id,
-            target,
-            label: "输出产物",
-            animated: false,
-          },
-        ];
-      }
-    }
-  }
-
-  return { nodes: nextNodes, edges: nextEdges };
-}
-
-function createArtifactResultNode(
-  artifact: PersistedGeneratedArtifact,
-  sourceNode: CanvasWorkbenchNode | undefined,
-  index: number
-): CanvasWorkbenchNode {
-  const fallbackBounds = sourceNode ? null : getCanvasBounds([]);
-  const artifactIndex = Math.max(0, index - initialCanvasNodes.length);
-  const basePosition = sourceNode?.position ?? {
-    x: fallbackBounds?.maxX ?? 960,
-    y: fallbackBounds?.minY ?? 80,
-  };
-
-  return {
-    id: getArtifactResultNodeId(artifact),
-    position: {
-      x: sourceNode ? basePosition.x + 360 : 360 + (artifactIndex % 3) * 320,
-      y: sourceNode
-        ? basePosition.y + 320 + (index % 3) * 320
-        : 675 + Math.floor(artifactIndex / 3) * 330,
-    },
-    data: createArtifactResultNodeData(artifact, sourceNode),
-  };
-}
-
-function withArtifactResultNode(
-  node: CanvasWorkbenchNode,
-  artifact: PersistedGeneratedArtifact
-): CanvasWorkbenchNode {
-  const previewUrl = getArtifactPreviewUrl(artifact);
-  if (
-    node.data.artifactId === artifact.id &&
-    node.data.previewUrl === previewUrl &&
-    node.data.label === artifact.title
-  ) {
-    return node;
-  }
-
-  return {
-    ...node,
-    data: {
-      ...node.data,
-      ...createArtifactResultNodeData(artifact, undefined),
-      caption: node.data.caption,
-    },
-  };
-}
-
-function createArtifactResultNodeData(
-  artifact: PersistedGeneratedArtifact,
-  sourceNode: CanvasWorkbenchNode | undefined
-): CanvasWorkbenchNode["data"] {
-  const providerLabel = artifact.provider || "产物历史";
-  const nodeLabel = sourceNode?.data.label;
-
-  return {
-    label: artifact.title,
-    caption: nodeLabel ? `由 ${nodeLabel} 生成的输出产物` : "从产物历史恢复的输出节点",
-    kind: "output",
-    status: mapArtifactToNodeStatus(artifact.status),
-    metrics: [
-      getArtifactStatusLabel(artifact.status),
-      providerLabel,
-      artifact.model || "默认模型",
-    ].filter(Boolean).slice(0, 4),
-    iconName: "output",
-    previewUrl: getArtifactPreviewUrl(artifact),
-    previewAlt: artifact.title,
-    artifactId: artifact.id,
-    artifactStatus: artifact.status,
-    artifactCreatedAt: artifact.createdAt,
-    jobId: artifact.jobId,
-    assetId: artifact.assetId,
-    linkedNodeId: artifact.nodeId,
-    source: "artifact-history",
-    category: "输出",
-  };
-}
-
-function getArtifactResultNodeId(artifact: PersistedGeneratedArtifact): string {
-  return `artifact-node-${artifact.id}`;
-}
-
-function getArtifactResultEdgeId(sourceNodeId: string, artifact: PersistedGeneratedArtifact): string {
-  return `artifact-edge-${sourceNodeId}-${artifact.id}`;
-}
-
-function mapArtifactToGenerationFrameOutput(
-  artifact: PersistedGeneratedArtifact
-): GenerationFrameOutput {
-  return {
-    id: artifact.id,
-    artifactId: artifact.id,
-    jobId: artifact.jobId,
-    nodeId: artifact.nodeId,
-    title: artifact.title,
-    url: artifact.url,
-    previewUrl: getArtifactPreviewUrl(artifact),
-    status: artifact.status,
-    createdAt: artifact.createdAt,
-    metadata: artifact.metadata,
-  };
-}
-
 function mapJobToGenerationFrameOutput(
   job: PersistedGenerationJob,
   artifact: PersistedGeneratedArtifact | undefined
@@ -11786,10 +19015,14 @@ function mapJobToGenerationFrameOutput(
     createdAt: artifact?.createdAt || job.createdAt,
     metadata: {
       ...job.metadata,
-      prompt: job.prompt,
+      ...(artifact?.metadata ?? {}),
+      prompt: artifact?.prompt || job.prompt,
+      provider: artifact?.provider || getStringValue(job.metadata.provider),
+      model: artifact?.model || getStringValue(job.metadata.model),
       jobStatus: job.status,
       jobError: job.error,
       artifactId: artifact?.id,
+      artifactStatus: artifact?.status,
     },
   };
 }
@@ -11815,40 +19048,6 @@ function mapGenerationFrameStatusToNodeStatus(
   return "ready";
 }
 
-function getArtifactResultNodeArtifactId(node: CanvasWorkbenchNode): string | null {
-  if (node.data.source !== "artifact-history") return null;
-  return typeof node.data.artifactId === "string" ? node.data.artifactId : null;
-}
-
-function isHiddenArtifactResultNode(
-  node: CanvasWorkbenchNode,
-  hiddenArtifactNodeIds: string[]
-): boolean {
-  const artifactId = getArtifactResultNodeArtifactId(node);
-  return !!artifactId && hiddenArtifactNodeIds.includes(artifactId);
-}
-
-function isArtifactLinkedToNode(
-  artifact: PersistedGeneratedArtifact,
-  node: CanvasWorkbenchNode
-): boolean {
-  const resultNodeId = getArtifactResultNodeId(artifact);
-  const artifactId = typeof node.data.artifactId === "string" ? node.data.artifactId : "";
-  const linkedNodeId = typeof node.data.linkedNodeId === "string" ? node.data.linkedNodeId : "";
-  const jobId = typeof node.data.jobId === "string" ? node.data.jobId : "";
-  const assetId = typeof node.data.assetId === "string" ? node.data.assetId : "";
-
-  return (
-    artifact.nodeId === node.id ||
-    resultNodeId === node.id ||
-    artifactId === artifact.id ||
-    linkedNodeId === artifact.nodeId ||
-    linkedNodeId === resultNodeId ||
-    (!!artifact.jobId && jobId === artifact.jobId) ||
-    (!!artifact.assetId && assetId === artifact.assetId)
-  );
-}
-
 function getHiddenArtifactNodeIds(metadata?: Record<string, unknown>): string[] {
   const value = metadata?.hiddenArtifactNodeIds;
   if (!Array.isArray(value)) return [];
@@ -11857,13 +19056,6 @@ function getHiddenArtifactNodeIds(metadata?: Record<string, unknown>): string[] 
 
 function addUniqueString(items: string[], item: string): string[] {
   return items.includes(item) ? items : [...items, item];
-}
-
-function mapArtifactToNodeStatus(status: string): CanvasWorkbenchNode["data"]["status"] {
-  if (status === "failed") return "review";
-  if (status === "running") return "running";
-  if (status === "draft" || status === "queued" || status === "pending") return "queued";
-  return "ready";
 }
 
 function withNodeComponentId(
@@ -11887,7 +19079,10 @@ function mergeNodeMetrics(current: string[], additions: string[]): string[] {
   return next.slice(0, 5);
 }
 
-function toFlowNode(node: CanvasWorkbenchNode, selected: boolean): CanvasFlowNode {
+function toFlowNode(
+  node: CanvasWorkbenchNode,
+  selected: boolean
+): CanvasFlowNode {
   return {
     id: node.id,
     type: "canvasWorkflow",
@@ -11949,6 +19144,11 @@ function toFlowEdge(edge: CanvasWorkbenchEdge, edgeCount = 0): Edge {
       fillOpacity: 0.88,
     },
   };
+}
+
+function shouldOpenCanvasNodeOnClick(node: Pick<CanvasWorkbenchNode, "data">): boolean {
+  if (!node.data.previewUrl && !node.data.referenceUrl) return false;
+  return node.data.kind === "asset" || node.data.kind === "output" || node.data.source === "artifact-history";
 }
 
 function applyWorkbenchNodeChanges(
@@ -12020,6 +19220,8 @@ function shouldMigrateVisualNodeLayout(metadata?: Record<string, unknown>): bool
 
 function applyVisualNodeLayoutMigration(nodes: CanvasWorkbenchNode[]): CanvasWorkbenchNode[] {
   let artifactIndex = 0;
+  let backstageIndex = 0;
+  const laneIndexes = new Map<CanvasLibraryCategory, number>();
 
   return nodes.map((node) => {
     const basePosition = visualNodeDefaultPositions[node.id];
@@ -12034,6 +19236,25 @@ function applyVisualNodeLayoutMigration(nodes: CanvasWorkbenchNode[]): CanvasWor
       };
       artifactIndex += 1;
       return { ...node, position };
+    }
+
+    if (isCanvasBackstageNode(node)) {
+      const position = {
+        x: 2040 + (backstageIndex % 3) * 340,
+        y: 170 + Math.floor(backstageIndex / 3) * 330,
+      };
+      backstageIndex += 1;
+      return { ...node, position };
+    }
+
+    const category = getCanvasNodeLibraryCategory(node);
+    if (category && isUserCanvasReferenceNode(node)) {
+      const laneIndex = laneIndexes.get(category) ?? 0;
+      laneIndexes.set(category, laneIndex + 1);
+      return {
+        ...node,
+        position: getCategoryLanePosition(category, laneIndex),
+      };
     }
 
     return node;
@@ -12213,6 +19434,50 @@ function buildCanvasGenerationReferenceContext({
   };
 }
 
+function buildCanvasAgentPlanningReferenceContext({
+  nodes,
+  components,
+  assets,
+}: {
+  nodes: CanvasWorkbenchNode[];
+  components: PersistedComponent[];
+  assets: CanvasAsset[];
+}): GenerationReferenceContext {
+  const componentById = new Map(components.map((component) => [component.id, component]));
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const roleMap = new Map<GenerationReferenceRole, GenerationReferenceRoleContext>();
+  const images: GenerationReferenceImage[] = [];
+
+  for (const node of nodes) {
+    if (isGenerationFrameNode(node) || node.data.source === "artifact-history") continue;
+    const componentId = getStringValue(node.data.componentId);
+    const assetId = getStringValue(node.data.assetId);
+    const component = componentId ? componentById.get(componentId) : undefined;
+    const asset = assetId ? assetById.get(assetId) : undefined;
+    const role = getNodeReferenceRole(node, component, asset);
+    if (!role) continue;
+
+    const nodeContext = buildNodeReferenceRoleContext({ role, node, component, asset });
+    const current = roleMap.get(role);
+    roleMap.set(role, current ? mergeReferenceRoleContext(current, nodeContext) : nodeContext);
+    images.push(...buildNodeReferenceImages({ role, node, component, asset }));
+  }
+
+  const roleContexts = Array.from(roleMap.values());
+  return {
+    version: 1,
+    source: "canvas-workbench",
+    targetNodeId: "agent-plan-preview",
+    targetNodeLabel: "Agent 计划预览",
+    images: dedupeReferenceImages(images),
+    roles: Object.fromEntries(roleMap.entries()) as GenerationReferenceContext["roles"],
+    promptFragments: dedupeStrings(roleContexts.flatMap((context) => context.promptFragments)),
+    constraints: dedupeStrings(roleContexts.flatMap((context) => context.constraints)),
+    negativeRules: dedupeStrings(roleContexts.flatMap((context) => context.negativeRules)),
+    qualityRules: dedupeStrings(roleContexts.flatMap((context) => context.qualityRules)),
+  };
+}
+
 function getReferenceRelevantNodes(
   targetNode: CanvasWorkbenchNode,
   nodes: CanvasWorkbenchNode[],
@@ -12342,6 +19607,7 @@ function getReferenceRoleFromCategory(category?: string): GenerationReferenceRol
   if (category === "模特") return "model";
   if (category === "风格") return "style";
   if (category === "场景") return "scene";
+  if (category === "文案") return "copy";
   return undefined;
 }
 
@@ -12352,6 +19618,17 @@ function getReferenceRoleFromComponentType(type?: string): GenerationReferenceRo
     return "style";
   }
   if (type === "scene") return "scene";
+  if (
+    type === "copy" ||
+    type === "copy_asset" ||
+    type === "knowledge" ||
+    type === "knowledge_asset" ||
+    type === "text" ||
+    type === "text_asset" ||
+    type === "copy_rules"
+  ) {
+    return "copy";
+  }
   return undefined;
 }
 
@@ -12388,6 +19665,7 @@ function getRoleQualityRules(
     return [
       ...getStringArray(parameters.identityAnchors).map((rule) => `Model identity anchor: ${rule}`),
       ...getStringArray(parameters.consistencyRules),
+      ...getStringArray(parameters.downstreamReferenceRules),
     ];
   }
   if (role === "scene") {
@@ -12547,7 +19825,7 @@ function hasExplicitProductReference(node: CanvasWorkbenchNode): boolean {
 }
 
 function findCanvasProductReferenceNode(nodes: CanvasWorkbenchNode[]): CanvasWorkbenchNode | undefined {
-  return nodes.find((node) => isCanvasProductNode(node) && hasExplicitProductReference(node));
+  return [...nodes].reverse().find((node) => isCanvasProductNode(node) && hasExplicitProductReference(node));
 }
 
 function findCanvasProductPlaceholderNode(nodes: CanvasWorkbenchNode[]): CanvasWorkbenchNode | undefined {
@@ -12559,6 +19837,103 @@ function findCanvasProductPlaceholderNode(nodes: CanvasWorkbenchNode[]): CanvasW
     ) ??
     nodes.find((node) => isCanvasProductNode(node) && !hasExplicitProductReference(node))
   );
+}
+
+function getCanvasReferenceNodesToPreserveForWorkflowApply(
+  nodes: CanvasWorkbenchNode[],
+  draft: WorkflowComposeDraft
+): CanvasWorkbenchNode[] {
+  const draftNodeIds = new Set(draft.nodes.map((node) => node.id));
+  const hasBoundProductInDraft = draft.nodes.some(
+    (node) => getNodeReferenceRole(node) === "product" && hasExplicitProductReference(node)
+  );
+
+  return nodes.filter((node) => {
+    if (draftNodeIds.has(node.id)) return false;
+    if (!isUserCanvasReferenceNode(node)) return false;
+    const role = getNodeReferenceRole(node);
+    if (role === "product" && hasBoundProductInDraft) return false;
+    return true;
+  });
+}
+
+function getAgentSampleReferenceNodes(
+  nodes: CanvasWorkbenchNode[],
+  {
+    productNode,
+  }: {
+    productNode: CanvasWorkbenchNode;
+  }
+): Array<{ node: CanvasWorkbenchNode; role: GenerationReferenceRole }> {
+  const selected: Array<{ node: CanvasWorkbenchNode; role: GenerationReferenceRole }> = [
+    { node: productNode, role: "product" },
+  ];
+  const seenNodeIds = new Set([productNode.id]);
+  const seenRoles = new Set<GenerationReferenceRole>(["product"]);
+
+  for (const node of [...nodes].reverse()) {
+    if (seenNodeIds.has(node.id) || !isUserCanvasReferenceNode(node)) continue;
+    const role = getNodeReferenceRole(node);
+    if (!role || role === "product") continue;
+    if (seenRoles.has(role)) continue;
+    selected.push({ node, role });
+    seenNodeIds.add(node.id);
+    seenRoles.add(role);
+  }
+
+  return selected.sort((a, b) => getReferenceRoleOrder(a.role) - getReferenceRoleOrder(b.role));
+}
+
+function getPreferredBurnInCopyTextFromReferenceContext(
+  context: GenerationReferenceContext | undefined
+): string | undefined {
+  const copyBrief = normalizeStructuredCopyBrief(context?.roles.copy?.parameters?.copyBrief);
+  const text = copyBrief?.inImageText.length
+    ? copyBrief.inImageText
+    : copyBrief?.sourceText
+      ? [copyBrief.sourceText]
+      : [];
+  return text.slice(0, 2).join(" / ") || undefined;
+}
+
+function isUserCanvasReferenceNode(node: CanvasWorkbenchNode): boolean {
+  const source = getStringValue(node.data.source);
+  return Boolean(
+    getNodeReferenceRole(node) &&
+    !isGenerationFrameNode(node) &&
+    source !== "workflow-compose" &&
+    source !== "artifact-history" &&
+    hasCanvasReferenceSignal(node)
+  );
+}
+
+function hasCanvasReferenceSignal(node: CanvasWorkbenchNode): boolean {
+  return Boolean(
+    getStringValue(node.data.referenceUrl) ||
+    getStringValue(node.data.previewUrl) ||
+    getStringValue(node.data.assetId) ||
+    getStringValue(node.data.componentId) ||
+    getStringArray(node.data.promptFragments).length > 0 ||
+    getStringArray(node.data.constraints).length > 0 ||
+    node.data.copyBrief
+  );
+}
+
+function getReferenceRoleOrder(role: GenerationReferenceRole): number {
+  if (role === "product") return 0;
+  if (role === "model") return 1;
+  if (role === "scene") return 2;
+  if (role === "style") return 3;
+  if (role === "copy") return 4;
+  return 99;
+}
+
+function getAgentReferenceEdgeLabel(role: GenerationReferenceRole): string {
+  if (role === "model") return "模特参考";
+  if (role === "scene") return "场景参考";
+  if (role === "style") return "风格参考";
+  if (role === "copy") return "文案约束";
+  return "参考";
 }
 
 function getProductComponentWorkflowContext(component: PersistedComponent): {
@@ -12658,7 +20033,7 @@ function createCopyNodeFromText(
       caption: text,
       kind: "asset",
       status: "ready",
-      metrics: ["文案", `已拆 ${itemCount} 条`, "可拖进生成框"],
+      metrics: ["文案", `已拆 ${itemCount} 条`, "Agent 参考"],
       iconName: "copy",
       type: "copy_asset",
       componentType: "copy_asset",
@@ -12691,7 +20066,7 @@ function createKnowledgeNode(position: XYPosition, index: number): CanvasWorkben
       caption: defaultText,
       kind: "asset",
       status: "ready",
-      metrics: ["知识", "规则", "可拖进生成框"],
+      metrics: ["知识", "规则", "Agent 参考"],
       iconName: "knowledge",
       type: "knowledge_asset",
       componentType: "knowledge_asset",
@@ -13059,7 +20434,20 @@ function getComponentStatusLabel(status: string): string {
 }
 
 function hasExplicitCopyBurnInRequest(value: string): boolean {
-  return /(烧进|带字|直接出字|画面文字|图中文字|海报标题|封面标题|图片上写|写上|加字|burn[\s-]?in|in-image|render text)/i.test(value);
+  return /(烧进|带字|带文案|短文案|短标题|文案进图|直接出字|画面文字|图中文字|海报标题|封面标题|图片上写|写上|加字|burn[\s-]?in|in-image|render text)/i.test(value);
+}
+
+function extractAgentBurnInCopyText(value: string): string | undefined {
+  if (!hasExplicitCopyBurnInRequest(value)) return undefined;
+  const quoted = value.match(/[「『“"]([^」』”"]{1,32})[」』”"]/);
+  if (quoted?.[1]?.trim()) return quoted[1].trim();
+
+  const patterns = [
+    /(?:文案烧进图|文案烧进|画面文字|图中文字|海报标题|封面标题|短标题|图片上写|写上|加字|烧字|带字|带文案|短文案)\s*[:：]\s*([^。.\n]{1,32})/i,
+    /(?:burn[\s-]?in|render)\s+(?:short\s+)?(?:text|copy|words?)\s*[:：]?\s+([a-z0-9][a-z0-9\s'-]{1,36})$/i,
+  ];
+  const match = patterns.map((pattern) => value.match(pattern)).find(Boolean);
+  return match?.[1]?.trim().replace(/[。.,，]+$/, "") || undefined;
 }
 
 function getComponentFallbackDescription(type: string): string {
@@ -13129,7 +20517,8 @@ function normalizeAssetPackCategory(value: unknown, fallback: AssetPackCategory)
     value === "product_asset" ||
     value === "model_asset" ||
     value === "scene_asset" ||
-    value === "style_asset"
+    value === "style_asset" ||
+    value === "copy_asset"
   ) {
     return value;
   }
@@ -13137,6 +20526,7 @@ function normalizeAssetPackCategory(value: unknown, fallback: AssetPackCategory)
   if (value === "model") return "model_asset";
   if (value === "scene") return "scene_asset";
   if (value === "style" || value === "visual_style") return "style_asset";
+  if (value === "copy" || value === "prompt_source" || value === "knowledge") return "copy_asset";
   return fallback;
 }
 
@@ -13172,6 +20562,7 @@ function getAssetPackCategoryLabel(category: AssetPackCategory): string {
   if (category === "product_asset") return "商品资产";
   if (category === "model_asset") return "模特资产";
   if (category === "scene_asset") return "场景资产";
+  if (category === "copy_asset") return "文案资产";
   return "风格资产";
 }
 
@@ -13179,6 +20570,7 @@ function getAssetPackReferenceRole(category: AssetPackCategory): string {
   if (category === "product_asset") return "product";
   if (category === "model_asset") return "model";
   if (category === "scene_asset") return "scene";
+  if (category === "copy_asset") return "copy";
   return "style";
 }
 
@@ -13186,6 +20578,7 @@ function getAssetPackReferenceUploadLabel(category: AssetPackCategory): string {
   if (category === "product_asset") return "商品参考图";
   if (category === "model_asset") return "模特参考图";
   if (category === "scene_asset") return "场景参考图";
+  if (category === "copy_asset") return "文案参考";
   return "风格参考图";
 }
 
@@ -13198,6 +20591,9 @@ function getAssetPackReferenceUploadHint(category: AssetPackCategory): string {
   }
   if (category === "scene_asset") {
     return "上传空间或氛围参考；系统会提取布局、光线方向、材质、道具和可放置区域。";
+  }
+  if (category === "copy_asset") {
+    return "直接输入画面文字、卖点参数、导出文案和禁止声明；默认不需要图片参考。";
   }
   return "上传你喜欢的摄影图；系统会提取色彩、光线、镜头、构图和商业摄影质感。";
 }
@@ -13212,6 +20608,9 @@ function getAssetPackDefaultRequestFromReferences(category: AssetPackCategory): 
   if (category === "scene_asset") {
     return "根据上传的参考图整理成可复用商业场景资产，提取空间布局、光线方向、材质、道具、可放置区域和统一透视关系。";
   }
+  if (category === "copy_asset") {
+    return "整理一份可复用文案资产，拆分画面文字、卖点参数、导出文案和禁止声明，供 Agent 判断是否进图。";
+  }
   return "根据上传的参考图整理成一张可复用视觉风格参考图，提取色彩、光线、镜头、构图、材质感和商业摄影质感，不绑定具体商品或人物。";
 }
 
@@ -13219,6 +20618,7 @@ function getAssetPackDefaultDescription(category: AssetPackCategory, request: st
   if (category === "product_asset") return `商品身份资产：${request}`;
   if (category === "model_asset") return `人物身份资产：${request}`;
   if (category === "scene_asset") return `商业场景资产：${request}`;
+  if (category === "copy_asset") return request;
   return `统一视觉风格资产：${request}`;
 }
 
@@ -13237,6 +20637,7 @@ function buildAssetPackMetadata(draft: AssetPackDraft): Record<string, unknown> 
     libraryScope: "global",
     savedByUser: true,
     componentType: mapAssetPackCategoryToComponentType(draft.category),
+    canvasCategory: mapAssetPackCategoryToLibraryCategory(draft.category),
     assetPackId: draft.id,
     assetPackCategory: draft.category,
     label: getAssetPackCategoryLabel(draft.category),
@@ -13261,12 +20662,14 @@ function mapAssetPackCategoryToAssetType(category: AssetPackCategory): string {
   if (category === "product_asset") return "product";
   if (category === "model_asset") return "model";
   if (category === "scene_asset") return "scene";
+  if (category === "copy_asset") return "copy";
   return "style";
 }
 
 function mapAssetPackCategoryToComponentType(category: AssetPackCategory): string {
   if (category === "scene_asset") return "scene";
   if (category === "style_asset") return "visual_style";
+  if (category === "copy_asset") return "prompt_source";
   return category;
 }
 
@@ -13274,6 +20677,7 @@ function mapAssetPackCategoryToLibraryCategory(category: AssetPackCategory): Can
   if (category === "product_asset") return "商品";
   if (category === "model_asset") return "模特";
   if (category === "scene_asset") return "场景";
+  if (category === "copy_asset") return "文案";
   return "风格";
 }
 
@@ -13282,6 +20686,7 @@ function mapCanvasLibraryCategoryToAssetType(category: CanvasLibraryCategory): s
   if (category === "模特") return "model";
   if (category === "风格") return "style";
   if (category === "场景") return "scene";
+  if (category === "文案") return "copy";
   if (category === "平台") return "platform";
   if (category === "质检") return "quality";
   return "output";
@@ -13733,9 +21138,19 @@ function canRetryJob(job: PersistedGenerationJob): boolean {
 }
 
 function canRetryImageJob(job: PersistedGenerationJob): boolean {
-  if (!canRetryJob(job)) return false;
   const source = typeof job.metadata.source === "string" ? job.metadata.source : "";
-  return source === "batch-image-api" || source === "batch-image-api-retry";
+  const isBatchImageSource = source === "batch-image-api" || source === "batch-image-api-retry";
+  if (!isBatchImageSource) return false;
+  return job.status === "failed" ||
+    job.status === "cancelled" ||
+    job.status === "done" ||
+    job.status === "completed";
+}
+
+function canRerunImageJob(job: PersistedGenerationJob): boolean {
+  return (job.status === "done" || job.status === "completed") &&
+    !!job.prompt.trim() &&
+    !!job.resultUrl.trim();
 }
 
 function canArchiveExportPackBatchJobs(batch: ExportPackBatchSummary): boolean {
@@ -13888,6 +21303,74 @@ function getQaStatusLabel(status: string): string {
   if (status === "pending") return "待检查";
   if (status === "manual") return "待复核";
   return status;
+}
+
+function normalizeArtifactReviewStatus(value: unknown): ArtifactReviewStatus | null {
+  if (
+    value === "approved" ||
+    value === "pending" ||
+    value === "needs_redo" ||
+    value === "rejected" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function getOutputPreviewReviewStatus(
+  metadata: Record<string, unknown>,
+  outputStatus?: string
+): ArtifactReviewStatus {
+  const reviewState = getRecordValue(metadata.reviewState);
+  const reviewStatus = normalizeArtifactReviewStatus(reviewState.status);
+  if (reviewStatus) return reviewStatus;
+  const normalizedOutputStatus = (outputStatus || "").toLowerCase();
+  if (
+    normalizedOutputStatus === "failed" ||
+    normalizedOutputStatus === "error" ||
+    normalizedOutputStatus === "cancelled" ||
+    Boolean(metadata.error)
+  ) {
+    return "failed";
+  }
+  return "pending";
+}
+
+function getOutputPreviewVisualQaSummary({
+  item,
+  artifacts,
+}: {
+  item?: GenerationOutputPreviewItem;
+  artifacts: PersistedGeneratedArtifact[];
+}): OutputPreviewVisualQaSummary | undefined {
+  if (!item) return undefined;
+  const artifact =
+    (item.artifactId ? artifacts.find((candidate) => candidate.id === item.artifactId) : undefined) ??
+    (item.jobId ? artifacts.find((candidate) => candidate.jobId === item.jobId) : undefined);
+  const source: PersistedGeneratedArtifact = artifact ?? {
+    id: item.artifactId || item.outputId || item.jobId || "preview",
+    workflowId: undefined,
+    nodeId: item.nodeId,
+    jobId: item.jobId,
+    assetId: undefined,
+    type: getStringValue(item.metadata?.imageType) || getStringValue(item.metadata?.planItemType) || "preview",
+    title: item.title,
+    status: item.status || "done",
+    url: item.url,
+    prompt: item.prompt || getStringValue(item.metadata?.prompt) || "",
+    provider: item.provider || getStringValue(item.metadata?.provider) || "",
+    model: item.model || getStringValue(item.metadata?.model) || "",
+    metadata: item.metadata ?? {},
+    createdAt: "",
+    updatedAt: "",
+  };
+  const qa = getArtifactVisualQaSummary(source);
+  return {
+    status: qa.status,
+    label: qa.label,
+    issues: qa.issues,
+  };
 }
 
 function getBatchStateLabel(state?: string): string {
@@ -14089,111 +21572,6 @@ function getProviderReadyClassName(provider: ProviderReadiness | null): string {
   if (!provider) return "text-warm-muted";
   if (provider.hasImageKey || provider.hasKey) return "text-emerald-700";
   return "text-red-700";
-}
-
-function GenerationFrameWorkOrder({
-  node,
-  context,
-  onPromptChange,
-}: {
-  node: CanvasWorkbenchNode;
-  context?: GenerationReferenceContext;
-  onPromptChange: (nodeId: string, prompt: string) => void;
-}) {
-  const slots = getGenerationFrameSlotItems(context);
-  const readyCount = slots.filter((slot) => slot.ready).length;
-  const request = getStringValue(node.data.generationUserRequest) ?? "";
-
-  return (
-    <div className="mt-3 rounded-md border border-warm-line/50 bg-warm-paper p-2.5">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-1.5 text-xs font-medium text-warm-ink">
-            <ListChecks className="h-3.5 w-3.5 text-warm-primary" />
-            生成框工作单
-          </div>
-          <p className="mt-1 text-[11px] leading-4 text-warm-muted">
-            {getGenerationFramePlanLabel(node)}
-          </p>
-        </div>
-        <span className="shrink-0 rounded bg-warm-bg px-1.5 py-0.5 text-[10px] text-warm-muted">
-          槽位 {readyCount}/4
-        </span>
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-1.5">
-        {slots.map((slot) => (
-          <GenerationFrameSlotPill key={slot.role} slot={slot} />
-        ))}
-      </div>
-
-      <label className="mt-3 block text-[11px] font-medium text-warm-ink" htmlFor={`generation-request-${node.id}`}>
-        一句话需求
-      </label>
-      <textarea
-        id={`generation-request-${node.id}`}
-        value={request}
-        onChange={(event) => onPromptChange(node.id, event.target.value)}
-        rows={3}
-        className="mt-1.5 w-full resize-none rounded-md border border-warm-line/70 bg-warm-bg px-2.5 py-2 text-xs leading-snug text-warm-ink outline-none transition placeholder:text-warm-muted/60 focus:border-warm-primary/60"
-        placeholder={getStringValue(node.data.promptPlaceholder) ?? "例如：生成 4 张高端商务模特图，保持商品颜色和结构不变"}
-      />
-
-      <div className="mt-3 rounded-md border border-warm-line/40 bg-warm-bg px-2.5 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-medium text-warm-ink">生成计划</span>
-          <span className="rounded bg-warm-paper px-1.5 py-0.5 text-[10px] text-warm-muted">
-            {getGenerationFrameSlotSummary(context)}
-          </span>
-        </div>
-        <p className="mt-1.5 text-[11px] leading-4 text-warm-muted">
-          {getGenerationFrameCostHint(context)}
-        </p>
-        <p className="mt-1 text-[11px] leading-4 text-warm-muted">
-          {getGenerationFrameReferenceHint(context)}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function GenerationFrameSlotPill({
-  slot,
-}: {
-  slot: {
-    role: GenerationReferenceRole;
-    label: string;
-    title: string;
-    ready: boolean;
-    imageCount: number;
-    providerImageCount: number;
-  };
-}) {
-  return (
-    <div
-      className={cn(
-        "min-w-0 rounded-md border px-2 py-1.5",
-        slot.ready
-          ? "border-warm-primary/25 bg-warm-primary-soft"
-          : "border-warm-line/40 bg-warm-bg"
-      )}
-    >
-      <div className="flex items-center justify-between gap-1.5">
-        <span className={cn("text-[10px] font-medium", slot.ready ? "text-warm-primary" : "text-warm-muted")}>
-          {slot.label}
-        </span>
-        <span className={cn("text-[10px]", slot.ready ? "text-warm-primary" : "text-warm-muted")}>
-          {slot.ready ? "已接入" : "待接入"}
-        </span>
-      </div>
-      <div className="mt-0.5 truncate text-[11px] font-medium text-warm-ink">
-        {slot.title}
-      </div>
-      <div className="mt-0.5 text-[10px] text-warm-muted">
-        {slot.ready ? `${slot.imageCount} 图 / ${slot.providerImageCount} 可直用` : "拖入或连线补充"}
-      </div>
-    </div>
-  );
 }
 
 function ReferenceContextMiniPanel({ context }: { context: GenerationReferenceContext }) {
@@ -14471,14 +21849,6 @@ function getFirstManifestNaming(manifest?: ExportPackManifest): string {
   const naming = manifest?.items.find((item) => item.naming)?.naming;
   if (!naming) return "";
   return naming.length > 18 ? `${naming.slice(0, 15)}...` : naming;
-}
-
-function getArtifactStatusLabel(status: string): string {
-  if (status === "ready" || status === "done" || status === "completed") return "完成";
-  if (status === "running") return "生成中";
-  if (status === "failed") return "失败";
-  if (status === "draft") return "草稿";
-  return status || "产物";
 }
 
 function mapProductionStateFromStatus(status: string): ProductionPanelState {

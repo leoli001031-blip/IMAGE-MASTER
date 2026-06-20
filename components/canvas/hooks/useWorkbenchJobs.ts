@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type {
   PersistedGeneratedArtifact,
   PersistedGenerationJob,
@@ -22,44 +22,120 @@ interface UseWorkbenchJobsReturn {
   queueSnapshot: PersistedJobQueueSnapshot | null;
   artifacts: PersistedGeneratedArtifact[];
   hasActiveJob: boolean;
-  refreshJobs: () => Promise<void>;
-  refreshQueue: () => Promise<void>;
-  refreshArtifacts: () => Promise<void>;
+  setJobs: Dispatch<SetStateAction<PersistedGenerationJob[]>>;
+  setQueueSnapshot: Dispatch<SetStateAction<PersistedJobQueueSnapshot | null>>;
+  setArtifacts: Dispatch<SetStateAction<PersistedGeneratedArtifact[]>>;
+  refreshJobs: () => Promise<PersistedGenerationJob[]>;
+  refreshQueue: () => Promise<PersistedJobQueueSnapshot | null>;
+  refreshArtifacts: () => Promise<PersistedGeneratedArtifact[]>;
 }
 
 export function useWorkbenchJobs({
   workflowId,
   pollIntervalMs = 2500,
 }: UseWorkbenchJobsOptions): UseWorkbenchJobsReturn {
-  const [jobs, setJobs] = useState<PersistedGenerationJob[]>([]);
+  const [jobs, setJobsState] = useState<PersistedGenerationJob[]>([]);
   const [queueSnapshot, setQueueSnapshot] =
     useState<PersistedJobQueueSnapshot | null>(null);
-  const [artifacts, setArtifacts] = useState<PersistedGeneratedArtifact[]>([]);
+  const [artifacts, setArtifactsState] = useState<PersistedGeneratedArtifact[]>([]);
 
   const jobsSigRef = useRef("");
   const artifactsSigRef = useRef("");
+  const queueSigRef = useRef("");
+  const jobsRef = useRef<PersistedGenerationJob[]>([]);
+  const artifactsRef = useRef<PersistedGeneratedArtifact[]>([]);
+  const jobsUpdatedAfterRef = useRef("");
+  const artifactsUpdatedAfterRef = useRef("");
+  const workflowIdRef = useRef<string | null>(workflowId);
+
+  const setJobs = useCallback<Dispatch<SetStateAction<PersistedGenerationJob[]>>>((value) => {
+    setJobsState((current) => {
+      const next = resolveStateAction(value, current);
+      jobsRef.current = next;
+      jobsSigRef.current = getJobListSignature(next);
+      jobsUpdatedAfterRef.current = getMaxUpdatedAt(next);
+      return next;
+    });
+  }, []);
+
+  const setArtifacts = useCallback<Dispatch<SetStateAction<PersistedGeneratedArtifact[]>>>((value) => {
+    setArtifactsState((current) => {
+      const next = resolveStateAction(value, current);
+      artifactsRef.current = next;
+      artifactsSigRef.current = getArtifactListSignature(next);
+      artifactsUpdatedAfterRef.current = getMaxUpdatedAt(next);
+      return next;
+    });
+  }, []);
+
+  const setQueueSnapshotSynced = useCallback<Dispatch<SetStateAction<PersistedJobQueueSnapshot | null>>>((value) => {
+    setQueueSnapshot((current) => {
+      const next = resolveStateAction(value, current);
+      queueSigRef.current = getQueueSignature(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (workflowIdRef.current === workflowId) return;
+    workflowIdRef.current = workflowId;
+    jobsSigRef.current = "";
+    artifactsSigRef.current = "";
+    jobsUpdatedAfterRef.current = "";
+    artifactsUpdatedAfterRef.current = "";
+    jobsRef.current = [];
+    artifactsRef.current = [];
+    setJobs([]);
+    setArtifacts([]);
+  }, [workflowId]);
 
   const refreshJobs = useCallback(async () => {
-    const list = await fetchJobs(workflowId);
-    const sig = getJobListSignature(list);
-    if (sig !== jobsSigRef.current) {
-      jobsSigRef.current = sig;
-      setJobs(list);
+    if (!workflowId) {
+      jobsSigRef.current = "";
+      jobsUpdatedAfterRef.current = "";
+      jobsRef.current = [];
+      setJobs((current) => (current.length === 0 ? current : []));
+      return [];
     }
+    const updatedAfter = getDeltaCursor(jobsUpdatedAfterRef.current);
+    const list = await fetchJobs(workflowId, updatedAfter);
+    const nextList = updatedAfter
+      ? mergeById(jobsRef.current, list, getPersistedJobSortKey)
+      : list;
+    const nextSig = getJobListSignature(nextList);
+    if (nextSig !== jobsSigRef.current) {
+      setJobs(nextList);
+    }
+    return nextList;
   }, [workflowId]);
 
   const refreshQueue = useCallback(async () => {
     const snapshot = await fetchQueueSnapshot();
-    if (snapshot) setQueueSnapshot(snapshot);
-  }, []);
+    const sig = getQueueSignature(snapshot);
+    if (sig !== queueSigRef.current) {
+      setQueueSnapshotSynced(snapshot);
+    }
+    return snapshot;
+  }, [setQueueSnapshotSynced]);
 
   const refreshArtifacts = useCallback(async () => {
-    const list = await fetchArtifacts(workflowId);
-    const sig = getArtifactListSignature(list);
-    if (sig !== artifactsSigRef.current) {
-      artifactsSigRef.current = sig;
-      setArtifacts(list);
+    if (!workflowId) {
+      artifactsSigRef.current = "";
+      artifactsUpdatedAfterRef.current = "";
+      artifactsRef.current = [];
+      setArtifacts((current) => (current.length === 0 ? current : []));
+      return [];
     }
+    const updatedAfter = getDeltaCursor(artifactsUpdatedAfterRef.current);
+    const list = await fetchArtifacts(workflowId, updatedAfter);
+    const nextList = updatedAfter
+      ? mergeById(artifactsRef.current, list, getPersistedArtifactSortKey)
+      : list;
+    const nextSig = getArtifactListSignature(nextList);
+    if (nextSig !== artifactsSigRef.current) {
+      setArtifacts(nextList);
+    }
+    return nextList;
   }, [workflowId]);
 
   const hasActiveJob = jobs.some(isActiveJob);
@@ -74,11 +150,18 @@ export function useWorkbenchJobs({
     return () => clearInterval(timer);
   }, [hasActiveJob, pollIntervalMs, refreshJobs, refreshArtifacts, refreshQueue]);
 
+  useEffect(() => {
+    void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue()]);
+  }, [refreshJobs, refreshArtifacts, refreshQueue]);
+
   return {
     jobs,
     queueSnapshot,
     artifacts,
     hasActiveJob,
+    setJobs,
+    setQueueSnapshot: setQueueSnapshotSynced,
+    setArtifacts,
     refreshJobs,
     refreshQueue,
     refreshArtifacts,
@@ -90,10 +173,13 @@ export function useWorkbenchJobs({
 /* ------------------------------------------------------------------ */
 
 async function fetchJobs(
-  workflowId: string | null
+  workflowId: string | null,
+  updatedAfter?: string
 ): Promise<PersistedGenerationJob[]> {
-  const q = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : "";
-  const res = await window.fetch(`/api/jobs${q}`, { cache: "no-store" });
+  const params = new URLSearchParams({ limit: "200" });
+  if (workflowId) params.set("workflowId", workflowId);
+  if (updatedAfter) params.set("updatedAfter", updatedAfter);
+  const res = await window.fetch(`/api/jobs?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) return [];
   const payload = await res.json();
   const list = Array.isArray(payload) ? payload : payload.jobs;
@@ -110,10 +196,13 @@ async function fetchQueueSnapshot(): Promise<PersistedJobQueueSnapshot | null> {
 }
 
 async function fetchArtifacts(
-  workflowId: string | null
+  workflowId: string | null,
+  updatedAfter?: string
 ): Promise<PersistedGeneratedArtifact[]> {
-  const q = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : "";
-  const res = await window.fetch(`/api/artifacts${q}`, { cache: "no-store" });
+  const params = new URLSearchParams({ limit: "200" });
+  if (workflowId) params.set("workflowId", workflowId);
+  if (updatedAfter) params.set("updatedAfter", updatedAfter);
+  const res = await window.fetch(`/api/artifacts?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) return [];
   const payload = await res.json();
   const list = Array.isArray(payload) ? payload : payload.artifacts;
@@ -233,6 +322,62 @@ function getJobListSignature(jobs: PersistedGenerationJob[]): string {
 
 function getArtifactListSignature(artifacts: PersistedGeneratedArtifact[]): string {
   return artifacts.map((a) => [a.id, a.status, a.url, a.updatedAt].join(":")).join("|");
+}
+
+function getQueueSignature(snapshot: PersistedJobQueueSnapshot | null): string {
+  if (!snapshot) return "";
+  return JSON.stringify({
+    runtime: snapshot.runtime,
+    database: snapshot.database,
+    stale: snapshot.stale,
+    leases: snapshot.leases.map((lease) => [
+      lease.jobId,
+      lease.status,
+      lease.owner,
+      lease.expired,
+      lease.inRuntimeQueue,
+      lease.inRuntimeRunning,
+    ]),
+  });
+}
+
+function mergeById<T extends { id: string }>(
+  current: T[],
+  updates: T[],
+  getSortKey: (item: T) => string
+): T[] {
+  if (updates.length === 0) return current;
+  const items = new Map(current.map((item) => [item.id, item]));
+  for (const update of updates) items.set(update.id, update);
+  return [...items.values()]
+    .sort((a, b) => getSortKey(b).localeCompare(getSortKey(a)))
+    .slice(0, 200);
+}
+
+function getPersistedJobSortKey(item: PersistedGenerationJob): string {
+  return item.createdAt || item.updatedAt || item.id;
+}
+
+function getPersistedArtifactSortKey(item: PersistedGeneratedArtifact): string {
+  return item.createdAt || item.updatedAt || item.id;
+}
+
+function getMaxUpdatedAt(items: Array<{ updatedAt?: string }>): string {
+  return items.reduce((max, item) => {
+    const value = typeof item.updatedAt === "string" ? item.updatedAt : "";
+    return value > max ? value : max;
+  }, "");
+}
+
+function getDeltaCursor(value: string): string | undefined {
+  if (!value) return undefined;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return value;
+  return new Date(Math.max(0, time - 1000)).toISOString();
+}
+
+function resolveStateAction<T>(value: SetStateAction<T>, current: T): T {
+  return typeof value === "function" ? (value as (previous: T) => T)(current) : value;
 }
 
 function isActiveJob(job: PersistedGenerationJob): boolean {

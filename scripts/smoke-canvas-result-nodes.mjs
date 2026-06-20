@@ -1,0 +1,444 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+const root = process.cwd();
+const resultNodesPath = path.join(root, "components/canvas/canvas-result-nodes.ts");
+const workbenchPath = path.join(root, "components/canvas/visual-workbench.tsx");
+const outputPreviewModalPath = path.join(root, "components/canvas/output-preview-modal.tsx");
+const artifactRoutePath = path.join(root, "app/api/artifacts/[id]/route.ts");
+const artifactVisualQaRoutePath = path.join(root, "app/api/artifacts/[id]/visual-qa/route.ts");
+const artifactListRoutePath = path.join(root, "app/api/artifacts/route.ts");
+const aiClientPath = path.join(root, "lib/ai/client.ts");
+
+const resultNodesSource = fs.readFileSync(resultNodesPath, "utf8");
+const workbenchSource = fs.readFileSync(workbenchPath, "utf8");
+const outputPreviewModalSource = fs.readFileSync(outputPreviewModalPath, "utf8");
+const workflowNodeSource = fs.readFileSync(path.join(root, "components/canvas/workflow-node.tsx"), "utf8");
+const artifactRouteSource = fs.readFileSync(artifactRoutePath, "utf8");
+const artifactVisualQaRouteSource = fs.readFileSync(artifactVisualQaRoutePath, "utf8");
+const artifactListRouteSource = fs.readFileSync(artifactListRoutePath, "utf8");
+const aiClientSource = fs.readFileSync(aiClientPath, "utf8");
+
+for (const exportedName of [
+  "getCanvasVisibleArtifacts",
+  "getArtifactReconcileSignature",
+  "reconcileArtifactResultNodes",
+  "createArtifactResultNode",
+  "getArtifactPreviewUrl",
+  "getArtifactThumbnailUrl",
+  "getArtifactResultWallFocusNodeIds",
+  "mapArtifactToGenerationFrameOutput",
+]) {
+  assert.match(
+    resultNodesSource,
+    new RegExp(`export function ${exportedName}\\b`),
+    `${exportedName} should live in canvas-result-nodes.ts`
+  );
+}
+
+assert.match(
+  workbenchSource,
+  /from "@\/components\/canvas\/canvas-result-nodes"/,
+  "visual-workbench should import the extracted result node helpers"
+);
+assert.match(
+  resultNodesSource,
+  /node\.data\.label[\s\S]*node\.data\.caption[\s\S]*node\.data\.artifactId/,
+  "artifact reconcile signature should include visible label/caption text"
+);
+assert.match(
+  resultNodesSource,
+  /ARTIFACT_RESULT_LAYOUT_VERSION = [1-9]\d*/,
+  "artifact result nodes should carry an explicit layout version"
+);
+assert.match(
+  resultNodesSource,
+  /ARTIFACT_RESULT_ROW_WIDTH[\s\S]*getArtifactResultDisplaySize/,
+  "artifact result nodes should use a bounded row width and ratio-aware sizing helper"
+);
+assert.match(
+  resultNodesSource,
+  /layoutWidth[\s\S]*layoutHeight[\s\S]*layoutPositionKey/,
+  "artifact result nodes should use ratio-aware masonry sizing metadata"
+);
+assert.match(
+  resultNodesSource,
+  /ARTIFACT_RESULT_CAPTION_HEIGHT[\s\S]*imageHeight \+ ARTIFACT_RESULT_CAPTION_HEIGHT/,
+  "artifact result layout should include the always-visible caption height so rows do not overlap"
+);
+assert.match(
+  resultNodesSource,
+  /function compactArtifactResultTitle\b/,
+  "artifact result nodes should compact long production titles for the canvas"
+);
+assert.match(
+  resultNodesSource,
+  /fullTitle[\s\S]*compactTitle[\s\S]*layoutGroup[\s\S]*layoutGroupCount[\s\S]*layoutGroupStart/,
+  "artifact result node parameters should keep full provenance title and visible group metadata"
+);
+assert.match(
+  resultNodesSource,
+  /source: "artifact-group-header"[\s\S]*layoutRatios[\s\S]*layoutHeader: true/,
+  "artifact result nodes should create lightweight group header nodes for each result category"
+);
+assert.match(
+  resultNodesSource,
+  /"详情图"[\s\S]*"细节图"[\s\S]*"模特图"[\s\S]*"场景图"[\s\S]*"卖点图"[\s\S]*"文案图"/,
+  "artifact result wall should use user-facing image group labels, including copy images"
+);
+assert.match(
+  resultNodesSource,
+  /layoutHeaderAvailable: Boolean\(layout\)/,
+  "artifact image nodes should know when repeated category badges can be suppressed"
+);
+assert.match(
+  resultNodesSource,
+  /!artifact\.url && !isArtifactFailed\(artifact\)[\s\S]*artifact\.url \|\| isArtifactFailed\(artifact\)/,
+  "failed artifacts without image URLs should still appear in the review wall"
+);
+assert.match(
+  resultNodesSource,
+  /export function getArtifactResultWallFocusNodeIds[\s\S]*groupHeaders[\s\S]*previewResults[\s\S]*for \(const item of groupHeaders\) addFocusId/,
+  "result wall focus should include group headers and cross-group preview items instead of only the first row"
+);
+assert.match(
+  resultNodesSource,
+  /previewUrl: getArtifactPreviewUrl\(artifact\)[\s\S]*referenceUrl: artifact\.url/,
+  "artifact result nodes should use thumbnails for canvas preview while preserving the original URL for detail actions"
+);
+assert.match(
+  resultNodesSource,
+  /originalUrl: artifact\.url[\s\S]*thumbnailUrl: getArtifactThumbnailUrl\(artifact\)/,
+  "artifact result node parameters should expose original and thumbnail URLs separately"
+);
+assert.match(
+  workflowNodeSource,
+  /getArtifactNodeGroupBadge[\s\S]*getArtifactNodeLayoutStyle[\s\S]*layoutWidth/,
+  "artifact image nodes should render ratio-aware image wall items with group badges"
+);
+assert.match(
+  workflowNodeSource,
+  /getArtifactNodeCaptionMeta[\s\S]*line-clamp-1 text-\[12px\][\s\S]*artifactCaptionMeta/,
+  "artifact image nodes should keep a lightweight visible title and purpose line instead of hiding all context behind hover"
+);
+assert.match(
+  workflowNodeSource,
+  /data\.source === "artifact-group-header"[\s\S]*ArtifactGroupHeaderNode[\s\S]*data-artifact-group-header="true"/,
+  "artifact group headers should render as lightweight separators rather than normal workflow cards"
+);
+assert.match(
+  workflowNodeSource,
+  /layoutHeaderAvailable[\s\S]*return null/,
+  "artifact result nodes should hide repeated group badges when a group header exists"
+);
+assert.match(
+  workflowNodeSource,
+  /border-transparent bg-transparent shadow-none[\s\S]*hover:scale-\[1\.005\]/,
+  "artifact image nodes should reduce card chrome and feel like an image wall"
+);
+assert.match(
+  workflowNodeSource,
+  /isArtifactResult && "rounded-\[6px\] border-0 bg-transparent shadow-none"/,
+  "artifact result images should not add a second card border or heavy shadow around each image"
+);
+assert.match(
+  workflowNodeSource,
+  /!isArtifactResult && \([\s\S]*<Handle[\s\S]*type="target"[\s\S]*!isArtifactResult && \([\s\S]*<Handle[\s\S]*type="source"/,
+  "artifact image nodes should hide connection handles so the result wall reads as images, not workflow cards"
+);
+assert.doesNotMatch(
+  resultNodesSource,
+  /artifact-edge-|getArtifactResultEdgeId|appendedEdges/,
+  "artifact result wall should not create React Flow edges to image nodes without handles"
+);
+assert.match(
+  fs.readFileSync(path.join(root, "components/canvas/asset-preview.tsx"), "utf8"),
+  /size === "canvasResultAuto"[\s\S]*object-contain p-0\.5/,
+  "canvas result images should preserve full image content with minimal padding"
+);
+assert.match(
+  workbenchSource,
+  /const url = artifact\?\.url \|\| detail\.url/,
+  "output preview should prefer artifact original URL over canvas thumbnail URL"
+);
+assert.match(
+  workbenchSource,
+  /OutputPreviewModal[\s\S]*onEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*onSaveAsAsset[\s\S]*image-master:generation-frame-output-save[\s\S]*onOpenFolder[\s\S]*image-master:generation-frame-output-open-folder/,
+  "visual-workbench should delegate image preview actions to the extracted output preview modal"
+);
+assert.match(
+  outputPreviewModalSource,
+  /本图操作[\s\S]*onEdit[\s\S]*onSaveAsAsset[\s\S]*onOpenFolder/,
+  "image detail preview should keep modify, save-as-asset, and open-folder callbacks in the detail sidebar"
+);
+assert.match(
+  outputPreviewModalSource,
+  /锁定摘要[\s\S]*lockSummary/,
+  "image detail preview should expose a human-readable lock summary"
+);
+assert.match(
+  outputPreviewModalSource,
+  /providerRoleLabels\.length > 0 \? "参考角色见 Provider 输入" : "没有记录结构化引用角色"/,
+  "image detail preview should not say structured references are missing when provider input roles are available"
+);
+assert.match(
+  workbenchSource,
+  /getOutputPreviewLockSummary/,
+  "visual-workbench should still derive lock summary from output metadata"
+);
+assert.match(
+  workbenchSource,
+  /商品强锁/,
+  "lock summary should explain product/model/scene/style reference roles in plain language"
+);
+for (const label of ["模特身份参考", "场景锁光影", "风格只约束质感"]) {
+  assert.match(
+    workbenchSource,
+    new RegExp(label),
+    `lock summary should include ${label}`
+  );
+}
+assert.match(
+  workbenchSource,
+  /文案烧进图[\s\S]*文案图层[\s\S]*文案不进图/,
+  "lock summary should make copy burn-in/layout/metadata policy visible"
+);
+assert.match(
+  outputPreviewModalSource,
+  /<details className="rounded-md border border-warm-line\/50 bg-warm-bg">[\s\S]*查看完整 prompt/,
+  "image detail preview should keep long prompts available but collapsed by default"
+);
+assert.match(
+  outputPreviewModalSource,
+  /h-\[min\(72vh,620px\)\] w-full rounded-md object-contain/,
+  "image detail preview should scale small originals up inside the large preview area"
+);
+assert.doesNotMatch(
+  workbenchSource,
+  /function OutputPreviewReferenceSection\b/,
+  "output preview reference rendering should live outside visual-workbench"
+);
+assert.match(
+  workbenchSource,
+  /getArtifactResultWallFocusNodeIds\(reconciled\.nodes, 8\)/,
+  "canvas should focus a coherent result wall row after artifact reconciliation"
+);
+assert.match(
+  workbenchSource,
+  /requestCanvasFocus\(getArtifactResultWallFocusNodeIds\(restoredNodes, 8\)\)/,
+  "restored project canvases should also focus the result wall when results exist"
+);
+
+assert.match(
+  resultNodesSource,
+  /export type ArtifactReviewStatus = "approved" \| "pending" \| "needs_redo" \| "rejected" \| "failed"/,
+  "artifact result nodes should define the five user-facing review states"
+);
+assert.match(
+  resultNodesSource,
+  /export function getArtifactReviewStatus[\s\S]*reviewState[\s\S]*return "pending"/,
+  "artifact review status should default successful images to pending review"
+);
+assert.match(
+  resultNodesSource,
+  /getArtifactReviewStatusLabel[\s\S]*可用[\s\S]*待检查[\s\S]*建议重做[\s\S]*已淘汰[\s\S]*生成失败/,
+  "artifact review status labels should match the picking workflow language"
+);
+assert.match(
+  resultNodesSource,
+  /JSON\.stringify\(artifact\.metadata\.reviewState \?\? null\)/,
+  "artifact result signatures should include review state so badges update after marking"
+);
+assert.match(
+  resultNodesSource,
+  /layoutReviewSummary[\s\S]*getArtifactGroupReviewSummary/,
+  "artifact groups should expose review-state summaries for quick scanning"
+);
+assert.match(
+  workflowNodeSource,
+  /image-master:artifact-review-state[\s\S]*image-master:artifact-group-review-state[\s\S]*image-master:artifact-group-retry/,
+  "canvas result nodes should dispatch single-image, group-review, and group-retry actions"
+);
+assert.match(
+  workflowNodeSource,
+  /保留这组[\s\S]*重做这组[\s\S]*调整这组/,
+  "artifact group headers should expose keep, redo, and adjust actions"
+);
+assert.match(
+  workflowNodeSource,
+  /保留这张[\s\S]*标记为建议重做[\s\S]*淘汰这张/,
+  "artifact cards should expose keep, needs-redo, and reject actions"
+);
+assert.match(
+  outputPreviewModalSource,
+  /reviewStatus[\s\S]*onSetReviewStatus[\s\S]*保留[\s\S]*重做[\s\S]*淘汰/,
+  "image detail preview should let users mark review state from the large-image view"
+);
+assert.match(
+  outputPreviewModalSource,
+  /原图用途 \/ 比例[\s\S]*getOutputPreviewPurposeLabel[\s\S]*getOutputPreviewRatioLabel/,
+  "image detail preview should explicitly show original purpose and ratio"
+);
+assert.match(
+  workbenchSource,
+  /handleSetArtifactReviewStatus[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}[\s\S]*reviewState/,
+  "visual workbench should persist image review state through the artifact API"
+);
+assert.match(
+  workbenchSource,
+  /window\.addEventListener\("image-master:artifact-review-state"[\s\S]*"image-master:artifact-group-review-state"[\s\S]*"image-master:artifact-group-retry"/,
+  "visual workbench should wire review and group retry events"
+);
+assert.match(
+  workbenchSource,
+  /AgentReviewSuggestionCards[\s\S]*agent-review-suggestions[\s\S]*getAgentReviewSuggestionActionLabel[\s\S]*执行重做/,
+  "Agent completion recommendations should render executable suggestion cards"
+);
+assert.match(
+  workbenchSource,
+  /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
+  "Agent review suggestion cards should execute single redo, single edit, and group redo actions"
+);
+assert.match(
+  artifactRouteSource,
+  /normalizeReviewStatePatch[\s\S]*reviewState[\s\S]*artifactDB\.update\(id,[\s\S]*metadata: \{[\s\S]*\.\.\.existing\.metadata[\s\S]*reviewState/,
+  "artifact PATCH should merge review state into existing metadata instead of replacing prompt/reference context"
+);
+assert.match(
+  artifactListRouteSource,
+  /summarizeReviewState[\s\S]*reviewState: summarizeReviewState\(metadata\.reviewState\)/,
+  "artifact list summaries should include persisted review state for refresh/reopen"
+);
+assert.match(
+  resultNodesSource,
+  /export type ArtifactVisualQaStatus = "pass" \| "warn" \| "fail" \| "pending"/,
+  "artifact result nodes should define visual QA states"
+);
+for (const dimension of ["product_drift", "model_consistency", "lighting", "copy_safe_area"]) {
+  assert.match(
+    resultNodesSource,
+    new RegExp(dimension),
+    `visual QA should cover ${dimension}`
+  );
+}
+assert.match(
+  resultNodesSource,
+  /getArtifactVisualQaSummary[\s\S]*visualQaStatus[\s\S]*layoutVisualQaSummary/,
+  "artifact result nodes should expose per-image and group visual QA summaries"
+);
+assert.match(
+  workflowNodeSource,
+  /getArtifactVisualQaBadge[\s\S]*getArtifactVisualQaBadgeClassName/,
+  "artifact cards should show compact visual QA badges"
+);
+assert.match(
+  outputPreviewModalSource,
+  /视觉 QA[\s\S]*visualQa\.issues/,
+  "image detail preview should show visual QA issues"
+);
+assert.match(
+  aiClientSource,
+  /analyzeArtifactVisualQa[\s\S]*ARTIFACT_VISUAL_QA_SYSTEM[\s\S]*product_drift[\s\S]*model_consistency[\s\S]*lighting[\s\S]*copy_safe_area/,
+  "AI client should provide a vision-model artifact QA evaluator for the four commercial risk dimensions"
+);
+assert.match(
+  artifactVisualQaRouteSource,
+  /readOutputImageAsDataUrl[\s\S]*analyzeArtifactVisualQa[\s\S]*artifactDB\.update\(id,[\s\S]*visualQa/,
+  "artifact visual QA route should read local output images, run the evaluator, and persist visualQa metadata"
+);
+assert.match(
+  artifactVisualQaRouteSource,
+  /mock_visual_qa_v1[\s\S]*IMAGE_MASTER_ENABLE_MOCK_JOB_RUNNER/,
+  "artifact visual QA route should support mock mode for smoke/front-end tests without burning provider calls"
+);
+assert.match(
+  artifactListRouteSource,
+  /summarizeVisualQa[\s\S]*visualQa: summarizeVisualQa\(metadata\.visualQa\)/,
+  "artifact list summaries should keep persisted visual QA for result-wall refresh and filtering"
+);
+assert.match(
+  outputPreviewModalSource,
+  /visualQaReviewing[\s\S]*onRunVisualQa[\s\S]*Agent 审核/,
+  "image detail preview should expose an executable Agent visual QA action"
+);
+assert.match(
+  workbenchSource,
+  /handleRunArtifactVisualQa[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}\/visual-qa[\s\S]*setOutputPreview/,
+  "visual workbench should call the visual QA route and refresh the active preview metadata"
+);
+assert.match(
+  workbenchSource,
+  /ResultReviewFilterBar[\s\S]*resultReviewFilter[\s\S]*isCanvasNodeVisibleForResultReviewFilter/,
+  "canvas should expose a result review filter view"
+);
+assert.match(
+  workbenchSource,
+  /type ResultReviewFilter = "all" \| "approved" \| "needs_redo" \| "failed" \| "qa_risk"[\s\S]*只看 QA 风险/,
+  "result review filter should include a QA-risk view for large result sets"
+);
+assert.match(
+  workbenchSource,
+  /buildResultReviewFilterCounts[\s\S]*qa_risk[\s\S]*isArtifactVisualQaRisk/,
+  "result review filter counts should include visual QA risk counts"
+);
+assert.match(
+  workbenchSource,
+  /isCanvasNodeVisibleForResultReviewFilter[\s\S]*filter === "qa_risk"[\s\S]*isArtifactVisualQaRisk/,
+  "result review filtering should show QA-risk images and matching group headers"
+);
+assert.match(
+  workbenchSource,
+  /withResultReviewFilterContext[\s\S]*layoutFilterActive[\s\S]*layoutFilteredCount[\s\S]*buildArtifactReviewSummaryParts[\s\S]*buildArtifactVisualQaSummaryParts/,
+  "filtered result group headers should receive filtered counts and status summaries"
+);
+assert.match(
+  workflowNodeSource,
+  /layoutFilterActive[\s\S]*筛选后 \$\{filteredCount\} \/ 共 \$\{filteredTotalCount\}/,
+  "artifact group headers should display partial filter counts like 筛选后 1 / 共 3"
+);
+assert.match(
+  workbenchSource,
+  /maxAutoVisualQaArtifactsPerBatch[\s\S]*autoVisualQaFreshWindowMs[\s\S]*autoVisualQaSeenArtifactIdsRef[\s\S]*autoVisualQaPreJobArtifactIdsRef[\s\S]*handleRunArtifactVisualQa/,
+  "visual workbench should automatically audit bounded fresh artifacts without re-auditing stale historical results"
+);
+assert.match(
+  workbenchSource,
+  /isFreshAutoVisualQaCandidate[\s\S]*Date\.now\(\) - time <= autoVisualQaFreshWindowMs/,
+  "automatic visual QA should only treat recently generated first-load artifacts as auto-audit candidates"
+);
+assert.match(
+  workbenchSource,
+  /Agent 正在自动审核[\s\S]*Agent 已自动审核/,
+  "automatic visual QA should surface progress in the lightweight artifact message"
+);
+assert.match(
+  workbenchSource,
+  /formatAgentVisualQaSummary[\s\S]*getAgentVisualQaRiskLabels[\s\S]*getAgentArtifactVisualQaRiskText/,
+  "Agent completion summary should include executable visual QA risks"
+);
+assert.match(
+  workbenchSource,
+  /originalRatio[\s\S]*originalCopyRenderPolicy[\s\S]*originalVisualQa[\s\S]*revisionScope/,
+  "single-image and group redo jobs should preserve ratio, copy policy, visual QA, and revision scope"
+);
+assert.match(
+  workbenchSource,
+  /buildAgentGroupRevisionPromptContext[\s\S]*只重做[\s\S]*不要重写整个项目计划/,
+  "group redo prompts should be scoped to the selected group"
+);
+
+for (const localFunction of [
+  "getCanvasVisibleArtifacts",
+  "getArtifactReconcileSignature",
+  "reconcileArtifactResultNodes",
+  "createArtifactResultNode",
+]) {
+  assert.doesNotMatch(
+    workbenchSource,
+    new RegExp(`function ${localFunction}\\b`),
+    `${localFunction} should not be redefined inside visual-workbench.tsx`
+  );
+}
+
+console.log("canvas result node extraction smoke passed");

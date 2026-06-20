@@ -1,6 +1,6 @@
-import { memo } from "react";
+import { memo, type CSSProperties } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { ExternalLink, ImageIcon } from "lucide-react";
+import { Check, ExternalLink, ImageIcon, PenLine, RefreshCw, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { AssetPreview } from "@/components/canvas/asset-preview";
 import { CopyNodeSummary } from "@/components/canvas/copy-node-summary";
@@ -15,6 +15,29 @@ import {
 } from "@/lib/canvas/connection-rules";
 
 export type CanvasFlowNode = Node<CanvasNodeData, "canvasWorkflow">;
+
+interface ArtifactGroupEditDetail {
+  group: string;
+  count?: number;
+  ratios: string[];
+  artifactIds: string[];
+  artifactTitles: string[];
+  providerRoles: string[];
+  promptOnlyRoles: string[];
+  copyModes: string[];
+}
+
+type ArtifactReviewStatus = "approved" | "pending" | "needs_redo" | "rejected" | "failed";
+type ArtifactVisualQaStatus = "pass" | "warn" | "fail" | "pending";
+
+interface ArtifactReviewStateDetail {
+  artifactId?: string;
+  artifactIds?: string[];
+  status: ArtifactReviewStatus;
+  title?: string;
+  group?: string;
+  note?: string;
+}
 
 const statusLabel: Record<CanvasNodeData["status"], string> = {
   ready: "就绪",
@@ -174,6 +197,10 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
     return <GenerationFrameNode {...props} />;
   }
 
+  if (data.source === "artifact-group-header") {
+    return <ArtifactGroupHeaderNode data={data} selected={selected} />;
+  }
+
   const Icon = canvasIconMap[data.iconName];
   const semanticType = getCanvasNodeSemanticType({ id, data }) ?? "unknown";
   const semanticVisual = semanticVisuals[semanticType];
@@ -183,41 +210,69 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
   const isVisualNode = shouldUseVisualNodeLayout(semanticType, data);
   const previewSize = getVisualNodePreviewSize(semanticType, data);
   const previewFit = getVisualNodePreviewFit(semanticType, data);
+  const previewAspectRatio = getVisualNodeAspectRatio(data);
   const previewModeLabel = getVisualNodePreviewModeLabel(semanticType, data);
+  const openPreview = getOpenPreviewHandler(data);
+  const isArtifactResult = data.source === "artifact-history";
+  const artifactGroupBadge = getArtifactNodeGroupBadge(data);
+  const artifactGroupEditDetail = isArtifactResult ? getArtifactGroupEditDetail(data) : null;
+  const artifactReviewBadge = isArtifactResult ? getArtifactReviewBadge(data) : null;
+  const artifactVisualQaBadge = isArtifactResult ? getArtifactVisualQaBadge(data) : null;
+  const artifactReviewDetail = isArtifactResult ? getArtifactReviewDetail(data) : null;
+  const artifactCaptionMeta = getArtifactNodeCaptionMeta(data);
+  const artifactLayoutStyle = getArtifactNodeLayoutStyle(data);
+  const nodeTitle = isArtifactResult
+    ? `${getArtifactNodeFullTitle(data)} · ${semanticVisual.label} · ${kindText}`
+    : `${data.label} · ${semanticVisual.label} · ${kindText}`;
 
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-lg border text-left shadow-sm transition-all",
+        "group relative overflow-hidden rounded-lg border text-left shadow-sm transition-all",
         isVisualNode
-          ? "min-w-[308px] max-w-[356px] p-0"
+          ? isArtifactResult
+            ? "p-0 shadow-none"
+            : "min-w-[308px] max-w-[356px] p-0"
           : isCopyNode
             ? "min-w-[308px] max-w-[348px] p-0"
             : "min-w-[218px] p-2.5 pl-3.5",
         "text-warm-ink backdrop-blur-sm",
         selected && "ring-2 ring-warm-primary/25 shadow-md",
-        kindStyle[data.kind]
+        isArtifactResult
+          ? "cursor-zoom-in rounded-[10px] border-transparent bg-transparent shadow-none hover:z-10 hover:scale-[1.005]"
+          : kindStyle[data.kind]
       )}
       data-node-id={id}
       data-semantic-type={semanticType}
-      title={`${data.label} · ${semanticVisual.label} · ${kindText}`}
+      title={nodeTitle}
+      style={artifactLayoutStyle}
+      onClick={(event) => {
+        if (!shouldOpenNodePreview(data)) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("a,button,input,textarea,select")) return;
+        openPreview?.(id);
+      }}
     >
-      <span
-        aria-hidden
-        className={cn("absolute inset-y-2 left-0 w-1 rounded-r", semanticVisual.railClassName)}
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        title={`${semanticVisual.label} · 输入端口：${semanticVisual.inputHint}`}
-        aria-label={`${data.label} ${semanticVisual.label}输入端口`}
-        className={cn(
-          handleBaseClassName,
-          "semantic-port--target !h-3 !w-3 !rounded-[4px]",
-          semanticClassName,
-          semanticVisual.targetHandleClassName
-        )}
-      />
+      {!isArtifactResult && (
+        <span
+          aria-hidden
+          className={cn("absolute inset-y-2 left-0 w-1 rounded-r", semanticVisual.railClassName)}
+        />
+      )}
+      {!isArtifactResult && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          title={`${semanticVisual.label} · 输入端口：${semanticVisual.inputHint}`}
+          aria-label={`${data.label} ${semanticVisual.label}输入端口`}
+          className={cn(
+            handleBaseClassName,
+            "semantic-port--target !h-3 !w-3 !rounded-[4px]",
+            semanticClassName,
+            semanticVisual.targetHandleClassName
+          )}
+        />
+      )}
       {isCopyNode ? (
         <CopyNodeSummary
           data={data}
@@ -228,72 +283,236 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
         />
       ) : isVisualNode ? (
         <>
-          <div className="relative border-b border-warm-line/50 bg-warm-bg">
+          <div
+            className={cn(
+              "relative bg-warm-bg",
+              isArtifactResult
+                ? "overflow-hidden rounded-[6px] bg-transparent shadow-none"
+                : "border-b border-warm-line/50"
+            )}
+          >
             <AssetPreview
               src={data.previewUrl}
-              alt={data.previewAlt ?? data.label}
+              alt={data.previewAlt ?? getArtifactNodeFullTitle(data)}
               icon={Icon}
               size={previewSize}
               fit={previewFit}
-              className="rounded-none border-0 bg-warm-paper"
+              aspectRatio={previewAspectRatio}
+              className={cn(
+                "rounded-none border-0 bg-warm-paper",
+                isArtifactResult && "rounded-[6px] border-0 bg-transparent shadow-none"
+              )}
             />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-warm-ink/45 to-transparent" />
-            <div className="absolute left-2 top-2 flex max-w-[calc(100%-16px)] flex-wrap gap-1">
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] leading-none shadow-sm backdrop-blur",
-                  semanticVisual.badgeClassName
+            <div
+              className={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-warm-ink/45 to-transparent",
+                isArtifactResult && "opacity-100"
+              )}
+            />
+            {isArtifactResult ? (
+              <div className="absolute left-2 top-2 flex max-w-[calc(100%-16px)] flex-wrap gap-1 opacity-100">
+                {artifactGroupBadge && (
+                  <span className={cn(
+                    "rounded border px-1.5 py-0.5 text-[10px] leading-none shadow-sm backdrop-blur",
+                    artifactGroupBadge.isGroupStart
+                      ? "border-warm-primary/20 bg-warm-primary/90 text-white"
+                      : "border-warm-paper/35 bg-warm-ink/45 text-warm-paper/90"
+                  )}>
+                    {artifactGroupBadge.label}
+                  </span>
                 )}
-                title={`语义类型：${semanticVisual.label}`}
-              >
-                <span className={cn("h-1.5 w-1.5 rounded-full", semanticVisual.dotClassName)} />
-                {semanticVisual.label}
-              </span>
-              <span className="rounded border border-warm-line/60 bg-warm-paper/90 px-1.5 py-0.5 text-[10px] leading-none text-warm-muted shadow-sm backdrop-blur">
-                {statusLabel[data.status]}
-              </span>
-            </div>
-            <div className="absolute bottom-2 left-2 flex max-w-[calc(100%-16px)] items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 rounded border border-warm-paper/35 bg-warm-ink/65 px-1.5 py-0.5 text-[10px] leading-none text-warm-paper shadow-sm backdrop-blur">
-                <ImageIcon className="h-3 w-3" />
-                {previewModeLabel}
-              </span>
-              {data.previewUrl && (
-                <a
-                  href={data.previewUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="nodrag nopan inline-flex items-center gap-1 rounded border border-warm-paper/35 bg-warm-paper/90 px-1.5 py-0.5 text-[10px] leading-none text-warm-ink shadow-sm backdrop-blur transition hover:bg-warm-paper"
-                  title="打开大图"
-                  onClick={(event) => event.stopPropagation()}
+                {getVisualNodeRatioLabel(data) && (
+                  <span className="rounded border border-warm-paper/25 bg-warm-paper/75 px-1.5 py-0.5 text-[10px] leading-none text-warm-ink/75 shadow-sm backdrop-blur">
+                    {getVisualNodeRatioLabel(data)}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="absolute left-2 top-2 flex max-w-[calc(100%-16px)] flex-wrap gap-1">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] leading-none shadow-sm backdrop-blur",
+                    semanticVisual.badgeClassName
+                  )}
+                  title={`语义类型：${semanticVisual.label}`}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", semanticVisual.dotClassName)} />
+                  {semanticVisual.label}
+                </span>
+                <span className="rounded border border-warm-line/60 bg-warm-paper/90 px-1.5 py-0.5 text-[10px] leading-none text-warm-muted shadow-sm backdrop-blur">
+                  {statusLabel[data.status]}
+                </span>
+              </div>
+            )}
+            <div className={cn(
+              "absolute bottom-2 left-2 flex max-w-[calc(100%-16px)] items-center gap-1.5",
+              isArtifactResult && "left-auto right-2 z-10 rounded-md border border-warm-paper/25 bg-warm-ink/20 p-1 opacity-100 shadow-sm backdrop-blur"
+            )}>
+              {!isArtifactResult && (
+                <span className="inline-flex items-center gap-1 rounded border border-warm-paper/35 bg-warm-ink/65 px-1.5 py-0.5 text-[10px] leading-none text-warm-paper shadow-sm backdrop-blur">
+                  <ImageIcon className="h-3 w-3" />
+                  {previewModeLabel}
+                </span>
+              )}
+              {isArtifactResult && artifactGroupEditDetail && (
+                <button
+                  type="button"
+                  aria-label={`调整这组：${artifactGroupEditDetail.group}`}
+                  className="nodrag nopan inline-flex h-8 items-center gap-1 rounded border border-warm-paper/45 bg-warm-paper/95 px-2 text-[11px] leading-none text-warm-ink shadow-sm backdrop-blur transition hover:bg-warm-paper"
+                  title={`只调整「${artifactGroupEditDetail.group}」这一组`}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    dispatchArtifactGroupEdit(artifactGroupEditDetail);
+                  }}
+                >
+                  <PenLine className="h-3 w-3" />
+                  <span className="hidden sm:inline">调整组</span>
+                </button>
+              )}
+              {isArtifactResult && artifactReviewDetail && (
+                <>
+                  <button
+                    type="button"
+                    aria-label={`保留：${data.label}`}
+                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-emerald-700 shadow-sm backdrop-blur transition hover:bg-emerald-50"
+                    title="保留这张"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      dispatchArtifactReviewState({ ...artifactReviewDetail, status: "approved", note: "用户标记保留" });
+                    }}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`建议重做：${data.label}`}
+                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-amber-700 shadow-sm backdrop-blur transition hover:bg-amber-50"
+                    title="标记为建议重做"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      dispatchArtifactReviewState({ ...artifactReviewDetail, status: "needs_redo", note: "用户标记建议重做" });
+                    }}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`淘汰：${data.label}`}
+                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-zinc-600 shadow-sm backdrop-blur transition hover:bg-zinc-50"
+                    title="淘汰这张"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      dispatchArtifactReviewState({ ...artifactReviewDetail, status: "rejected", note: "用户标记淘汰" });
+                    }}
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              )}
+              {(data.previewUrl || data.referenceUrl) && (
+                <button
+                  type="button"
+                  data-canvas-preview-node-id={id}
+                  className={cn(
+                    "nodrag nopan inline-flex items-center gap-1 rounded border border-warm-paper/35 bg-warm-paper/90 px-1.5 py-0.5 text-[10px] leading-none text-warm-ink shadow-sm backdrop-blur transition hover:bg-warm-paper",
+                    isArtifactResult && "h-8 px-2 text-[11px]"
+                  )}
+                  title="查看大图、参考图和 prompt"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    openPreview?.(id);
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openPreview?.(id);
+                  }}
                 >
                   <ExternalLink className="h-3 w-3" />
-                  大图
-                </a>
+                  <span className={cn(isArtifactResult && "hidden sm:inline")}>详情</span>
+                </button>
               )}
             </div>
-          </div>
-          <div className="p-2.5 pl-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="min-w-0 text-sm font-medium leading-tight text-warm-ink">{data.label}</h3>
-              <span className="shrink-0 rounded bg-warm-line/30 px-1.5 py-0.5 text-[10px] leading-none text-warm-muted">
-                {kindText}
-              </span>
-            </div>
-            <p className="mt-1 line-clamp-2 text-xs leading-snug text-warm-muted">{data.caption}</p>
-            {data.metrics.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {data.metrics.slice(0, 4).map((metric) => (
-                  <span
-                    key={metric}
-                    className="rounded bg-warm-bg px-2 py-1 text-[10px] leading-none text-warm-muted"
-                  >
-                    {metric}
-                  </span>
-                ))}
+            {isArtifactResult && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-warm-ink/70 via-warm-ink/20 to-transparent px-3 pb-2.5 pt-10 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="line-clamp-1 text-[12px] font-medium leading-tight text-warm-paper">
+                  {data.label}
+                </div>
+                {getVisualNodeRatioLabel(data) && (
+                  <div className="mt-0.5 text-[10px] leading-none text-warm-paper/75">
+                    {getVisualNodeRatioLabel(data)}
+                  </div>
+                )}
               </div>
             )}
           </div>
+          {isArtifactResult && (
+            <div className="mt-2 px-1 text-left">
+              <div className="flex items-center gap-1.5">
+                <div className="min-w-0 flex-1 line-clamp-1 text-[12px] font-medium leading-tight text-warm-ink">
+                  {data.label}
+                </div>
+                {artifactReviewBadge && (
+                  <span
+                    className={cn(
+                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-none",
+                      getArtifactReviewBadgeClassName(artifactReviewBadge.status)
+                    )}
+                    title={`挑图状态：${artifactReviewBadge.label}`}
+                  >
+                    {artifactReviewBadge.label}
+                  </span>
+                )}
+                {artifactVisualQaBadge && (
+                  <span
+                    className={cn(
+                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-none",
+                      getArtifactVisualQaBadgeClassName(artifactVisualQaBadge.status)
+                    )}
+                    title={`视觉 QA：${artifactVisualQaBadge.label}`}
+                  >
+                    {artifactVisualQaBadge.label}
+                  </span>
+                )}
+              </div>
+              {artifactCaptionMeta && (
+                <div className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-warm-muted">
+                  {artifactCaptionMeta}
+                </div>
+              )}
+              <div className="mt-1 text-[10px] leading-tight text-warm-muted/80">
+                点击图片查看参考图和 prompt
+              </div>
+            </div>
+          )}
+          {!isArtifactResult && (
+            <div className="p-2.5 pl-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="min-w-0 line-clamp-1 text-sm font-medium leading-tight text-warm-ink">{data.label}</h3>
+                <span className="shrink-0 rounded bg-warm-line/30 px-1.5 py-0.5 text-[10px] leading-none text-warm-muted">
+                  {kindText}
+                </span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs leading-snug text-warm-muted">{data.caption}</p>
+              {data.metrics.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {data.metrics.slice(0, 4).map((metric) => (
+                    <span
+                      key={metric}
+                      className="rounded bg-warm-bg px-2 py-1 text-[10px] leading-none text-warm-muted"
+                    >
+                      {metric}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -339,18 +558,20 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
           </div>
         </>
       )}
-      <Handle
-        type="source"
-        position={Position.Right}
-        title={`${semanticVisual.label} · 输出端口：${semanticVisual.outputHint}`}
-        aria-label={`${data.label} ${semanticVisual.label}输出端口`}
-        className={cn(
-          handleBaseClassName,
-          "semantic-port--source !h-3.5 !w-3.5 !rounded-full",
-          semanticClassName,
-          semanticVisual.sourceHandleClassName
-        )}
-      />
+      {!isArtifactResult && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          title={`${semanticVisual.label} · 输出端口：${semanticVisual.outputHint}`}
+          aria-label={`${data.label} ${semanticVisual.label}输出端口`}
+          className={cn(
+            handleBaseClassName,
+            "semantic-port--source !h-3.5 !w-3.5 !rounded-full",
+            semanticClassName,
+            semanticVisual.sourceHandleClassName
+          )}
+        />
+      )}
     </div>
   );
 }
@@ -366,13 +587,155 @@ function shouldUseVisualNodeLayout(
   return semanticType === "product" || semanticType === "model" || semanticType === "scene" || semanticType === "style";
 }
 
+function shouldOpenNodePreview(data: CanvasNodeData): boolean {
+  if (!data.previewUrl && !data.referenceUrl) return false;
+  return data.kind === "asset" || data.kind === "output" || data.source === "artifact-history";
+}
+
+function getOpenPreviewHandler(data: CanvasNodeData): ((nodeId: string) => void) | undefined {
+  return typeof data.onOpenPreview === "function"
+    ? data.onOpenPreview as (nodeId: string) => void
+    : undefined;
+}
+
 function getVisualNodePreviewSize(
   semanticType: PortVisualType,
   data: CanvasNodeData
-): "canvasImage" | "canvasResult" {
-  if (data.kind === "output" || data.source === "artifact-history") return "canvasResult";
+): "canvasImage" | "canvasResult" | "canvasResultAuto" {
+  if (data.source === "artifact-history") return "canvasResultAuto";
+  if (data.kind === "output") return "canvasResult";
   if (semanticType === "scene" || semanticType === "style") return "canvasResult";
   return "canvasImage";
+}
+
+function getArtifactNodeFullTitle(data: CanvasNodeData): string {
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  const fullTitle = parameters?.fullTitle;
+  return typeof fullTitle === "string" && fullTitle.trim() ? fullTitle.trim() : data.label;
+}
+
+function getArtifactNodeGroupBadge(data: CanvasNodeData): { label: string; isGroupStart: boolean } | null {
+  if (data.source !== "artifact-history") return null;
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  if (parameters?.layoutHeaderAvailable === true) return null;
+  const category = typeof data.category === "string" && data.category.trim()
+    ? data.category.trim()
+    : "";
+  if (!category) return null;
+
+  const isGroupStart = parameters?.layoutGroupStart === true;
+  const groupCount = typeof parameters?.layoutGroupCount === "number" && Number.isFinite(parameters.layoutGroupCount)
+    ? parameters.layoutGroupCount
+    : undefined;
+
+  return {
+    label: isGroupStart && groupCount && groupCount > 1
+      ? `${category} · ${groupCount} 张`
+      : category,
+    isGroupStart,
+  };
+}
+
+function getArtifactNodeLayoutStyle(data: CanvasNodeData): CSSProperties | undefined {
+  if (data.source !== "artifact-history") return undefined;
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  const width = typeof parameters?.layoutWidth === "number" && Number.isFinite(parameters.layoutWidth)
+    ? parameters.layoutWidth
+    : undefined;
+
+  return width
+    ? { width, maxWidth: width }
+    : { width: 328, maxWidth: 328 };
+}
+
+function getArtifactNodeCaptionMeta(data: CanvasNodeData): string {
+  if (data.source !== "artifact-history") return "";
+  return [
+    typeof data.category === "string" ? data.category : "",
+    getVisualNodeRatioLabel(data),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function getArtifactReviewBadge(data: CanvasNodeData): { status: ArtifactReviewStatus; label: string } | null {
+  if (data.source !== "artifact-history") return null;
+  const parameters = getNodeParameters(data);
+  const status = getArtifactReviewStatusParameter(parameters?.reviewStatus);
+  const label = typeof parameters?.reviewLabel === "string" && parameters.reviewLabel.trim()
+    ? parameters.reviewLabel.trim()
+    : getArtifactReviewStatusLabel(status);
+  return { status, label };
+}
+
+function getArtifactVisualQaBadge(data: CanvasNodeData): { status: ArtifactVisualQaStatus; label: string } | null {
+  if (data.source !== "artifact-history") return null;
+  const parameters = getNodeParameters(data);
+  const status = getArtifactVisualQaStatusParameter(parameters?.visualQaStatus);
+  const label = typeof parameters?.visualQaLabel === "string" && parameters.visualQaLabel.trim()
+    ? parameters.visualQaLabel.trim()
+    : getArtifactVisualQaStatusLabel(status);
+  return { status, label };
+}
+
+function getArtifactReviewDetail(data: CanvasNodeData): ArtifactReviewStateDetail | null {
+  if (data.source !== "artifact-history") return null;
+  const artifactId = typeof data.artifactId === "string" && data.artifactId.trim()
+    ? data.artifactId.trim()
+    : "";
+  if (!artifactId) return null;
+  return {
+    artifactId,
+    status: getArtifactReviewBadge(data)?.status ?? "pending",
+    title: getArtifactNodeFullTitle(data),
+  };
+}
+
+function getArtifactGroupEditDetail(data: CanvasNodeData): ArtifactGroupEditDetail | null {
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  const group = typeof parameters?.layoutGroup === "string" && parameters.layoutGroup.trim()
+    ? parameters.layoutGroup.trim()
+    : typeof data.category === "string" && data.category.trim()
+      ? data.category.trim()
+      : data.label;
+  if (!group) return null;
+  const count = typeof parameters?.layoutGroupCount === "number" && Number.isFinite(parameters.layoutGroupCount)
+    ? parameters.layoutGroupCount
+    : undefined;
+  return {
+    group,
+    count,
+    ratios: getStringArrayParameter(parameters?.layoutRatios),
+    artifactIds: getStringArrayParameter(parameters?.layoutArtifactIds),
+    artifactTitles: getStringArrayParameter(parameters?.layoutArtifactTitles),
+    providerRoles: getStringArrayParameter(parameters?.layoutProviderRoles),
+    promptOnlyRoles: getStringArrayParameter(parameters?.layoutPromptOnlyRoles),
+    copyModes: getStringArrayParameter(parameters?.layoutCopyModes),
+  };
+}
+
+function dispatchArtifactGroupEdit(detail: ArtifactGroupEditDetail): void {
+  window.dispatchEvent(new CustomEvent("image-master:artifact-group-edit", { detail }));
+}
+
+function dispatchArtifactReviewState(detail: ArtifactReviewStateDetail): void {
+  window.dispatchEvent(new CustomEvent("image-master:artifact-review-state", { detail }));
+}
+
+function dispatchArtifactGroupReviewState(detail: ArtifactReviewStateDetail): void {
+  window.dispatchEvent(new CustomEvent("image-master:artifact-group-review-state", { detail }));
+}
+
+function dispatchArtifactGroupRetry(detail: ArtifactGroupEditDetail): void {
+  window.dispatchEvent(new CustomEvent("image-master:artifact-group-retry", { detail }));
 }
 
 function getVisualNodePreviewFit(
@@ -380,9 +743,27 @@ function getVisualNodePreviewFit(
   data: CanvasNodeData
 ): "cover" | "contain" {
   if (semanticType === "product") return "contain";
-  if (data.source === "artifact-history") return "cover";
+  if (data.source === "artifact-history") return "contain";
   if (data.kind === "output") return "cover";
   return "cover";
+}
+
+function getVisualNodeAspectRatio(data: CanvasNodeData): number | undefined {
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  const value = parameters?.aspectRatio;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function getVisualNodeRatioLabel(data: CanvasNodeData): string | undefined {
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  const ratio = parameters?.ratio;
+  return typeof ratio === "string" && ratio.trim() ? ratio.trim() : undefined;
 }
 
 function getVisualNodePreviewModeLabel(
@@ -396,4 +777,202 @@ function getVisualNodePreviewModeLabel(
   if (semanticType === "style") return "风格图";
   if (semanticType === "scene") return "场景图";
   return "参考图";
+}
+
+function ArtifactGroupHeaderNode({
+  data,
+  selected,
+}: {
+  data: CanvasNodeData;
+  selected: boolean;
+}) {
+  const parameters = typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+  const ratios = Array.isArray(parameters?.layoutRatios)
+    ? parameters.layoutRatios.filter((ratio): ratio is string => typeof ratio === "string" && ratio.trim().length > 0)
+    : [];
+  const artifactIds = getStringArrayParameter(parameters?.layoutArtifactIds);
+  const artifactTitles = getStringArrayParameter(parameters?.layoutArtifactTitles);
+  const providerRoles = getStringArrayParameter(parameters?.layoutProviderRoles);
+  const promptOnlyRoles = getStringArrayParameter(parameters?.layoutPromptOnlyRoles);
+  const copyModes = getStringArrayParameter(parameters?.layoutCopyModes);
+  const reviewSummary = getStringArrayParameter(parameters?.layoutReviewSummary);
+  const visualQaSummary = getStringArrayParameter(parameters?.layoutVisualQaSummary);
+  const filterActive = parameters?.layoutFilterActive === true;
+  const filteredCount = typeof parameters?.layoutFilteredCount === "number" && Number.isFinite(parameters.layoutFilteredCount)
+    ? parameters.layoutFilteredCount
+    : undefined;
+  const filteredTotalCount = typeof parameters?.layoutFilteredTotalCount === "number" && Number.isFinite(parameters.layoutFilteredTotalCount)
+    ? parameters.layoutFilteredTotalCount
+    : undefined;
+  const filteredReviewSummary = getStringArrayParameter(parameters?.layoutFilteredReviewSummary);
+  const filteredVisualQaSummary = getStringArrayParameter(parameters?.layoutFilteredVisualQaSummary);
+  const count = typeof parameters?.layoutGroupCount === "number" && Number.isFinite(parameters.layoutGroupCount)
+    ? parameters.layoutGroupCount
+    : undefined;
+  const width = typeof parameters?.layoutWidth === "number" && Number.isFinite(parameters.layoutWidth)
+    ? parameters.layoutWidth
+    : 960;
+  const countText = filterActive && filteredCount !== undefined && filteredTotalCount
+    ? `筛选后 ${filteredCount} / 共 ${filteredTotalCount}`
+    : count ? `${count} 张` : data.caption;
+  const activeReviewSummary = filterActive && filteredReviewSummary.length > 0
+    ? filteredReviewSummary
+    : reviewSummary;
+  const activeVisualQaSummary = filterActive && filteredVisualQaSummary.length > 0
+    ? filteredVisualQaSummary
+    : visualQaSummary;
+  const captionParts = [
+    countText,
+    ratios.length > 0 ? ratios.slice(0, 4).join(" / ") : "",
+    activeReviewSummary.length > 0 ? activeReviewSummary.slice(0, 2).join(" / ") : "",
+    activeVisualQaSummary.length > 0 ? activeVisualQaSummary.slice(0, 1).join(" / ") : "",
+  ].filter(Boolean);
+  const handleEditGroup = () => {
+    dispatchArtifactGroupEdit({
+      group: data.label,
+      count,
+      ratios,
+      artifactIds,
+      artifactTitles,
+      providerRoles,
+      promptOnlyRoles,
+      copyModes,
+    });
+  };
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-auto nodrag nopan flex h-[30px] items-center gap-3 text-warm-ink",
+        selected && "rounded ring-2 ring-warm-primary/15"
+      )}
+      data-artifact-group-header="true"
+      style={{ width, maxWidth: width }}
+      title={`${data.label}${captionParts.length ? ` · ${captionParts.join(" · ")}` : ""}`}
+    >
+      <span className="shrink-0 text-[13px] font-semibold leading-none text-warm-ink">
+        {data.label}
+      </span>
+      {captionParts.length > 0 && (
+        <span className="shrink-0 text-[11px] leading-none text-warm-muted">
+          {captionParts.join(" · ")}
+        </span>
+      )}
+      <button
+        type="button"
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          dispatchArtifactGroupReviewState({
+            artifactIds,
+            group: data.label,
+            status: "approved",
+            note: "用户保留整组",
+          });
+        }}
+        className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-700 shadow-sm transition hover:border-emerald-300"
+        title={`保留「${data.label}」这一组`}
+      >
+        <Check className="h-3 w-3" />
+        保留这组
+      </button>
+      <button
+        type="button"
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          dispatchArtifactGroupRetry({
+            group: data.label,
+            count,
+            ratios,
+            artifactIds,
+            artifactTitles,
+            providerRoles,
+            promptOnlyRoles,
+            copyModes,
+          });
+        }}
+        className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 text-[11px] font-medium text-amber-700 shadow-sm transition hover:border-amber-300"
+        title={`按原上下文重做「${data.label}」这一组`}
+      >
+        <RefreshCw className="h-3 w-3" />
+        重做这组
+      </button>
+      <button
+        type="button"
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          handleEditGroup();
+        }}
+        className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-warm-line/70 bg-warm-paper px-2 text-[11px] font-medium text-warm-muted shadow-sm transition hover:border-warm-primary/35 hover:text-warm-primary"
+        title={`只调整「${data.label}」这一组`}
+      >
+        <PenLine className="h-3 w-3" />
+        调整这组
+      </button>
+      <span className="h-px min-w-10 flex-1 bg-warm-line/70" />
+    </div>
+  );
+}
+
+function getStringArrayParameter(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function getNodeParameters(data: CanvasNodeData): Record<string, unknown> | undefined {
+  return typeof data.parameters === "object" && data.parameters
+    ? data.parameters as Record<string, unknown>
+    : undefined;
+}
+
+function getArtifactReviewStatusParameter(value: unknown): ArtifactReviewStatus {
+  if (value === "approved" || value === "needs_redo" || value === "rejected" || value === "failed") {
+    return value;
+  }
+  return "pending";
+}
+
+function getArtifactVisualQaStatusParameter(value: unknown): ArtifactVisualQaStatus {
+  if (value === "pass" || value === "warn" || value === "fail" || value === "pending") {
+    return value;
+  }
+  return "pending";
+}
+
+function getArtifactReviewStatusLabel(status: ArtifactReviewStatus): string {
+  if (status === "approved") return "可用";
+  if (status === "needs_redo") return "建议重做";
+  if (status === "rejected") return "已淘汰";
+  if (status === "failed") return "生成失败";
+  return "待检查";
+}
+
+function getArtifactVisualQaStatusLabel(status: ArtifactVisualQaStatus): string {
+  if (status === "pass") return "QA 通过";
+  if (status === "warn") return "QA 风险";
+  if (status === "fail") return "QA 失败";
+  return "QA 待查";
+}
+
+function getArtifactReviewBadgeClassName(status: ArtifactReviewStatus): string {
+  if (status === "approved") return "bg-emerald-50 text-emerald-700";
+  if (status === "needs_redo") return "bg-amber-50 text-amber-700";
+  if (status === "rejected") return "bg-zinc-100 text-zinc-600";
+  if (status === "failed") return "bg-red-50 text-red-700";
+  return "bg-warm-bg text-warm-muted";
+}
+
+function getArtifactVisualQaBadgeClassName(status: ArtifactVisualQaStatus): string {
+  if (status === "pass") return "bg-emerald-50 text-emerald-700";
+  if (status === "warn") return "bg-amber-50 text-amber-700";
+  if (status === "fail") return "bg-red-50 text-red-700";
+  return "bg-warm-bg text-warm-muted";
 }
