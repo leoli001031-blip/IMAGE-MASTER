@@ -1,5 +1,6 @@
 import "server-only";
 import { AIError, generateSingleImage } from "@/lib/ai/client";
+import { TRANSIENT_PROVIDER_RETRY_LIMIT } from "@/lib/ai/provider-call-policy";
 import {
   assertProviderCircuitAvailable,
   recordProviderCircuitFailure,
@@ -10,12 +11,15 @@ import {
   appendGenerationReferencePrompt,
   buildProviderReferenceAdapter,
   filterGenerationReferenceContextByRoles,
+  generationReferenceRoles,
   isInlineImageUrl,
   type GenerationReferenceContext,
+  type GenerationReferenceImage,
+  type GenerationReferenceRole,
   type ProviderReferenceAdapter,
 } from "@/lib/canvas/generation-reference-context";
 import type { CampaignBible } from "@/lib/canvas/campaign-planning";
-import { planAssetInvocation } from "@/lib/canvas/asset-invocation-planner";
+import { planAssetInvocation, type AssetInvocationMode, type AssetInvocationPlan } from "@/lib/canvas/asset-invocation-planner";
 import type { GenerationPlanItem, SopExecutionPlan } from "@/lib/canvas/generation-plan";
 import { writeProviderImagePrompt } from "@/lib/canvas/provider-prompt-writer";
 import { getConfigPublic } from "@/lib/store/config-store";
@@ -84,6 +88,38 @@ const exportPackBatchMetadataKeys = [
   "modelRequired",
 ] as const;
 
+const generationResultTraceMetadataKeys = [
+  "planId",
+  "planStatus",
+  "planItemId",
+  "planItemTitle",
+  "planItemType",
+  "projectId",
+  "campaignId",
+  "campaignShot",
+  "campaignShotId",
+  "shotRole",
+  "shotReferenceRoles",
+  "imageType",
+  "copyText",
+  "copyRenderPolicy",
+  "itemReferenceRoles",
+  "itemProviderReferenceRoles",
+  "productReferenceFocus",
+  "productReferenceFocusInstruction",
+  "referenceRouting",
+  "agentMatrixItem",
+  "agentPlanSummary",
+  "agentAssetGroupIds",
+  "assetInvocationPlan",
+  "assetInvocationPlanner",
+  "providerPromptWriter",
+  "knowledgeSelection",
+  "knowledgeTrace",
+  "sopKeys",
+  "providerPolicy",
+] as const;
+
 export interface StartGenerationJobResult {
   job: GenerationJob;
   started: boolean;
@@ -143,6 +179,10 @@ export interface JobQueueSnapshot {
     inRuntimeRunning: boolean;
   }>;
 }
+
+type JobQueueSnapshotOptions = {
+  details?: boolean;
+};
 
 export interface ReclaimStaleJobsResult {
   owner: string;
@@ -274,18 +314,18 @@ export function removeJobFromRuntimeQueue(jobId: string): boolean {
   return true;
 }
 
-export async function getJobQueueSnapshot(): Promise<JobQueueSnapshot> {
-  const jobs = await jobDB.list();
-  const statusCounts = jobs.reduce<Record<string, number>>((counts, job) => {
-    counts[job.status] = (counts[job.status] ?? 0) + 1;
-    return counts;
-  }, {});
+export async function getJobQueueSnapshot(options: JobQueueSnapshotOptions = {}): Promise<JobQueueSnapshot> {
+  const details = options.details === true;
+  const jobs = await jobDB.listQueueSnapshotRows({ activeOnly: !details });
+  const statusCounts = await jobDB.countByStatus();
   const runtimeQueued = new Set(queuedJobIds);
   const runtimeRunning = new Set(runningJobs);
   const now = new Date().toISOString();
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
-  const leaseRows = jobLeaseDB.listLeases();
-  const leaseByJobId = new Map(leaseRows.map((lease) => [lease.jobId, lease]));
+  const allLeaseRows = jobLeaseDB.listLeases();
+  const activeJobIds = new Set(activeJobs.map((job) => job.id));
+  const leaseRows = details ? allLeaseRows : allLeaseRows.filter((lease) => activeJobIds.has(lease.jobId));
+  const leaseByJobId = new Map(allLeaseRows.map((lease) => [lease.jobId, lease]));
   const staleQueuedJobIds = activeJobs
     .filter((job) => job.status === "queued" && !runtimeQueued.has(job.id))
     .map((job) => job.id);
@@ -319,7 +359,7 @@ export async function getJobQueueSnapshot(): Promise<JobQueueSnapshot> {
       runningCount: runningJobs.size,
     },
     database: {
-      total: jobs.length,
+      total: Object.values(statusCounts).reduce((sum, count) => sum + count, 0),
       pending: statusCounts.pending ?? 0,
       queued: statusCounts.queued ?? 0,
       running: statusCounts.running ?? 0,
@@ -337,10 +377,10 @@ export async function getJobQueueSnapshot(): Promise<JobQueueSnapshot> {
       missingLeaseCount: missingLeaseJobIds.length,
     },
     leaseTable: {
-      total: leaseRows.length,
-      active: leaseRows.filter((lease) => jobLeaseDB.isLeaseActive(lease, now)).length,
-      released: leaseRows.filter((lease) => lease.status !== "active" || lease.releasedAt).length,
-      expired: leaseRows.filter((lease) => jobLeaseDB.isLeaseExpired(lease, now)).length,
+      total: allLeaseRows.length,
+      active: allLeaseRows.filter((lease) => jobLeaseDB.isLeaseActive(lease, now)).length,
+      released: allLeaseRows.filter((lease) => lease.status !== "active" || lease.releasedAt).length,
+      expired: allLeaseRows.filter((lease) => jobLeaseDB.isLeaseExpired(lease, now)).length,
       rows: leaseRows,
     },
     leases: activeJobs.map((job) => {
@@ -367,7 +407,10 @@ export async function getJobQueueSnapshot(): Promise<JobQueueSnapshot> {
 }
 
 export async function reclaimStaleJobs(options: { enqueue?: boolean } = {}): Promise<ReclaimStaleJobsResult> {
-  const jobs = await jobDB.list();
+  const jobs = [
+    ...(await jobDB.list({ status: "queued" })),
+    ...(await jobDB.list({ status: "running" })),
+  ];
   const now = new Date().toISOString();
   const reclaimedJobIds: string[] = [];
   const enqueuedJobIds: string[] = [];
@@ -378,7 +421,17 @@ export async function reclaimStaleJobs(options: { enqueue?: boolean } = {}): Pro
     const lease = jobLeaseDB.getLease(job.id);
     const expired = jobLeaseDB.isLeaseExpired(lease, now);
     const missingLease = !lease || lease.status !== "active" || Boolean(lease.releasedAt);
-    if (!expired && !missingLease) continue;
+    const missingRuntime =
+      (job.status === "queued" && !queuedJobIds.includes(job.id)) ||
+      (job.status === "running" && !runningJobs.has(job.id));
+    const currentProcessLease =
+      lease?.owner === QUEUE_OWNER ||
+      Boolean(lease?.owner && lease.owner.startsWith(`pid_${process.pid}_`));
+    const shouldRecoverMissingRuntime = options.enqueue === true && missingRuntime && currentProcessLease;
+    if (!expired && !missingLease && !shouldRecoverMissingRuntime) continue;
+    if (!expired && !missingLease && shouldRecoverMissingRuntime) {
+      jobLeaseDB.releaseJobLease(job.id, "reclaimed");
+    }
 
     const reclaimed = await claimJob(job, {
       targetStatus: "queued",
@@ -448,11 +501,20 @@ function processQueue(): void {
 }
 
 async function runGenerationJob(job: GenerationJob): Promise<void> {
+  const jobRunStartedAt = Date.now();
   const runId = typeof job.metadata.lastRunId === "string" ? job.metadata.lastRunId : "";
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   let activeProviderAttempt: ProviderAttemptEntry | undefined;
   let providerBudgetId: string | undefined;
   let providerCircuitKey: ProviderCircuitKey | undefined;
+  let promptPrepareMs = 0;
+  let referenceReadMs = 0;
+  let providerMs = 0;
+  let storeMs = 0;
+  let assetPersistMs = 0;
+  let artifactPersistMs = 0;
+  let providerRetryCount = 0;
+  let providerRetryReasons: string[] = [];
 
   try {
     const latestBeforeRun = await jobDB.get(job.id);
@@ -480,12 +542,25 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
     const model = imageConfig.imageModel;
     providerCircuitKey = { scope: "job-runner", provider, model };
     assertProviderCircuitAvailable(providerCircuitKey);
+    const promptPrepareStartedAt = Date.now();
     const promptReadyJob = await prepareDeferredPromptIfNeeded(runningJob);
+    promptPrepareMs = elapsedMs(promptPrepareStartedAt);
     const referenceContext = getGenerationReferenceContext(promptReadyJob.metadata);
     const providerReferenceAdapter = buildProviderReferenceAdapter(promptReadyJob.metadata);
-    const referenceImageUrls = providerReferenceAdapter.providerUsableImages.map((image) => image.url);
-    const referenceImageUrl = providerReferenceAdapter.primaryImage?.url;
-    const providerReferenceDataUrls = await readProviderReferenceDataUrls(referenceImageUrls);
+    const providerReferenceInputs = providerReferenceAdapter.providerUsableImages.map((image) => ({
+      url: image.url,
+      role: image.role,
+    }));
+    const referenceReadStartedAt = Date.now();
+    const readableReferenceInputs = await readProviderReferenceInputs(providerReferenceInputs);
+    referenceReadMs = elapsedMs(referenceReadStartedAt);
+    const referenceImageUrls = readableReferenceInputs.map((input) => input.url);
+    const droppedProviderReferenceImageUrls = providerReferenceInputs
+      .filter((input) => !referenceImageUrls.includes(input.url))
+      .map((input) => input.url);
+    const referenceImageUrl = referenceImageUrls[0];
+    const providerReferenceRole = readableReferenceInputs[0]?.role;
+    const providerReferenceDataUrls = readableReferenceInputs.map((input) => input.dataUrl);
     const prompt = hasProviderPromptWriter(promptReadyJob.metadata)
       ? promptReadyJob.prompt
       : appendGenerationReferencePrompt(promptReadyJob.prompt, referenceContext);
@@ -494,12 +569,14 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
       budgetId: providerBudgetId,
       jobId: job.id,
       scope: "job-runner",
-      amount: 1,
+      amount: 1 + TRANSIENT_PROVIDER_RETRY_LIMIT,
       metadata: {
         runId,
         provider,
         model,
+        maxTransientRetries: TRANSIENT_PROVIDER_RETRY_LIMIT,
         referenceImageCount: providerReferenceDataUrls.length,
+        droppedProviderReferenceCount: droppedProviderReferenceImageUrls.length,
       },
     });
     activeProviderAttempt = createProviderAttemptEntry({
@@ -510,7 +587,7 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
       referenceImageUrl,
       referenceImageUrls,
       providerReferenceCount: providerReferenceDataUrls.length,
-      providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+      providerReferenceRole,
       providerReferenceStrategy: providerReferenceAdapter.strategy,
     });
     await jobDB.update(job.id, {
@@ -520,16 +597,21 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
         reserveEvent
       ),
     });
-    const result = await generateJobRunnerImage(
+    const providerStartedAt = Date.now();
+    const providerResult = await generateJobRunnerImageWithRetry(
       prompt,
       providerReferenceDataUrls,
       getStringValue(runningJob.metadata.size)
     );
+    providerMs = elapsedMs(providerStartedAt);
+    providerRetryCount = providerResult.retryCount;
+    providerRetryReasons = providerResult.retryReasons;
+    const result = providerResult.result;
     const successBudgetEvent = consumeProviderCallBudget({
       budgetId: providerBudgetId,
       jobId: job.id,
       scope: "job-runner",
-      amount: 1,
+      amount: 1 + providerRetryCount,
       status: "succeeded",
       attemptId: activeProviderAttempt.attemptId,
       providerRequestId: result.provider?.providerRequestId,
@@ -544,6 +626,7 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
     const latestAfterProvider = await jobDB.get(job.id);
     if (!latestAfterProvider || !isCurrentActiveRun(latestAfterProvider, runId)) return;
 
+    const storeStartedAt = Date.now();
     const storedImage = await storeOutputImage({
       id: job.id,
       title: getNodeLabel(runningJob.metadata),
@@ -551,6 +634,7 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
       base64: result.image?.base64,
       defaultMimeType: "image/png",
     });
+    storeMs = elapsedMs(storeStartedAt);
 
     const latestAfterStore = await jobDB.get(job.id);
     if (!latestAfterStore || !isCurrentActiveRun(latestAfterStore, runId)) return;
@@ -561,6 +645,7 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
     const completedProviderAttempt = finishProviderAttemptEntry(activeProviderAttempt, {
       status: "succeeded",
       outputUrl: imageUrl,
+      providerRequestId: result.provider?.providerRequestId,
       now: generatedAt,
     });
     const batchMetadata = extractExportPackBatchMetadata(runningJob.metadata);
@@ -576,9 +661,13 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
       providerReferenceAdapter,
       providerReferenceDataUrls.length > 0,
       providerBudgetId,
-      successBudgetEvent
+      successBudgetEvent,
+      droppedProviderReferenceImageUrls,
+      providerReferenceRole
     );
+    const traceMetadata = extractGenerationResultTraceMetadata(metadataWithCompletedAttempt);
 
+    const assetPersistStartedAt = Date.now();
     const asset = await assetDB.add({
       type: "output",
       title: `${getNodeLabel(runningJob.metadata)} 输出图`,
@@ -593,18 +682,30 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
         workflowId: runningJob.workflowId,
         nodeId: runningJob.nodeId,
         ...batchMetadata,
+        ...traceMetadata,
         ...referenceMetadata,
         prompt,
         provider,
         model,
         generatedAt,
         imageStorage: imageStorageMetadata,
+        generationTelemetry: buildGenerationTelemetry(metadataWithCompletedAttempt, {
+          promptPrepareMs,
+          referenceReadMs,
+          providerMs,
+          storeMs,
+          providerRetryCount,
+          providerRetryReasons,
+          totalJobRunMs: elapsedMs(jobRunStartedAt),
+        }),
       },
     });
+    assetPersistMs = elapsedMs(assetPersistStartedAt);
 
     const latestAfterAsset = await jobDB.get(job.id);
     if (!latestAfterAsset || !isCurrentActiveRun(latestAfterAsset, runId)) return;
 
+    const artifactPersistStartedAt = Date.now();
     const artifact = await artifactDB.add({
       workflowId: runningJob.workflowId,
       nodeId: runningJob.nodeId,
@@ -621,13 +722,25 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
         source: "job-runner",
         outputAssetId: asset.id,
         ...batchMetadata,
+        ...traceMetadata,
         ...referenceMetadata,
         provider,
         model,
         generatedAt,
         imageStorage: imageStorageMetadata,
+        generationTelemetry: buildGenerationTelemetry(metadataWithCompletedAttempt, {
+          promptPrepareMs,
+          referenceReadMs,
+          providerMs,
+          storeMs,
+          assetPersistMs,
+          providerRetryCount,
+          providerRetryReasons,
+          totalJobRunMs: elapsedMs(jobRunStartedAt),
+        }),
       },
     });
+    artifactPersistMs = elapsedMs(artifactPersistStartedAt);
 
     const latestJob = (await jobDB.get(job.id)) ?? job;
     if (!isCurrentActiveRun(latestJob, runId)) return;
@@ -650,13 +763,31 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
           providerReferenceAdapter,
           providerReferenceDataUrls.length > 0,
           providerBudgetId,
-          successBudgetEvent
+          successBudgetEvent,
+          droppedProviderReferenceImageUrls,
+          providerReferenceRole
         ),
         outputAssetId: asset.id,
         artifactId: artifact.id,
         provider,
         model,
+        errorCode: undefined,
+        providerDiagnostics: undefined,
+        providerCircuitStatus: undefined,
+        retryImageErrorCode: undefined,
+        retryImageErrorMessage: undefined,
         resultStorage: imageStorageMetadata,
+        generationTelemetry: buildGenerationTelemetry(latestJob.metadata, {
+          promptPrepareMs,
+          referenceReadMs,
+          providerMs,
+          storeMs,
+          assetPersistMs,
+          artifactPersistMs,
+          providerRetryCount,
+          providerRetryReasons,
+          totalJobRunMs: elapsedMs(jobRunStartedAt),
+        }),
       }),
     });
     await syncExportPackBatchState(getStringValue(latestJob.metadata.batchId), {
@@ -674,7 +805,7 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
             budgetId: providerBudgetId,
             jobId: job.id,
             scope: "job-runner",
-            amount: 1,
+            amount: 1 + providerRetryCount,
             status: "failed",
             attemptId: activeProviderAttempt.attemptId,
             reason: failureDetails.errorCode,
@@ -715,6 +846,17 @@ async function runGenerationJob(job: GenerationJob): Promise<void> {
         {
           ...extractProviderFailureMetadata(error),
           providerCircuitStatus: circuitStatus,
+          generationTelemetry: buildGenerationTelemetry(latestJob.metadata, {
+            promptPrepareMs,
+            referenceReadMs,
+            providerMs,
+            storeMs,
+            assetPersistMs,
+            artifactPersistMs,
+            providerRetryCount,
+            providerRetryReasons,
+            totalJobRunMs: elapsedMs(jobRunStartedAt),
+          }),
         }
       ),
     });
@@ -759,6 +901,7 @@ function assertProviderCallApproved(job: GenerationJob): void {
 
 async function prepareDeferredPromptIfNeeded(job: GenerationJob): Promise<GenerationJob> {
   if (job.metadata.deferPromptPreparation !== true) return job;
+  const deferredStartedAt = Date.now();
 
   const planItem = readRecord(job.metadata.deferredPlanItem) as unknown as GenerationPlanItem | undefined;
   if (!planItem?.itemId) {
@@ -766,18 +909,23 @@ async function prepareDeferredPromptIfNeeded(job: GenerationJob): Promise<Genera
   }
 
   const referenceContext = getGenerationReferenceContext(job.metadata);
+  const plannerReferenceContext = getGlobalGenerationReferenceContext(job.metadata) ?? referenceContext;
   const userRequest =
     getStringValue(job.metadata.deferredUserRequest) ??
     getStringValue(job.metadata.userRequest) ??
     getStringValue(job.metadata.request);
   const sopExecutionPlan = readRecord(job.metadata.sopExecutionPlan) as unknown as SopExecutionPlan | undefined;
   const campaignBible = readRecord(job.metadata.campaignBible) as unknown as CampaignBible | undefined;
-  const assetInvocationPlan = await planAssetInvocation({
-    item: planItem,
-    referenceContext,
-    userRequest,
-    sopExecutionPlan,
-  });
+  const assetInvocationStartedAt = Date.now();
+  const assetInvocationPlan =
+    buildAgentRoutedAssetInvocationPlan(planItem, plannerReferenceContext) ??
+    (await planAssetInvocation({
+      item: planItem,
+      referenceContext: plannerReferenceContext,
+      userRequest,
+      sopExecutionPlan,
+    }));
+  const assetInvocationMs = elapsedMs(assetInvocationStartedAt);
   const activeItem: GenerationPlanItem = {
     ...planItem,
     referenceRoles: assetInvocationPlan.referenceRoles,
@@ -793,11 +941,12 @@ async function prepareDeferredPromptIfNeeded(job: GenerationJob): Promise<Genera
     },
   };
   const itemReferenceContext = filterGenerationReferenceContextByRoles(
-    referenceContext,
+    plannerReferenceContext ?? referenceContext,
     activeItem.referenceRoles,
     activeItem.providerReferenceRoles
   );
   const providerReferenceAdapter = buildProviderReferenceAdapter(itemReferenceContext);
+  const promptWriterStartedAt = Date.now();
   const providerPrompt = await writeProviderImagePrompt({
     item: activeItem,
     itemReferenceContext,
@@ -807,6 +956,7 @@ async function prepareDeferredPromptIfNeeded(job: GenerationJob): Promise<Genera
     sopExecutionPlan,
     planId: getStringValue(job.metadata.planId),
   });
+  const promptWriterMs = elapsedMs(promptWriterStartedAt);
   const updatedMetadata: Record<string, unknown> = {
     ...job.metadata,
     deferPromptPreparation: false,
@@ -833,6 +983,14 @@ async function prepareDeferredPromptIfNeeded(job: GenerationJob): Promise<Genera
     providerReferenceStrategy: providerReferenceAdapter.strategy,
     providerReferenceAdapter,
     providerPromptWriter: providerPrompt.metadata,
+    generationTelemetry: buildGenerationTelemetry(job.metadata, {
+      deferredPromptPrepareMs: elapsedMs(deferredStartedAt),
+      deferredAssetInvocationMs: assetInvocationMs,
+      deferredPromptWriterMs: promptWriterMs,
+      promptWriterMode: providerPrompt.metadata.mode,
+      promptWriterFallbackUsed: providerPrompt.metadata.fallbackUsed,
+      promptWriterCacheHit: providerPrompt.metadata.cacheHit === true,
+    }),
     promptOnlyReferenceImages: providerReferenceAdapter.promptOnlyImages,
     usesProviderReference: providerReferenceAdapter.providerUsableImages.length > 0,
     usesProductReference: providerReferenceAdapter.primaryImage?.role === "product",
@@ -854,6 +1012,108 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function buildGenerationTelemetry(
+  metadata: Record<string, unknown>,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  const existing = readRecord(metadata.generationTelemetry) ?? {};
+  const compactPatch = Object.fromEntries(
+    Object.entries(patch).filter(([, value]) => {
+      if (Array.isArray(value)) return value.length > 0;
+      return value !== undefined && value !== "";
+    })
+  );
+  return {
+    ...existing,
+    ...compactPatch,
+  };
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
+const assetInvocationModeByRole: Record<GenerationReferenceRole, AssetInvocationMode> = {
+  product: "hard_reference",
+  model: "identity_reference",
+  scene: "lighting_space",
+  style: "style_finish",
+  copy: "copy_layer",
+};
+
+function buildAgentRoutedAssetInvocationPlan(
+  item: GenerationPlanItem,
+  context: GenerationReferenceContext | undefined
+): AssetInvocationPlan | undefined {
+  const referenceRoles = normalizeJobRunnerReferenceRoles(item.referenceRoles);
+  if (referenceRoles.length === 0) return undefined;
+
+  const providerReferenceRoles = normalizeJobRunnerReferenceRoles(item.providerReferenceRoles).filter(
+    (role) => role !== "copy" && referenceRoles.includes(role) && hasProviderUsableRole(context, role)
+  );
+  const allRoles = uniqueJobRunnerReferenceRoles([
+    ...referenceRoles,
+    ...getContextReferenceRoles(context),
+  ]);
+  const referenceRoleSet = new Set(referenceRoles);
+  const providerRoleSet = new Set(providerReferenceRoles);
+
+  return {
+    version: 1,
+    mode: "agent_routed_roles_v1",
+    fallbackUsed: false,
+    referenceRoles,
+    providerReferenceRoles,
+    decisions: allRoles.map((role) => ({
+      role,
+      mode: referenceRoleSet.has(role) ? assetInvocationModeByRole[role] : "unused",
+      providerInput: providerRoleSet.has(role),
+      reason: referenceRoleSet.has(role)
+        ? "沿用 Agent 规划阶段的素材路由"
+        : "当前镜头未调用该素材角色",
+    })),
+    unusedRoles: allRoles.filter((role) => !referenceRoleSet.has(role)),
+    notes: ["沿用 Agent 规划阶段的素材路由，避免 job runner 二次规划漂移。"],
+  };
+}
+
+function normalizeJobRunnerReferenceRoles(value: unknown): GenerationReferenceRole[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueJobRunnerReferenceRoles(value.filter(isGenerationReferenceRole));
+}
+
+function isGenerationReferenceRole(value: unknown): value is GenerationReferenceRole {
+  return typeof value === "string" && generationReferenceRoles.includes(value as GenerationReferenceRole);
+}
+
+function uniqueJobRunnerReferenceRoles(roles: GenerationReferenceRole[]): GenerationReferenceRole[] {
+  return generationReferenceRoles.filter((role) => roles.includes(role));
+}
+
+function getContextReferenceRoles(context: GenerationReferenceContext | undefined): GenerationReferenceRole[] {
+  if (!context) return [];
+  const fromImages = context.images.map((image) => image.role);
+  const fromRoles = generationReferenceRoles.filter((role) => {
+    const roleContext = context.roles[role];
+    return Boolean(
+      roleContext &&
+        (roleContext.promptFragments.length ||
+          roleContext.constraints.length ||
+          roleContext.qualityRules.length ||
+          roleContext.assetIds.length ||
+          roleContext.parameters)
+    );
+  });
+  return uniqueJobRunnerReferenceRoles([...fromImages, ...fromRoles]);
+}
+
+function hasProviderUsableRole(
+  context: GenerationReferenceContext | undefined,
+  role: GenerationReferenceRole
+): boolean {
+  return Boolean(context?.images.some((image) => image.role === role && image.providerUsable !== false && image.url));
 }
 
 function getNumber(value: unknown): number | undefined {
@@ -899,6 +1159,15 @@ function extractExportPackBatchMetadata(metadata: Record<string, unknown>): Reco
   }, {});
 }
 
+function extractGenerationResultTraceMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  return generationResultTraceMetadataKeys.reduce<Record<string, unknown>>((traceMetadata, key) => {
+    if (metadata[key] !== undefined) {
+      traceMetadata[key] = metadata[key];
+    }
+    return traceMetadata;
+  }, {});
+}
+
 function extractGenerationReferenceMetadata(
   metadata: Record<string, unknown>,
   referenceImageUrl: string | undefined,
@@ -906,7 +1175,9 @@ function extractGenerationReferenceMetadata(
   providerReferenceAdapter: ProviderReferenceAdapter,
   usesProviderReference: boolean,
   providerCallBudgetId?: string,
-  providerBudgetEvent?: { id: string; phase: string }
+  providerBudgetEvent?: { id: string; phase: string },
+  droppedProviderReferenceImageUrls: string[] = [],
+  providerReferenceRole?: string
 ): Record<string, unknown> {
   return {
     referenceImages: metadata.referenceImages,
@@ -915,7 +1186,8 @@ function extractGenerationReferenceMetadata(
     referenceImageUrls,
     providerReferenceImageUrls: referenceImageUrls,
     providerReferenceCount: referenceImageUrls.length,
-    providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+    droppedProviderReferenceImageUrls,
+    providerReferenceRole,
     providerReferenceStrategy: providerReferenceAdapter.strategy,
     providerReferenceAdapter,
     promptOnlyReferenceImages: providerReferenceAdapter.promptOnlyImages,
@@ -942,6 +1214,15 @@ function getGenerationReferenceContext(
     : undefined;
 }
 
+function getGlobalGenerationReferenceContext(
+  metadata: Record<string, unknown>
+): GenerationReferenceContext | undefined {
+  const context = metadata.globalReferenceContext;
+  return context && typeof context === "object" && !Array.isArray(context)
+    ? context as GenerationReferenceContext
+    : undefined;
+}
+
 function hasProviderPromptWriter(metadata: Record<string, unknown>): boolean {
   const value = metadata.providerPromptWriter;
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -956,11 +1237,25 @@ async function readProviderReferenceDataUrl(referenceImageUrl: string | undefine
   return undefined;
 }
 
-async function readProviderReferenceDataUrls(referenceImageUrls: string[]): Promise<string[]> {
+interface JobRunnerProviderReferenceInput {
+  url: string;
+  role: GenerationReferenceImage["role"];
+}
+
+interface ReadableJobRunnerProviderReferenceInput extends JobRunnerProviderReferenceInput {
+  dataUrl: string;
+}
+
+async function readProviderReferenceInputs(
+  inputs: JobRunnerProviderReferenceInput[]
+): Promise<ReadableJobRunnerProviderReferenceInput[]> {
   const dataUrls = await Promise.all(
-    referenceImageUrls.map((url) => readProviderReferenceDataUrl(url).catch(() => undefined))
+    inputs.map((input) => readProviderReferenceDataUrl(input.url).catch(() => undefined))
   );
-  return dataUrls.filter((url): url is string => !!url);
+  return inputs.flatMap((input, index): ReadableJobRunnerProviderReferenceInput[] => {
+    const dataUrl = dataUrls[index];
+    return dataUrl ? [{ ...input, dataUrl }] : [];
+  });
 }
 
 async function generateJobRunnerImage(
@@ -997,6 +1292,51 @@ async function generateJobRunnerImage(
     referenceImagesBase64: providerReferenceDataUrls,
     size,
   });
+}
+
+async function generateJobRunnerImageWithRetry(
+  prompt: string,
+  providerReferenceDataUrls: string[],
+  size?: string
+): Promise<{
+  result: Awaited<ReturnType<typeof generateJobRunnerImage>>;
+  retryCount: number;
+  retryReasons: string[];
+}> {
+  let retryCount = 0;
+  const retryReasons: string[] = [];
+  while (true) {
+    try {
+      return {
+        result: await generateJobRunnerImage(prompt, providerReferenceDataUrls, size),
+        retryCount,
+        retryReasons,
+      };
+    } catch (error) {
+      const errorCode = error instanceof AIError ? error.code : undefined;
+      if (!isTransientProviderErrorCode(errorCode) || retryCount >= TRANSIENT_PROVIDER_RETRY_LIMIT) {
+        throw error;
+      }
+      retryCount += 1;
+      retryReasons.push(errorCode || "IMAGE_GENERATION_FAILED");
+      await waitForProviderRetryDelay(errorCode, retryCount);
+    }
+  }
+}
+
+function isTransientProviderErrorCode(code: string | undefined): boolean {
+  if (!code) return false;
+  if (code === "TIMEOUT" || code === "AI_ERROR" || code === "IMAGE_GEN_429") return true;
+  const match = code.match(/^IMAGE_GEN_(\d{3})$/);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status >= 500 && status <= 599;
+}
+
+async function waitForProviderRetryDelay(code: string | undefined, attempt: number): Promise<void> {
+  const baseDelayMs = code === "IMAGE_GEN_429" ? 1200 : 700;
+  const delayMs = Math.min(baseDelayMs * Math.max(1, attempt), 2500);
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function tinyPngBase64(): string {

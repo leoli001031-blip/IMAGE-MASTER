@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  ensureJobQueueWorker,
   ensureJobQueueWorkerNow,
   getJobQueueSnapshot,
   reclaimStaleJobs,
@@ -8,10 +9,11 @@ import { safeLogError } from "@/lib/server/safe-log";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    await ensureJobQueueWorkerNow();
-    const queue = await getJobQueueSnapshot();
+    const details = new URL(req.url).searchParams.get("details") === "1";
+    ensureJobQueueWorker();
+    const queue = await getJobQueueSnapshot({ details });
     return NextResponse.json({ queue });
   } catch (error) {
     safeLogError("Job queue snapshot failed", error);
@@ -31,8 +33,9 @@ export async function POST(req: Request) {
     }
 
     if (action === "snapshot") {
-      await ensureJobQueueWorkerNow();
-      const queue = await getJobQueueSnapshot();
+      const details = body.details === true;
+      ensureJobQueueWorker();
+      const queue = await getJobQueueSnapshot({ details });
       return NextResponse.json({ queue });
     }
 

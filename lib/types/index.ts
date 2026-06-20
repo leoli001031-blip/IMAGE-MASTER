@@ -44,6 +44,7 @@ export type AssetType =
   | "model"
   | "style"
   | "scene"
+  | "copy"
   | "output"
   | "platform"
   | "quality";
@@ -326,6 +327,8 @@ export interface ModelAssetMetadata extends Record<string, unknown> {
   qualityRules: string[];
   referenceImages: string[];
   promptSnapshot?: string;
+  downstreamReferenceMode?: "prefer_zone_b_neutral_identity_reference";
+  downstreamReferenceRules?: string[];
 }
 
 export interface AIModel {

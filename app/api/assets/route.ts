@@ -3,6 +3,7 @@ import { buildAutoAssetName } from "@/lib/canvas/asset-auto-naming";
 import * as assetDB from "@/lib/store/asset-db";
 import type { Asset, AssetType, CreateAssetParams } from "@/lib/types";
 import { safeLogError } from "@/lib/server/safe-log";
+import { sanitizePayloadForJson } from "@/lib/store/metadata-image-sanitizer";
 
 function isPlainMetadata(value: unknown): value is Record<string, unknown> {
   return value === undefined || (!!value && typeof value === "object" && !Array.isArray(value));
@@ -99,6 +100,47 @@ function summarizeReferenceImages(value: unknown, limit = 12): Record<string, un
   return images.length > 0 ? images.slice(0, limit) : undefined;
 }
 
+function summarizeAssetInvocationPlan(value: unknown): Record<string, unknown> | undefined {
+  if (!value || !isPlainMetadata(value)) return undefined;
+  const decisions = Array.isArray(value.decisions)
+    ? value.decisions.flatMap((item): Record<string, unknown>[] => {
+        if (!item || !isPlainMetadata(item)) return [];
+        const decision = {
+          role: getString(item.role, 80),
+          mode: getString(item.mode, 120),
+          providerInput: getBoolean(item.providerInput),
+          reason: getString(item.reason, 320),
+        };
+        const compact = Object.fromEntries(Object.entries(decision).filter(([, entry]) => entry !== undefined));
+        return Object.keys(compact).length > 0 ? [compact] : [];
+      }).slice(0, 8)
+    : undefined;
+  const plan = {
+    mode: getString(value.mode, 120),
+    planner: getString(value.planner, 120) || getString(value.source, 120),
+    providerReferenceRoles: pickStringArray(value.providerReferenceRoles, 8),
+    promptOnlyRoles: pickStringArray(value.promptOnlyRoles, 8),
+    decisions: decisions && decisions.length > 0 ? decisions : undefined,
+  };
+  const compact = Object.fromEntries(Object.entries(plan).filter(([, entry]) => entry !== undefined));
+  return Object.keys(compact).length > 0 ? compact : undefined;
+}
+
+function summarizeCopyRenderPolicy(value: unknown): Record<string, unknown> | undefined {
+  if (!value || !isPlainMetadata(value)) return undefined;
+  const policy = {
+    mode: getString(value.mode, 120),
+    allowBurnIn: getBoolean(value.allowBurnIn),
+    reason: getString(value.reason, 320),
+    inImageText: pickStringArray(value.inImageText, 8),
+    sellingPoints: pickStringArray(value.sellingPoints, 8),
+  };
+  const compact = Object.fromEntries(Object.entries(policy).filter(([, entry]) =>
+    Array.isArray(entry) ? entry.length > 0 : entry !== undefined
+  ));
+  return Object.keys(compact).length > 0 ? compact : undefined;
+}
+
 function summarizeAssetMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   const summary = {
     source: getString(metadata.source),
@@ -121,6 +163,10 @@ function summarizeAssetMetadata(metadata: Record<string, unknown>): Record<strin
     resultStorage: summarizeStorage(metadata.resultStorage),
     referenceImages: summarizeReferenceImages(metadata.referenceImages),
     promptOnlyReferenceImages: summarizeReferenceImages(metadata.promptOnlyReferenceImages),
+    assetInvocationPlan: summarizeAssetInvocationPlan(metadata.assetInvocationPlan),
+    copyRenderPolicy: summarizeCopyRenderPolicy(metadata.copyRenderPolicy),
+    productReferenceFocus: getString(metadata.productReferenceFocus),
+    providerReferenceCount: getNumber(metadata.providerReferenceCount),
     batchId: getString(metadata.batchId),
     batchIndex: getNumber(metadata.batchIndex),
     batchTotal: getNumber(metadata.batchTotal),
@@ -139,6 +185,13 @@ function summarizeAssetForList(asset: Asset): Asset {
   };
 }
 
+function parseLimit(value: string | null, fallback: number | undefined): number | undefined {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.floor(parsed), 500);
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -149,10 +202,13 @@ export async function GET(req: Request) {
     }
 
     const assetType = type ? (type as AssetType) : undefined;
-    const assets = await assetDB.list(assetType);
+    const limit = parseLimit(searchParams.get("limit"), searchParams.get("full") === "1" ? undefined : 80);
+    const updatedAfter = getString(searchParams.get("updatedAfter"), 80);
     if (searchParams.get("full") === "1") {
-      return NextResponse.json(assets);
+      const assets = await assetDB.list({ type: assetType, limit, updatedAfter });
+      return NextResponse.json(sanitizePayloadForJson(assets));
     }
+    const assets = await assetDB.listSummaries({ type: assetType, limit, updatedAfter });
     return NextResponse.json(assets.map(summarizeAssetForList));
   } catch (e) {
     safeLogError("Asset list failed", e);

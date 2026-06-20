@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import Database from "better-sqlite3";
+import net from "node:net";
 import path from "node:path";
+import {
+  restoreSourceFiles,
+  snapshotSourceFiles,
+  stopSmokeServer,
+} from "./smoke-runtime.mjs";
 
-const port = Number(process.env.SCOPED_API_QUERIES_SMOKE_PORT || 3488);
 const externalBaseUrl = process.env.SCOPED_API_QUERIES_SMOKE_BASE_URL?.trim();
+const requestedPort = Number(process.env.SCOPED_API_QUERIES_SMOKE_PORT || 3495);
+const port = externalBaseUrl ? undefined : await findAvailablePort(requestedPort);
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
 const stamp = Date.now();
@@ -15,6 +23,9 @@ const planId = `smoke_scoped_plan_${stamp}`;
 const workflowId = `smoke_scoped_workflow_${stamp}`;
 const controlBatchId = `smoke_scoped_control_batch_${stamp}`;
 const dbPath = path.join(process.cwd(), ".data", "image-master.db");
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 
 let server;
 let serverOutput = "";
@@ -27,6 +38,7 @@ if (shouldSpawnServer) {
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      WATCHPACK_POLLING: process.env.WATCHPACK_POLLING || "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -108,6 +120,14 @@ try {
     },
   });
 
+  const oldUpdatedAt = new Date(Date.now() - 60_000).toISOString();
+  const newUpdatedAt = new Date(Date.now() + 60_000).toISOString();
+  const updatedAfterCutoff = new Date(Date.now()).toISOString();
+  setRowUpdatedAt("generation_jobs", targetJobs[0].id, oldUpdatedAt);
+  setRowUpdatedAt("generation_jobs", targetJobs[1].id, newUpdatedAt);
+  setRowUpdatedAt("generated_artifacts", targetArtifacts[0].id, oldUpdatedAt);
+  setRowUpdatedAt("generated_artifacts", targetArtifacts[1].id, newUpdatedAt);
+
   assertIds(await getArray(`/api/jobs?batchId=${encodeURIComponent(batchId)}`), targetJobs, "jobs batchId");
   assertIds(
     await getArray(`/api/jobs?exportPackId=${encodeURIComponent(exportPackId)}`),
@@ -152,9 +172,27 @@ try {
     [controlArtifact],
     "artifacts control"
   );
+  assertIds(
+    await getArray(
+      `/api/jobs?workflowId=${encodeURIComponent(workflowId)}&updatedAfter=${encodeURIComponent(updatedAfterCutoff)}&limit=1`
+    ),
+    [targetJobs[1]],
+    "jobs workflowId/updatedAfter/limit"
+  );
+  assertIds(
+    await getArray(
+      `/api/artifacts?workflowId=${encodeURIComponent(workflowId)}&updatedAfter=${encodeURIComponent(updatedAfterCutoff)}&limit=1`
+    ),
+    [targetArtifacts[1]],
+    "artifacts workflowId/updatedAfter/limit"
+  );
 
   assertIndexedPlan("generation_jobs", "batchId");
   assertIndexedPlan("generated_artifacts", "batchId");
+  assertUpdatedAtIndexedPlan("generation_jobs");
+  assertUpdatedAtIndexedPlan("generated_artifacts");
+  assertWorkbenchPollingUsesScopedQueries();
+  assertArtifactRouteDefaultsToBoundedUnscopedList();
 
   console.log(
     `Scoped API query smoke passed on ${baseUrl}: ${targetJobs.length} jobs and ${targetArtifacts.length} artifacts narrowed by batchId/exportPackId/planId.`
@@ -168,7 +206,8 @@ try {
   process.exitCode = 1;
 } finally {
   cleanup();
-  if (server) server.kill("SIGTERM");
+  if (server) await stopSmokeServer(server);
+  restoreSourceFiles(sourceFileSnapshots);
 }
 
 async function createJob(overrides) {
@@ -244,6 +283,38 @@ function assertNoIds(actual, excluded, label) {
   }
 }
 
+function setRowUpdatedAt(table, id, updatedAt) {
+  const db = new Database(dbPath);
+  try {
+    db.prepare(`UPDATE ${table} SET updatedAt = ? WHERE id = ?`).run(updatedAt, id);
+  } finally {
+    db.close();
+  }
+}
+
+function assertWorkbenchPollingUsesScopedQueries() {
+  const source = fs.readFileSync(path.join(process.cwd(), "components/canvas/hooks/useWorkbenchJobs.ts"), "utf8");
+  if (!/new URLSearchParams\(\{ limit: "200" \}\)[\s\S]*params\.set\("workflowId", workflowId\)/.test(source)) {
+    throw new Error("Expected useWorkbenchJobs to scope polling by workflowId with URLSearchParams");
+  }
+  if (!/window\.fetch\(`\/api\/jobs\?\$\{params\.toString\(\)\}`/.test(source)) {
+    throw new Error("Expected job polling to call /api/jobs with the scoped query string");
+  }
+  if (!/window\.fetch\(`\/api\/artifacts\?\$\{params\.toString\(\)\}`/.test(source)) {
+    throw new Error("Expected artifact polling to call /api/artifacts with the scoped query string");
+  }
+}
+
+function assertArtifactRouteDefaultsToBoundedUnscopedList() {
+  const source = fs.readFileSync(path.join(process.cwd(), "app/api/artifacts/route.ts"), "utf8");
+  if (!/const hasScopedFilter = Boolean\([\s\S]*workflowId[\s\S]*nodeId[\s\S]*jobId[\s\S]*assetId[\s\S]*status[\s\S]*batchId[\s\S]*exportPackId[\s\S]*planId[\s\S]*\)/.test(source)) {
+    throw new Error("Expected /api/artifacts to detect whether list requests are scoped");
+  }
+  if (!/const limit = parseLimit\(searchParams\.get\("limit"\)\) \?\? \(hasScopedFilter \? 200 : 80\)/.test(source)) {
+    throw new Error("Expected unscoped /api/artifacts list requests to default to a bounded limit");
+  }
+}
+
 function assertIndexedPlan(table, column) {
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -260,6 +331,27 @@ function assertIndexedPlan(table, column) {
   }
 }
 
+function assertUpdatedAtIndexedPlan(table) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT * FROM ${table}
+         WHERE workflowId = ? AND updatedAt > ?
+         ORDER BY updatedAt DESC, createdAt DESC
+         LIMIT 1`
+      )
+      .all(workflowId, new Date(0).toISOString())
+      .map((row) => String(row.detail || ""))
+      .join("\n");
+    if (!plan.includes("USING INDEX") || !plan.includes("updatedAt")) {
+      throw new Error(`Expected ${table}.workflowId/updatedAt query to use an updatedAt index; plan was:\n${plan}`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 async function requestJson(url, init = {}, expectedStatus = 200) {
   const response = await fetch(url, {
     ...init,
@@ -269,13 +361,37 @@ async function requestJson(url, init = {}, expectedStatus = 200) {
     },
   });
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    const preview = text.slice(0, 160).replace(/\s+/g, " ");
+    throw new Error(`Expected JSON from ${url}, got non-JSON response: ${preview}`);
+  }
   if (response.status !== expectedStatus) {
     throw new Error(
       `Expected status ${expectedStatus}, got ${response.status} from ${url}: ${JSON.stringify(payload)}`
     );
   }
   return payload;
+}
+
+async function findAvailablePort(startPort) {
+  for (let portCandidate = startPort; portCandidate < startPort + 50; portCandidate += 1) {
+    if (await canListen(portCandidate)) return portCandidate;
+  }
+  throw new Error(`No available smoke port found starting at ${startPort}`);
+}
+
+function canListen(portCandidate) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once("error", () => resolve(false));
+    probe.once("listening", () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(portCandidate, "127.0.0.1");
+  });
 }
 
 async function waitForServer(url) {

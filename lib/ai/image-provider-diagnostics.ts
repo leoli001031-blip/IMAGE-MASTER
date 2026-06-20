@@ -323,6 +323,7 @@ const IMAGE_CONTAINER_KEYS = [
   "response",
   "responseStream",
   "content",
+  "item",
   "message",
   "artifact",
   "artifacts",

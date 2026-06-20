@@ -138,6 +138,8 @@ export async function POST(req: Request) {
     }
 
     const providerCallLimit = normalizeConfirmedProviderCallLimit(confirmedProviderCallLimit);
+    const mockBatchEnabled = process.env.IMAGE_MASTER_ENABLE_MOCK_BATCH === "1";
+    const usingMockResults = mockBatchEnabled && Array.isArray(mockResults);
 
     if (providerCallLimit < estimate.providerCallCount) {
       return NextResponse.json(
@@ -155,7 +157,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (enqueue === true) {
+    if (enqueue === true || shouldAutoEnqueueBatch({ persistProjectBatch, usingMockResults })) {
       const queued = await enqueueBatchGenerationJobs({
         images,
         prompts,
@@ -193,8 +195,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const mockBatchEnabled = process.env.IMAGE_MASTER_ENABLE_MOCK_BATCH === "1";
-    const usingMockResults = mockBatchEnabled && Array.isArray(mockResults);
     const imageSizes = images.map((image) => getOptionalString(image.size));
     const results = usingMockResults
       ? mapMockBatchResults(mockResults, prompts.length)
@@ -337,6 +337,16 @@ function isTransientProviderErrorCode(code: string | undefined): boolean {
   if (!match) return false;
   const status = Number(match[1]);
   return status >= 500 && status <= 599;
+}
+
+function shouldAutoEnqueueBatch({
+  persistProjectBatch,
+  usingMockResults,
+}: {
+  persistProjectBatch?: boolean;
+  usingMockResults: boolean;
+}): boolean {
+  return persistProjectBatch === true && !usingMockResults;
 }
 
 async function waitForProviderRetryDelay(code: string | undefined, attempt: number): Promise<void> {

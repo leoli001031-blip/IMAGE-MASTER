@@ -6,6 +6,7 @@ interface ImageGroupProps {
   images: GeneratedImage[];
   onDownload: (image: GeneratedImage) => void;
   onRegenerate: (image: GeneratedImage) => void;
+  onOpenFolder?: (image: GeneratedImage) => void;
   onPreview?: (image: GeneratedImage) => void;
   getReviewLabel?: (image: GeneratedImage) => string | undefined;
   getCopyModeLabel?: (image: GeneratedImage) => string | undefined;
@@ -16,6 +17,7 @@ export function ImageGroup({
   images,
   onDownload,
   onRegenerate,
+  onOpenFolder,
   onPreview,
   getReviewLabel,
   getCopyModeLabel,
@@ -23,14 +25,14 @@ export function ImageGroup({
   if (images.length === 0) return null;
 
   return (
-    <div>
-      <h3 className="text-sm font-medium text-warm-muted mb-3">{title}</h3>
-      <div className="grid grid-cols-2 gap-3">
+    <div aria-label={title}>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-5">
         {images.map((img) => (
           <ImageCard
             key={img.id}
             id={img.id}
             url={img.url}
+            previewUrl={getImagePreviewUrl(img)}
             title={img.title || img.copyText || ""}
             copyText={img.copyText}
             type={img.type}
@@ -38,6 +40,7 @@ export function ImageGroup({
             errorCode={img.errorCode}
             onDownload={() => onDownload(img)}
             onRegenerate={() => onRegenerate(img)}
+            onOpenFolder={onOpenFolder ? () => onOpenFolder(img) : undefined}
             onPreview={onPreview ? () => onPreview(img) : undefined}
             isPlaceholder={!!img.error}
             reviewLabel={getReviewLabel?.(img)}
@@ -48,6 +51,16 @@ export function ImageGroup({
       </div>
     </div>
   );
+}
+
+function getImagePreviewUrl(image: GeneratedImage): string | undefined {
+  const metadata = (image.metadata ?? {}) as Record<string, unknown>;
+  const imageStorage = isRecord(metadata.imageStorage) ? metadata.imageStorage : undefined;
+  const resultStorage = isRecord(metadata.resultStorage) ? metadata.resultStorage : undefined;
+  return getString(metadata.thumbnailUrl) ||
+    getString(imageStorage?.thumbnailUrl) ||
+    getString(resultStorage?.thumbnailUrl) ||
+    image.url;
 }
 
 function getImageRatio(image: GeneratedImage): string | undefined {
@@ -67,4 +80,12 @@ function getImageRatio(image: GeneratedImage): string | undefined {
         : undefined;
   const match = size?.match(/^(\d+)x(\d+)$/i);
   return match ? `${match[1]}:${match[2]}` : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

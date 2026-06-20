@@ -80,6 +80,7 @@ export function finishProviderAttemptEntry(
   entry: ProviderAttemptEntry,
   update: {
     status: Exclude<ProviderAttemptStatus, "started">;
+    providerRequestId?: string;
     errorCode?: string;
     errorMessage?: string;
     diagnostics?: unknown;
@@ -94,12 +95,22 @@ export function finishProviderAttemptEntry(
     status: update.status,
     finishedAt,
     durationMs: Math.max(0, new Date(finishedAt).getTime() - new Date(entry.startedAt).getTime()),
+    providerRequestId:
+      update.providerRequestId ??
+      getDiagnosticRequestId(update.diagnostics) ??
+      entry.providerRequestId,
     errorCode: update.errorCode,
     errorMessage: update.errorMessage,
     diagnostics: update.diagnostics,
     outputUrl: update.outputUrl,
     outputSha256: update.outputSha256 ?? (update.outputUrl ? sha256(update.outputUrl) : undefined),
   };
+}
+
+function getDiagnosticRequestId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const requestId = (value as { requestId?: unknown }).requestId;
+  return typeof requestId === "string" && requestId.trim() ? requestId.trim() : undefined;
 }
 
 export function appendProviderAttemptLedger(

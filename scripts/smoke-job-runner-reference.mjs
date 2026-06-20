@@ -154,6 +154,15 @@ try {
     if (!Array.isArray(artifactMetadata.providerReferenceImageUrls) || artifactMetadata.providerReferenceImageUrls.length !== 2) {
       throw new Error("Expected artifact to keep two provider reference URLs");
     }
+    if (!artifactMetadata.assetInvocationPlan?.decisions?.length) {
+      throw new Error("Expected artifact to keep assetInvocationPlan decisions");
+    }
+    if (artifactMetadata.assetInvocationPlan.providerReferenceRoles?.join(",") !== "product,style") {
+      throw new Error(`Expected artifact to keep provider reference roles, got ${JSON.stringify(artifactMetadata.assetInvocationPlan)}`);
+    }
+    if (artifactMetadata.copyRenderPolicy?.mode !== "layout_layer") {
+      throw new Error(`Expected artifact to keep copy render policy, got ${JSON.stringify(artifactMetadata.copyRenderPolicy)}`);
+    }
 
     const asset = db
       .prepare("SELECT * FROM assets WHERE json_extract(metadata, '$.jobId') = ? ORDER BY createdAt DESC LIMIT 1")
@@ -168,6 +177,12 @@ try {
     }
     if (!Array.isArray(assetMetadata.providerReferenceImageUrls) || assetMetadata.providerReferenceImageUrls.length !== 2) {
       throw new Error("Expected output asset to keep two provider reference URLs");
+    }
+    if (!assetMetadata.assetInvocationPlan?.decisions?.length) {
+      throw new Error("Expected output asset to keep assetInvocationPlan decisions");
+    }
+    if (assetMetadata.copyRenderPolicy?.mode !== "layout_layer") {
+      throw new Error(`Expected output asset to keep copy render policy, got ${JSON.stringify(assetMetadata.copyRenderPolicy)}`);
     }
 
     console.log(
@@ -232,6 +247,49 @@ function buildJobMetadata() {
     referenceImages: [referenceImage, styleReferenceImage],
     referenceImageUrl: referencePublicUrl,
     usesProductReference: true,
+    itemReferenceRoles: ["product", "style", "copy"],
+    itemProviderReferenceRoles: ["product", "style"],
+    copyRenderPolicy: {
+      mode: "layout_layer",
+      reason: "Smoke copy should stay as editable layout text.",
+      inImageText: ["Smoke headline"],
+      sellingPoints: ["Reference trace"],
+      exportCopy: ["Generated for smoke validation"],
+      forbiddenClaims: ["Do not claim medical benefits"],
+    },
+    assetInvocationPlan: {
+      version: 1,
+      mode: "llm_asset_invocation_v1",
+      fallbackUsed: false,
+      referenceRoles: ["product", "style", "copy"],
+      providerReferenceRoles: ["product", "style"],
+      decisions: [
+        {
+          role: "product",
+          mode: "hard_reference",
+          providerInput: true,
+          reason: "商品图用于锁定真实形态。",
+        },
+        {
+          role: "style",
+          mode: "style_finish",
+          providerInput: true,
+          reason: "风格板用于验证多参考图追踪。",
+        },
+        {
+          role: "copy",
+          mode: "copy_layer",
+          providerInput: false,
+          reason: "文案保留为图层，不作为图片输入。",
+        },
+      ],
+      unusedRoles: [],
+      notes: ["Artifact metadata must preserve this trace."],
+    },
+    assetInvocationPlanner: {
+      mode: "llm_asset_invocation_v1",
+      fallbackUsed: false,
+    },
     referenceContext: {
       version: 1,
       source: "canvas-workbench",

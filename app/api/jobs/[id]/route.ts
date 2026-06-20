@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import * as jobDB from "@/lib/store/job-db";
 import type { UpdateGenerationJobParams } from "@/lib/types";
 import { safeLogError } from "@/lib/server/safe-log";
+import { sanitizePayloadForJson } from "@/lib/store/metadata-image-sanitizer";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -55,7 +56,7 @@ export async function GET(
       return NextResponse.json({ error: "任务不存在" }, { status: 404 });
     }
 
-    return NextResponse.json(job);
+    return NextResponse.json(sanitizePayloadForJson(job));
   } catch (e) {
     safeLogError("Job read failed", e);
     return NextResponse.json({ error: "任务读取失败" }, { status: 500 });

@@ -23,6 +23,9 @@ import {
   buildProviderReferenceAdapter,
   getPrimaryProviderReferenceUrl,
   isInlineImageUrl,
+  isProviderUsableReferenceUrl,
+  normalizeGenerationReferenceContext,
+  type GenerationReferenceImage,
 } from "@/lib/canvas/generation-reference-context";
 import {
   appendProviderAttemptLedger,
@@ -46,6 +49,9 @@ type BatchImageResult = {
   image?: {
     base64?: string;
     url?: string;
+  };
+  provider?: {
+    providerRequestId?: string;
   };
   error?: {
     message: string;
@@ -101,11 +107,21 @@ export async function POST(
     }
 
     const providerReferenceAdapter = buildProviderReferenceAdapter(job.metadata);
-    const referenceImageUrl = getPrimaryProviderReferenceUrl(job.metadata) ?? getReferenceImageUrl(job.metadata);
-    const referenceImageBase64 = referenceImageUrl
-      ? await readReferenceImageAsDataUrl(referenceImageUrl).catch(() => undefined)
-      : undefined;
-    const estimate = buildRetryEstimate(!!referenceImageBase64);
+    const providerReferenceInputs = getRetryProviderReferenceInputs(job.metadata, providerReferenceAdapter);
+    const readableReferenceInputs = await readProviderReferenceInputs(providerReferenceInputs);
+    const providerReferenceImageUrls = readableReferenceInputs.map((input) => input.url);
+    const droppedProviderReferenceImageUrls = providerReferenceInputs
+      .filter((input) => !providerReferenceImageUrls.includes(input.url))
+      .map((input) => input.url);
+    const referenceImageUrl = providerReferenceImageUrls[0];
+    const referenceImageDataUrls = readableReferenceInputs.map((input) => input.dataUrl);
+    const usesProductReference = readableReferenceInputs.some((input) => input.role === "product");
+    const providerReferenceRole = readableReferenceInputs[0]?.role;
+    const estimate = buildRetryEstimate({
+      providerReferenceCount: referenceImageDataUrls.length,
+      usesProductReference,
+      droppedProviderReferenceCount: droppedProviderReferenceImageUrls.length,
+    });
 
     if (body.dryRun === true) {
       return NextResponse.json({
@@ -155,6 +171,9 @@ export async function POST(
         model,
         estimate,
         referenceImageUrl,
+        providerReferenceImageUrls,
+        droppedProviderReferenceImageUrls,
+        providerReferenceCount: referenceImageDataUrls.length,
       },
     });
     const initialAttempt = createProviderAttemptEntry({
@@ -162,12 +181,16 @@ export async function POST(
       jobId: id,
       prompt,
       referenceImageUrl,
-      providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+      referenceImageUrls: providerReferenceImageUrls,
+      providerReferenceCount: referenceImageDataUrls.length,
+      providerReferenceRole,
       providerReferenceStrategy: providerReferenceAdapter.strategy,
     });
     const results = usingMockResults
       ? mapMockBatchResults(body.mockResults as unknown[], 1)
-      : await generateBatchImages([prompt], referenceImageBase64, 1);
+      : await generateBatchImages([prompt], referenceImageDataUrls[0], 1, {
+          referenceImagesBase64: referenceImageDataUrls,
+        });
     let lastBudgetEvent = consumeProviderCallBudget({
       budgetId: providerCallBudgetId,
       jobId: id,
@@ -209,10 +232,14 @@ export async function POST(
         jobId: id,
         prompt,
         referenceImageUrl,
-        providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+        referenceImageUrls: providerReferenceImageUrls,
+        providerReferenceCount: referenceImageDataUrls.length,
+        providerReferenceRole,
         providerReferenceStrategy: providerReferenceAdapter.strategy,
       });
-      const [retryResult] = await generateBatchImages([prompt], referenceImageBase64, 1);
+      const [retryResult] = await generateBatchImages([prompt], referenceImageDataUrls[0], 1, {
+        referenceImagesBase64: referenceImageDataUrls,
+      });
       results[0] = retryResult;
       lastBudgetEvent = consumeProviderCallBudget({
         budgetId: providerCallBudgetId,
@@ -249,12 +276,14 @@ export async function POST(
         retryReasons,
         providerCallBudgetId,
         referenceImageUrl,
-        providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+        providerReferenceImageUrls,
+        providerReferenceCount: referenceImageDataUrls.length,
+        providerReferenceRole,
         providerReferenceStrategy: providerReferenceAdapter.strategy,
+        droppedProviderReferenceImageUrls,
         promptOnlyReferenceImages: providerReferenceAdapter.promptOnlyImages,
-        usesProviderReference: !!referenceImageBase64,
-        usesProductReference:
-          providerReferenceAdapter.primaryImage?.role === "product" && !!referenceImageBase64,
+        usesProviderReference: referenceImageDataUrls.length > 0,
+        usesProductReference,
       },
     };
 
@@ -279,12 +308,14 @@ export async function POST(
         resultStorage: storedImage.metadata,
         retryImageResultStorage: storedImage.metadata,
         referenceImageUrl,
-        providerReferenceRole: providerReferenceAdapter.primaryImage?.role,
+        providerReferenceImageUrls,
+        droppedProviderReferenceImageUrls,
+        providerReferenceCount: referenceImageDataUrls.length,
+        providerReferenceRole,
         providerReferenceStrategy: providerReferenceAdapter.strategy,
         promptOnlyReferenceImages: providerReferenceAdapter.promptOnlyImages,
-        usesProviderReference: !!referenceImageBase64,
-        usesProductReference:
-          providerReferenceAdapter.primaryImage?.role === "product" && !!referenceImageBase64,
+        usesProviderReference: referenceImageDataUrls.length > 0,
+        usesProductReference,
         providerDiagnostics: undefined,
         errorCode: undefined,
         retryImageErrorCode: undefined,
@@ -357,9 +388,10 @@ export async function POST(
           emptyResultRetryCount,
           transientRetryCount,
           retryReasons,
-          usesProviderReference: !!referenceImageBase64,
-          usesProductReference:
-            providerReferenceAdapter.primaryImage?.role === "product" && !!referenceImageBase64,
+          usesProviderReference: referenceImageDataUrls.length > 0,
+          providerReferenceCount: referenceImageDataUrls.length,
+          droppedProviderReferenceCount: droppedProviderReferenceImageUrls.length,
+          usesProductReference,
         },
       });
     }
@@ -406,9 +438,10 @@ export async function POST(
           emptyResultRetryCount,
           transientRetryCount,
           retryReasons,
-          usesProviderReference: !!referenceImageBase64,
-          usesProductReference:
-            providerReferenceAdapter.primaryImage?.role === "product" && !!referenceImageBase64,
+          usesProviderReference: referenceImageDataUrls.length > 0,
+          providerReferenceCount: referenceImageDataUrls.length,
+          droppedProviderReferenceCount: droppedProviderReferenceImageUrls.length,
+          usesProductReference,
         },
       },
       { status: 502 }
@@ -431,20 +464,38 @@ async function readRetryBody(req: NextRequest): Promise<RetryImageRequest> {
 }
 
 function canRetryBatchImageJob(job: GenerationJob): boolean {
-  if (job.status !== "failed" && job.status !== "cancelled") return false;
+  if (
+    job.status !== "failed" &&
+    job.status !== "cancelled" &&
+    job.status !== "done" &&
+    job.status !== "completed"
+  ) {
+    return false;
+  }
   if (!job.prompt.trim()) return false;
   return getString(job.metadata.source) === "batch-image-api" ||
     getString(job.metadata.source) === "batch-image-api-retry";
 }
 
-function buildRetryEstimate(usesProductReference: boolean) {
+function buildRetryEstimate({
+  providerReferenceCount,
+  usesProductReference,
+  droppedProviderReferenceCount,
+}: {
+  providerReferenceCount: number;
+  usesProductReference: boolean;
+  droppedProviderReferenceCount: number;
+}) {
   return {
     imageCount: 1,
     providerCallCount: 1,
     maxProviderCallCount: 1 + EMPTY_RESULT_RETRY_LIMIT + TRANSIENT_PROVIDER_RETRY_LIMIT,
     maxPromptChars: MAX_PROMPT_CHARS,
     concurrency: 1,
+    usesProviderReference: providerReferenceCount > 0,
     usesProductReference,
+    providerReferenceCount,
+    droppedProviderReferenceCount,
     retryPolicy: {
       emptyResultRetries: EMPTY_RESULT_RETRY_LIMIT,
       transientProviderRetries: TRANSIENT_PROVIDER_RETRY_LIMIT,
@@ -486,6 +537,7 @@ function finishAttemptFromBatchResult(
       status: "succeeded",
       outputUrl: result.image.url,
       outputSha256: result.image.base64 ? sha256(result.image.base64) : undefined,
+      providerRequestId: result.provider?.providerRequestId,
     });
   }
 
@@ -502,6 +554,81 @@ function getReferenceImageUrl(metadata: Record<string, unknown>): string | undef
     getString(metadata.referenceImageUrl) ??
     getString((metadata.referenceImageStorage as Record<string, unknown> | undefined)?.publicUrl)
   );
+}
+
+interface RetryProviderReferenceInput {
+  url: string;
+  role?: string;
+}
+
+interface ReadableRetryProviderReferenceInput extends RetryProviderReferenceInput {
+  dataUrl: string;
+}
+
+function getRetryProviderReferenceInputs(
+  metadata: Record<string, unknown>,
+  providerReferenceAdapter: ReturnType<typeof buildProviderReferenceAdapter>
+): RetryProviderReferenceInput[] {
+  const explicitInputs = getExplicitRetryProviderReferenceInputs(metadata);
+  if (explicitInputs) return explicitInputs;
+
+  const inputs = providerReferenceAdapter.providerUsableImages.map((image: GenerationReferenceImage) => ({
+    url: image.url,
+    role: image.role,
+  }));
+  if (inputs.length > 0) return dedupeRetryProviderReferenceInputs(inputs);
+  const legacyUrl = getPrimaryProviderReferenceUrl(metadata) ?? getReferenceImageUrl(metadata);
+  if (!legacyUrl) return [];
+  return [{
+    url: legacyUrl,
+    role: getString(metadata.providerReferenceRole) ?? (metadata.usesProductReference === true ? "product" : undefined),
+  }];
+}
+
+function getExplicitRetryProviderReferenceInputs(
+  metadata: Record<string, unknown>
+): RetryProviderReferenceInput[] | undefined {
+  const contextImages = normalizeGenerationReferenceContext(metadata.referenceContext)?.images ?? [];
+  const directImages = normalizeGenerationReferenceContext({
+    images: metadata.referenceImages,
+  })?.images ?? [];
+  const images = [...contextImages, ...directImages];
+  if (images.length === 0) return undefined;
+
+  return dedupeRetryProviderReferenceInputs(
+    images
+      .filter((image) =>
+        image.providerMode !== "prompt_only" &&
+        image.providerMode !== "disabled" &&
+        image.providerUsable &&
+        isProviderUsableReferenceUrl(image.url)
+      )
+      .map((image) => ({
+        url: image.url,
+        role: image.role,
+      }))
+  );
+}
+
+function dedupeRetryProviderReferenceInputs(inputs: RetryProviderReferenceInput[]): RetryProviderReferenceInput[] {
+  const seen = new Set<string>();
+  return inputs.filter((input) => {
+    if (!input.url || seen.has(input.url)) return false;
+    seen.add(input.url);
+    return true;
+  });
+}
+
+async function readProviderReferenceInputs(
+  inputs: RetryProviderReferenceInput[]
+): Promise<ReadableRetryProviderReferenceInput[]> {
+  const dataUrls = await Promise.all(
+    inputs.map((input) => readReferenceImageAsDataUrl(input.url).catch(() => undefined))
+  );
+  return inputs.flatMap((input, index): ReadableRetryProviderReferenceInput[] => {
+    const dataUrl = dataUrls[index];
+    return dataUrl ? [{ ...input, dataUrl }] : [];
+  });
 }
 
 async function readReferenceImageAsDataUrl(referenceImageUrl: string): Promise<string | undefined> {

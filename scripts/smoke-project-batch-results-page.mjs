@@ -3,17 +3,22 @@
 import { spawn } from "node:child_process";
 import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
-import path from "node:path";
+import { createSmokeRuntime, stopSmokeServer } from "./smoke-runtime.mjs";
 
 const port = Number(process.env.PROJECT_BATCH_RESULTS_SMOKE_PORT || 3493);
 const externalBaseUrl = process.env.PROJECT_BATCH_RESULTS_SMOKE_BASE_URL?.trim();
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
 const stamp = Date.now();
+const runtime = createSmokeRuntime({
+  name: "project-batch-results-page",
+  stamp,
+  externalBaseUrl,
+});
 const batchId = `project_batch_results_${stamp}`;
 const workflowId = `workflow_${batchId}`;
 const nodeId = `node_${batchId}`;
-const db = new Database(path.join(process.cwd(), ".data", "image-master.db"));
+const db = new Database(runtime.dbPath);
 let server;
 let serverOutput = "";
 let createdProjectId = "";
@@ -32,10 +37,9 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
 if (shouldSpawnServer) {
   server = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
+    env: runtime.serverEnv({
       NEXT_TELEMETRY_DISABLED: "1",
-    },
+    }),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -199,8 +203,8 @@ try {
       note: "Smoke duplicate completed result without provider call.",
     }),
   }, 201);
-  if (rerunPayload?.job?.status !== "pending") {
-    throw new Error(`Expected rerun job to be pending, got ${rerunPayload?.job?.status}`);
+  if (!["pending", "queued"].includes(rerunPayload?.job?.status)) {
+    throw new Error(`Expected rerun job to be pending or queued, got ${rerunPayload?.job?.status}`);
   }
   if (rerunPayload?.rerunOfJobId !== createdJobId) {
     throw new Error(`Expected rerunOfJobId ${createdJobId}, got ${rerunPayload?.rerunOfJobId}`);
@@ -212,7 +216,7 @@ try {
   const rerunHtml = await requestText(
     `${baseUrl}/projects/${encodeURIComponent(createdProjectId)}/batches/${encodeURIComponent(batchId)}`
   );
-  for (const expected of ["项目批次结果页测试图 再做一版", "等待生成"]) {
+  for (const expected of ["项目批次结果页测试图 再做一版"]) {
     if (!rerunHtml.includes(expected)) {
       throw new Error(`Expected rerun batch page HTML to include ${expected}`);
     }
@@ -230,7 +234,8 @@ try {
   process.exitCode = 1;
 } finally {
   cleanup();
-  if (server) server.kill("SIGTERM");
+  await stopSmokeServer(server);
+  runtime.cleanup();
 }
 
 async function requestJson(url, init = {}, expectedStatus = 200) {

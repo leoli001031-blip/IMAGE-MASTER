@@ -17,6 +17,7 @@ import {
 } from "@/components/result/image-detail-panel";
 import { JobCard } from "@/components/ui/job-card";
 import { StatusBean } from "@/components/ui/status-bean";
+import { resolveGenerationOutputAssetTarget } from "@/lib/canvas/generation-output-asset-target";
 import type { GeneratedImage } from "@/lib/types";
 
 export default function ResultPage() {
@@ -245,6 +246,77 @@ export default function ResultPage() {
     }
   };
 
+  const handleSaveAsAsset = async (img: GeneratedImage) => {
+    const sourceImage = activeImages.find((item) => item.id === img.id) || img;
+    if (!sourceImage.url) {
+      showToast("这张图还没有可保存的大图");
+      return;
+    }
+
+    const metadata = getImageMetadata(sourceImage);
+    const saveTarget = resolveGenerationOutputAssetTarget({
+      outputType:
+        getMetadataString(metadata, "generationOutputType") ||
+        getMetadataString(metadata, "planItemType") ||
+        getMetadataString(metadata, "imageType") ||
+        sourceImage.type,
+      artifactType: sourceImage.type,
+    });
+
+    try {
+      const response = await fetch("/api/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: saveTarget.assetType,
+          title: sourceImage.title || sourceImage.copyText || saveTarget.label,
+          description: saveTarget.description,
+          status: "ready",
+          url: sourceImage.url,
+          metadata: {
+            ...metadata,
+            source: "result-page-save",
+            savedByUser: true,
+            savedAssetType: saveTarget.savedAssetType,
+            canvasCategory: saveTarget.canvasCategory,
+            componentType: saveTarget.componentType,
+            originalType: sourceImage.type,
+            prompt: sourceImage.prompt || getMetadataString(metadata, "prompt"),
+            previewUrl: sourceImage.url,
+            referenceUrl: sourceImage.url,
+            savedAt: new Date().toISOString(),
+          },
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "save asset failed");
+      showToast(saveTarget.message);
+    } catch {
+      showToast("保存失败");
+    }
+  };
+
+  const handleOpenFolder = async (img: GeneratedImage) => {
+    const sourceImage = activeImages.find((item) => item.id === img.id) || img;
+    if (!sourceImage.url) {
+      showToast("这张图还没有本地文件");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/generated-images/open-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: sourceImage.url }),
+      });
+      if (!response.ok) throw new Error("open folder failed");
+      const payload = await response.json().catch(() => ({}));
+      showToast(payload.opened ? "已打开本地图像文件夹" : "图片文件夹已定位");
+    } catch {
+      showToast("打开文件夹失败");
+    }
+  };
+
   const handleBackToGenerate = () => {
     useGenerateStore.getState().reset();
     router.push("/canvas");
@@ -331,6 +403,7 @@ export default function ResultPage() {
               images={group.images}
               onDownload={handleDownload}
               onRegenerate={handleRegenerate}
+              onOpenFolder={handleOpenFolder}
               onPreview={setSelectedImage}
               getReviewLabel={getResultReviewLabel}
               getCopyModeLabel={getCopyModeLabel}
@@ -377,6 +450,14 @@ export default function ResultPage() {
           onRetry={(item) => {
             const source = displayImages.find((image) => image.id === item.id);
             if (source) void handleRegenerate(source);
+          }}
+          onSaveAsAsset={(item) => {
+            const source = displayImages.find((image) => image.id === item.id);
+            if (source) void handleSaveAsAsset(source);
+          }}
+          onOpenFolder={(item) => {
+            const source = displayImages.find((image) => image.id === item.id);
+            if (source) void handleOpenFolder(source);
           }}
         />
       )}
@@ -557,6 +638,7 @@ function buildImageDetailItem(image: GeneratedImage, images: GeneratedImage[]): 
     },
     diagnostics: getResultDiagnostics(image),
     copyPolicy: getCopyRenderPolicy(metadata),
+    assetInvocation: getAssetInvocation(metadata),
     prevItem: index > 0 ? { id: images[index - 1].id, title: images[index - 1].title || images[index - 1].type } : undefined,
     nextItem:
       index >= 0 && index < images.length - 1
@@ -688,6 +770,34 @@ function getCopyRenderPolicy(metadata: Record<string, unknown>): ResultCopyRende
     sellingPoints: getStringArray(policy.sellingPoints),
     exportCopy: getStringArray(policy.exportCopy),
     forbiddenClaims: getStringArray(policy.forbiddenClaims),
+  };
+}
+
+function getAssetInvocation(metadata: Record<string, unknown>): ImageDetailItem["assetInvocation"] {
+  const plan = metadata.assetInvocationPlan;
+  if (!isRecord(plan)) return undefined;
+  const decisions = Array.isArray(plan.decisions)
+    ? plan.decisions.flatMap((entry): NonNullable<ImageDetailItem["assetInvocation"]>["decisions"] => {
+        if (!isRecord(entry)) return [];
+        const role = getStringValue(entry.role);
+        const mode = getStringValue(entry.mode);
+        if (!role || !mode) return [];
+        return [{
+          role,
+          mode,
+          providerInput: entry.providerInput === true,
+          reason: getStringValue(entry.reason),
+        }];
+      })
+    : [];
+  if (decisions.length === 0) return undefined;
+  return {
+    mode: getStringValue(plan.mode),
+    fallbackUsed: plan.fallbackUsed === true,
+    fallbackReason: getStringValue(plan.fallbackReason),
+    providerReferenceRoles: getStringArray(plan.providerReferenceRoles),
+    promptOnlyRoles: getStringArray(plan.promptOnlyRoles),
+    decisions,
   };
 }
 

@@ -9,6 +9,7 @@ import type { ImageDetailItem } from "./image-detail-panel";
 interface ImageCardProps {
   id: string;
   url: string;
+  previewUrl?: string;
   title: string;
   copyText: string;
   type: string;
@@ -51,6 +52,7 @@ const STATUS_LABELS: Record<string, string> = {
 export function ImageCard({
   id,
   url,
+  previewUrl,
   title,
   copyText,
   type,
@@ -73,29 +75,33 @@ export function ImageCard({
   const previewStyle: CSSProperties = {
     aspectRatio: normalizeImageAspectRatio(ratio),
   };
+  const imagePreviewUrl = previewUrl || url;
   const statusLabel = _detailData?.status
     ? STATUS_LABELS[_detailData.status] || _detailData.status
     : undefined;
 
   return (
-    <div className="group overflow-hidden rounded-xl border border-warm-line bg-warm-paper">
+    <div className="group overflow-hidden rounded-lg border border-transparent bg-transparent transition hover:border-warm-line/50">
       <button
         type="button"
         onClick={onPreview}
         disabled={!onPreview}
-        className="relative block w-full bg-warm-soft text-left disabled:cursor-default"
+        className="relative block w-full overflow-hidden rounded-md bg-warm-soft text-left disabled:cursor-default"
         style={previewStyle}
         aria-label={onPreview ? `查看 ${title} 的生成详情` : undefined}
       >
-        {url && !error ? (
+        {imagePreviewUrl && !error ? (
           <>
             {!loaded && <ImageSkeleton />}
             <Image
-              src={url}
+              src={imagePreviewUrl}
               alt={title}
               fill
+              loading="lazy"
+              sizes="(min-width: 1024px) 320px, 50vw"
+              unoptimized={imagePreviewUrl.startsWith("data:")}
               className={cn(
-                "object-contain p-2 transition-opacity duration-300",
+                "object-contain p-1 transition-opacity duration-300",
                 loaded ? "opacity-100" : "opacity-0"
               )}
               onLoad={() => setLoaded(true)}
@@ -124,9 +130,9 @@ export function ImageCard({
         )}
       </button>
 
-      <div className="p-3 space-y-2">
+      <div className="space-y-2 px-1 py-2">
         <div>
-          <p className="text-sm font-medium text-warm-ink">{title}</p>
+          <p className="text-sm font-medium text-warm-ink line-clamp-1">{title}</p>
           {errorMessage && (
             <p className="mt-1 flex items-start gap-1.5 text-xs leading-5 text-warm-clay">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />

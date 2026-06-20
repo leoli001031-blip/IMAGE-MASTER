@@ -14,7 +14,7 @@ type ModelType = "vision" | "text" | "image";
 function resolveConfig(type: ModelType): { apiKey: string; baseURL: string } {
   const c = getConfig();
   const apiKey = c[`${type}ApiKey` as keyof AppConfig] as string || c.apiKey;
-  const baseURL = (c[`${type}BaseUrl` as keyof AppConfig] as string) || c.baseUrl || "https://api.openai.com/v1";
+  const baseURL = (c[`${type}BaseUrl` as keyof AppConfig] as string) || c.baseUrl || "https://slb.apikey.fun/v1";
 
   if (!apiKey) throw new Error("API key not configured");
   return { apiKey, baseURL };
@@ -95,6 +95,55 @@ interface AnalyzeProductInput {
   productName?: string;
 }
 
+export type ArtifactVisualQaStatus = "pass" | "warn" | "fail" | "pending";
+export type ArtifactVisualQaDimension =
+  | "product_drift"
+  | "model_consistency"
+  | "lighting"
+  | "copy_safe_area";
+
+export interface ArtifactVisualQaIssue {
+  dimension: ArtifactVisualQaDimension;
+  status: ArtifactVisualQaStatus;
+  label: string;
+  summary: string;
+  recommendation?: string;
+}
+
+export interface ArtifactVisualQaResult {
+  status: ArtifactVisualQaStatus;
+  label: string;
+  issues: ArtifactVisualQaIssue[];
+  summary: string;
+  source: "vision_model_v1" | "mock_visual_qa_v1";
+  reviewedAt: string;
+  model?: string;
+  confidence?: number;
+}
+
+export interface ArtifactVisualQaReferenceImage {
+  role?: string;
+  title?: string;
+  url?: string;
+  dataUrl?: string;
+  providerUsable?: boolean;
+}
+
+interface AnalyzeArtifactVisualQaInput {
+  artifact: {
+    title: string;
+    type?: string;
+    status?: string;
+    prompt?: string;
+    provider?: string;
+    model?: string;
+    metadata?: Record<string, unknown>;
+    imageDataUrl: string;
+  };
+  providerReferenceImages?: ArtifactVisualQaReferenceImage[];
+  promptOnlyReferenceImages?: ArtifactVisualQaReferenceImage[];
+}
+
 interface CanvasComponentFactoryInput {
   factoryItem: {
     id?: string;
@@ -157,6 +206,78 @@ export async function analyzeProduct({ imageBase64, productName }: AnalyzeProduc
     return extractJSON(result.text || "");
   } catch (e) {
     sanitizeError(e, "产品分析失败，请稍后重试");
+  }
+}
+
+/**
+ * 视觉模型审核单张生成图：商品漂移、模特一致性、光影、文案安全区。
+ */
+export async function analyzeArtifactVisualQa(
+  input: AnalyzeArtifactVisualQaInput
+): Promise<ArtifactVisualQaResult> {
+  const openai = getProvider("vision");
+  const modelName = getConfig().visionModel;
+  const metadata = input.artifact.metadata ?? {};
+  const providerReferences = (input.providerReferenceImages ?? []).slice(0, 6);
+  const promptOnlyReferences = (input.promptOnlyReferenceImages ?? []).slice(0, 4);
+
+  const referenceSummary = {
+    providerReferences: providerReferences.map(formatVisualQaReference),
+    promptOnlyReferences: promptOnlyReferences.map(formatVisualQaReference),
+  };
+
+  try {
+    const result = await generateText({
+      model: openai(modelName),
+      system: ARTIFACT_VISUAL_QA_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  artifact: {
+                    title: input.artifact.title,
+                    type: input.artifact.type,
+                    status: input.artifact.status,
+                    prompt: input.artifact.prompt,
+                    provider: input.artifact.provider,
+                    model: input.artifact.model,
+                    ratio: readMetadataString(metadata, "ratio"),
+                    useCase: readMetadataString(metadata, "useCase"),
+                    planItemTitle: readMetadataString(metadata, "planItemTitle"),
+                    copyText: readMetadataString(metadata, "copyText"),
+                    copyRenderPolicy: metadata.copyRenderPolicy,
+                    productReferenceFocus: readMetadataString(metadata, "productReferenceFocus"),
+                    itemReferenceRoles: metadata.itemReferenceRoles,
+                    itemProviderReferenceRoles: metadata.itemProviderReferenceRoles,
+                  },
+                  referenceSummary,
+                  instruction: "下一张图片是需要审核的最终生成图。之后如果有参考图，它们会按文本标签顺序出现。",
+                },
+                null,
+                2
+              ),
+            },
+            { type: "image", image: input.artifact.imageDataUrl },
+            ...providerReferences.flatMap((image, index) => formatVisualQaImageContent(image, index, "provider")),
+            ...promptOnlyReferences.flatMap((image, index) => formatVisualQaImageContent(image, index, "prompt_only")),
+          ],
+        },
+      ],
+      temperature: 0.1,
+      maxTokens: 900,
+    });
+
+    return normalizeArtifactVisualQaResult(extractJSON(result.text || ""), {
+      source: "vision_model_v1",
+      reviewedAt: new Date().toISOString(),
+      model: modelName,
+    });
+  } catch (e) {
+    sanitizeError(e, "视觉 QA 失败，请稍后重试");
   }
 }
 
@@ -251,6 +372,153 @@ Rules:
 - Reuse an existing sourceId from existingNodes when possible.
 - Keep visual-language consistency: style, model, scene, platform, review, and output nodes should be compatible with the same product asset.
 - Do not include markdown or explanations.`;
+
+const ARTIFACT_VISUAL_QA_SYSTEM = `你是电商商业图的视觉审核 Agent。你只做审核，不生成图片。
+
+请同时看最终生成图和参考图，判断四类风险：
+1. product_drift：商品是否漂移，包括形状、比例、材质、Logo、五金、颜色、包装标签。
+2. model_consistency：模特是否像同一个人，神态/表情是否自然，是否被模卡锁死。
+3. lighting：人物、商品、场景的光源、阴影、透视和接触关系是否一致。
+4. copy_safe_area：画面文字是否在安全区，是否误写到商品包装/瓶身标签，是否遮挡主体。
+
+规则：
+- 如果没有对应参考图，不要编造“漂移”，而是把问题描述为“需要人工确认”或 pending/warn。
+- 商品真实身份优先级最高；广告文案不应改变商品包装原有标签。
+- 文案需要烧进图时，要检查位置、安全区、可读性和是否覆盖主体。
+- 只返回严格 JSON，不要 Markdown。
+
+JSON schema:
+{
+  "status": "pass|warn|fail|pending",
+  "label": "QA 通过|QA 风险|QA 失败|QA 待查",
+  "summary": "一句中文总结",
+  "confidence": 0.0,
+  "issues": [
+    {
+      "dimension": "product_drift|model_consistency|lighting|copy_safe_area",
+      "status": "pass|warn|fail|pending",
+      "label": "商品一致性|模特一致性|空间光影|文案安全区",
+      "summary": "具体看到的问题或通过原因",
+      "recommendation": "可执行的重做建议"
+    }
+  ]
+}`;
+
+function formatVisualQaReference(image: ArtifactVisualQaReferenceImage): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries({
+      role: image.role,
+      title: image.title,
+      url: image.url,
+      providerUsable: image.providerUsable,
+      hasImageInput: Boolean(image.dataUrl),
+    }).filter(([, value]) => value !== undefined)
+  );
+}
+
+function formatVisualQaImageContent(
+  image: ArtifactVisualQaReferenceImage,
+  index: number,
+  mode: "provider" | "prompt_only"
+) {
+  if (!image.dataUrl) return [];
+  const role = image.role || "unknown";
+  const title = image.title || image.url || `reference ${index + 1}`;
+  return [
+    {
+      type: "text" as const,
+      text: `Reference ${index + 1} (${mode}, role=${role}): ${title}`,
+    },
+    { type: "image" as const, image: image.dataUrl },
+  ];
+}
+
+function normalizeArtifactVisualQaResult(
+  value: object,
+  fallback: Pick<ArtifactVisualQaResult, "source" | "reviewedAt" | "model">
+): ArtifactVisualQaResult {
+  const record = isRecord(value) ? value : {};
+  const issues = Array.isArray(record.issues)
+    ? record.issues.flatMap((item): ArtifactVisualQaIssue[] => {
+        const issue = isRecord(item) ? item : {};
+        const dimension = normalizeArtifactVisualQaDimension(issue.dimension);
+        const status = normalizeArtifactVisualQaStatus(issue.status);
+        const label = readRecordString(issue, "label") || getVisualQaDimensionLabel(dimension);
+        const summary = readRecordString(issue, "summary");
+        if (!dimension || !status || !summary) return [];
+        return [
+          {
+            dimension,
+            status,
+            label,
+            summary: summary.slice(0, 280),
+            recommendation: readRecordString(issue, "recommendation")?.slice(0, 280),
+          },
+        ];
+      })
+    : [];
+  const status = normalizeArtifactVisualQaStatus(record.status) || summarizeArtifactVisualQaStatus(issues);
+  return {
+    status,
+    label: readRecordString(record, "label") || getVisualQaStatusLabel(status),
+    summary: (readRecordString(record, "summary") || getVisualQaStatusLabel(status)).slice(0, 360),
+    confidence: typeof record.confidence === "number" && Number.isFinite(record.confidence)
+      ? Math.max(0, Math.min(1, record.confidence))
+      : undefined,
+    issues,
+    ...fallback,
+  };
+}
+
+function summarizeArtifactVisualQaStatus(issues: ArtifactVisualQaIssue[]): ArtifactVisualQaStatus {
+  if (issues.some((issue) => issue.status === "fail")) return "fail";
+  if (issues.some((issue) => issue.status === "warn")) return "warn";
+  if (issues.some((issue) => issue.status === "pending")) return "pending";
+  return issues.length > 0 ? "pass" : "pending";
+}
+
+function normalizeArtifactVisualQaStatus(value: unknown): ArtifactVisualQaStatus | null {
+  return value === "pass" || value === "warn" || value === "fail" || value === "pending" ? value : null;
+}
+
+function normalizeArtifactVisualQaDimension(value: unknown): ArtifactVisualQaDimension | null {
+  return value === "product_drift" ||
+    value === "model_consistency" ||
+    value === "lighting" ||
+    value === "copy_safe_area"
+    ? value
+    : null;
+}
+
+function getVisualQaStatusLabel(status: ArtifactVisualQaStatus): string {
+  if (status === "pass") return "QA 通过";
+  if (status === "warn") return "QA 风险";
+  if (status === "fail") return "QA 失败";
+  return "QA 待查";
+}
+
+function getVisualQaDimensionLabel(dimension: ArtifactVisualQaDimension | null): string {
+  if (dimension === "product_drift") return "商品一致性";
+  if (dimension === "model_consistency") return "模特一致性";
+  if (dimension === "lighting") return "空间光影";
+  if (dimension === "copy_safe_area") return "文案安全区";
+  return "视觉 QA";
+}
+
+function readMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
+  return readRecordString(metadata, key);
+}
+
+function readRecordString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 const PLANNER_SYSTEM = `You are a marketing visual planning assistant for a professional image generation tool. Your job is to chat with users naturally, understand their needs, and help plan promotional images.
 
@@ -770,10 +1038,11 @@ function normalizeReferenceImagesBase64(values: string[]): string[] {
 }
 
 function parseSse(rawText: string): Array<{ event?: string; json?: unknown }> {
-  return rawText.split(/\n\n+/).flatMap((block) => {
+  return rawText.split(/\r?\n\r?\n+/).flatMap((block) => {
     const event = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
     const data = block
-      .split("\n")
+      .split(/\r?\n/)
+      .map((line) => line.trimStart())
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trim())
       .join("\n");

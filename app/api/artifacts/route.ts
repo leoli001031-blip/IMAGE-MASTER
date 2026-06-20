@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import * as artifactDB from "@/lib/store/artifact-db";
 import type { CreateGeneratedArtifactParams, GeneratedArtifact } from "@/lib/types";
 import { safeLogError } from "@/lib/server/safe-log";
+import { sanitizePayloadForJson } from "@/lib/store/metadata-image-sanitizer";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -162,12 +163,103 @@ function summarizeProviderAdapter(value: unknown): Record<string, unknown> | und
   return Object.keys(compact).length > 0 ? compact : undefined;
 }
 
+function summarizeCopyRenderPolicy(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const policy = {
+    mode: getString(value.mode),
+    reason: getString(value.reason),
+    inImageText: pickStringArray(value.inImageText),
+    sellingPoints: pickStringArray(value.sellingPoints),
+    exportCopy: pickStringArray(value.exportCopy),
+    forbiddenClaims: pickStringArray(value.forbiddenClaims),
+  };
+  const compact = Object.fromEntries(Object.entries(policy).filter(([, item]) => item !== undefined));
+  return Object.keys(compact).length > 0 ? compact : undefined;
+}
+
+function summarizeReviewState(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const state = {
+    status: getString(value.status),
+    label: getString(value.label),
+    note: getString(value.note, 500),
+    source: getString(value.source, 80),
+    updatedAt: getString(value.updatedAt),
+  };
+  const compact = Object.fromEntries(Object.entries(state).filter(([, item]) => item !== undefined));
+  return compact.status ? compact : undefined;
+}
+
+function summarizeVisualQaIssue(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const issue = {
+    dimension: getString(value.dimension),
+    status: getString(value.status),
+    label: getString(value.label),
+    summary: getString(value.summary, 500),
+    recommendation: getString(value.recommendation, 500),
+  };
+  const compact = Object.fromEntries(Object.entries(issue).filter(([, item]) => item !== undefined));
+  return compact.dimension && compact.status && compact.summary ? compact : undefined;
+}
+
+function summarizeVisualQa(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const issues = Array.isArray(value.issues)
+    ? value.issues.map(summarizeVisualQaIssue).filter(Boolean).slice(0, 8)
+    : undefined;
+  const qa = {
+    status: getString(value.status),
+    label: getString(value.label),
+    summary: getString(value.summary, 500),
+    source: getString(value.source),
+    reviewedAt: getString(value.reviewedAt),
+    model: getString(value.model),
+    confidence: getNumber(value.confidence),
+    issues: issues && issues.length > 0 ? issues : undefined,
+  };
+  const compact = Object.fromEntries(Object.entries(qa).filter(([, item]) => item !== undefined));
+  return compact.status ? compact : undefined;
+}
+
+function summarizeAssetInvocationPlan(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const decisions = Array.isArray(value.decisions)
+    ? value.decisions.flatMap((entry): Record<string, unknown>[] => {
+        if (!isPlainObject(entry)) return [];
+        const decision = {
+          role: getString(entry.role),
+          mode: getString(entry.mode),
+          providerInput: getBoolean(entry.providerInput),
+          reason: getString(entry.reason, 512),
+        };
+        const compact = Object.fromEntries(Object.entries(decision).filter(([, item]) => item !== undefined));
+        return compact.role && compact.mode ? [compact] : [];
+      })
+    : undefined;
+  const plan = {
+    version: getNumber(value.version),
+    mode: getString(value.mode),
+    fallbackUsed: getBoolean(value.fallbackUsed),
+    fallbackReason: getString(value.fallbackReason, 512),
+    referenceRoles: pickStringArray(value.referenceRoles),
+    providerReferenceRoles: pickStringArray(value.providerReferenceRoles),
+    decisions: decisions?.length ? decisions : undefined,
+    unusedRoles: pickStringArray(value.unusedRoles),
+    notes: pickStringArray(value.notes),
+  };
+  const compact = Object.fromEntries(Object.entries(plan).filter(([, item]) => item !== undefined));
+  return Object.keys(compact).length > 0 ? compact : undefined;
+}
+
 function summarizeArtifactMetadataForList(metadata: Record<string, unknown>): Record<string, unknown> {
   const summary = {
     source: getString(metadata.source),
     batchId: getString(metadata.batchId),
     batchIndex: getNumber(metadata.batchIndex),
     batchTotal: getNumber(metadata.batchTotal),
+    batchJobTitle: getString(metadata.batchJobTitle),
+    planItemTitle: getString(metadata.planItemTitle),
     exportPackId: getString(metadata.exportPackId),
     exportPackTitle: getString(metadata.exportPackTitle),
     exportItemId: getString(metadata.exportItemId),
@@ -182,6 +274,22 @@ function summarizeArtifactMetadataForList(metadata: Record<string, unknown>): Re
     whiteBackground: getBoolean(metadata.whiteBackground),
     textAllowed: getBoolean(metadata.textAllowed),
     modelRequired: getBoolean(metadata.modelRequired),
+    copyText: getString(metadata.copyText),
+    copyRenderPolicy: summarizeCopyRenderPolicy(metadata.copyRenderPolicy),
+    reviewState: summarizeReviewState(metadata.reviewState),
+    visualQa: summarizeVisualQa(metadata.visualQa),
+    itemReferenceRoles: pickStringArray(metadata.itemReferenceRoles),
+    itemProviderReferenceRoles: pickStringArray(metadata.itemProviderReferenceRoles),
+    productReferenceFocus: getString(metadata.productReferenceFocus),
+    productReferenceFocusInstruction: getString(metadata.productReferenceFocusInstruction),
+    assetInvocationPlan: summarizeAssetInvocationPlan(metadata.assetInvocationPlan),
+    assetInvocationPlanner: isPlainObject(metadata.assetInvocationPlanner)
+      ? {
+          mode: getString(metadata.assetInvocationPlanner.mode),
+          fallbackUsed: getBoolean(metadata.assetInvocationPlanner.fallbackUsed),
+          fallbackReason: getString(metadata.assetInvocationPlanner.fallbackReason, 512),
+        }
+      : undefined,
     thumbnailUrl: getString(metadata.thumbnailUrl),
     previewUrl: getString(metadata.previewUrl),
     referenceImageUrl: getString(metadata.referenceImageUrl),
@@ -219,19 +327,34 @@ function summarizeArtifactForList(artifact: GeneratedArtifact): GeneratedArtifac
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
+    const workflowId = searchParams.get("workflowId") || undefined;
+    const nodeId = searchParams.get("nodeId") || undefined;
+    const jobId = searchParams.get("jobId") || undefined;
+    const assetId = searchParams.get("assetId") || undefined;
+    const status = searchParams.get("status") || undefined;
+    const batchId = searchParams.get("batchId") || undefined;
+    const exportPackId = searchParams.get("exportPackId") || undefined;
+    const planId = searchParams.get("planId") || undefined;
+    const hasScopedFilter = Boolean(
+      workflowId || nodeId || jobId || assetId || status || batchId || exportPackId || planId
+    );
+    const limit = parseLimit(searchParams.get("limit")) ?? (hasScopedFilter ? 200 : 80);
+    const updatedAfter = searchParams.get("updatedAfter") || undefined;
     const artifacts = await artifactDB.list({
-      workflowId: searchParams.get("workflowId") || undefined,
-      nodeId: searchParams.get("nodeId") || undefined,
-      jobId: searchParams.get("jobId") || undefined,
-      assetId: searchParams.get("assetId") || undefined,
-      status: searchParams.get("status") || undefined,
-      batchId: searchParams.get("batchId") || undefined,
-      exportPackId: searchParams.get("exportPackId") || undefined,
-      planId: searchParams.get("planId") || undefined,
+      workflowId,
+      nodeId,
+      jobId,
+      assetId,
+      status,
+      batchId,
+      exportPackId,
+      planId,
+      limit,
+      updatedAfter,
     });
 
     if (searchParams.get("full") === "1") {
-      return NextResponse.json(artifacts);
+      return NextResponse.json(sanitizePayloadForJson(artifacts));
     }
 
     return NextResponse.json(artifacts.map(summarizeArtifactForList));
@@ -239,6 +362,13 @@ export async function GET(req: Request) {
     safeLogError("Artifact list failed", e);
     return NextResponse.json({ error: "产物列表读取失败" }, { status: 500 });
   }
+}
+
+function parseLimit(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return Math.min(Math.floor(numeric), 500);
 }
 
 export async function POST(req: Request) {

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as artifactDB from "@/lib/store/artifact-db";
 import type { UpdateGeneratedArtifactParams } from "@/lib/types";
 import { safeLogError } from "@/lib/server/safe-log";
+import { sanitizePayloadForJson } from "@/lib/store/metadata-image-sanitizer";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -13,6 +14,34 @@ function isMetadata(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
+}
+
+const artifactReviewStatusLabels: Record<string, string> = {
+  approved: "可用",
+  pending: "待检查",
+  needs_redo: "建议重做",
+  rejected: "已淘汰",
+  failed: "生成失败",
+};
+
+function normalizeReviewStatus(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const status = value.trim();
+  return artifactReviewStatusLabels[status] ? status : null;
+}
+
+function normalizeReviewStatePatch(value: unknown): Record<string, unknown> | string | null {
+  if (value === undefined) return null;
+  if (!isPlainObject(value)) return "审核状态无效";
+  const status = normalizeReviewStatus(value.status);
+  if (!status) return "审核状态无效";
+  return {
+    status,
+    label: artifactReviewStatusLabels[status],
+    note: typeof value.note === "string" ? value.note.trim().slice(0, 500) : "",
+    source: typeof value.source === "string" ? value.source.trim().slice(0, 80) : "canvas-review",
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function validateUpdate(body: Record<string, unknown>): UpdateGeneratedArtifactParams | string {
@@ -62,7 +91,7 @@ export async function GET(
       return NextResponse.json({ error: "产物不存在" }, { status: 404 });
     }
 
-    return NextResponse.json(artifact);
+    return NextResponse.json(sanitizePayloadForJson(artifact));
   } catch (e) {
     safeLogError("Artifact read failed", e);
     return NextResponse.json({ error: "产物读取失败" }, { status: 500 });
@@ -82,6 +111,30 @@ export async function PATCH(
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "请求参数无效" }, { status: 400 });
+    }
+
+    const reviewStatePatch = normalizeReviewStatePatch((body as Record<string, unknown>).reviewState);
+    if (typeof reviewStatePatch === "string") {
+      return NextResponse.json({ error: reviewStatePatch }, { status: 400 });
+    }
+    if (reviewStatePatch) {
+      const existing = await artifactDB.get(id);
+      if (!existing) {
+        return NextResponse.json({ error: "产物不存在" }, { status: 404 });
+      }
+      const previousReviewState = isPlainObject(existing.metadata.reviewState)
+        ? existing.metadata.reviewState
+        : {};
+      const artifact = await artifactDB.update(id, {
+        metadata: {
+          ...existing.metadata,
+          reviewState: {
+            ...previousReviewState,
+            ...reviewStatePatch,
+          },
+        },
+      });
+      return NextResponse.json(artifact);
     }
 
     const updates = validateUpdate(body as Record<string, unknown>);

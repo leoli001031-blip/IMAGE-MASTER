@@ -1,0 +1,154 @@
+#!/usr/bin/env node
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+const root = process.cwd();
+const workbenchSource = fs.readFileSync(path.join(root, "components/canvas/visual-workbench.tsx"), "utf8");
+const outputPreviewModalSource = fs.readFileSync(path.join(root, "components/canvas/output-preview-modal.tsx"), "utf8");
+const assetsRouteSource = fs.readFileSync(path.join(root, "app/api/assets/route.ts"), "utf8");
+const resultPageSource = fs.readFileSync(path.join(root, "app/result/page.tsx"), "utf8");
+const imageDetailPanelSource = fs.readFileSync(path.join(root, "components/result/image-detail-panel.tsx"), "utf8");
+const imageCardSource = fs.readFileSync(path.join(root, "components/result/image-card.tsx"), "utf8");
+const imageGroupSource = fs.readFileSync(path.join(root, "components/result/image-group.tsx"), "utf8");
+
+assert.match(
+  workbenchSource,
+  /const job = artifact\?\.jobId[\s\S]*jobs\.find[\s\S]*mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)/,
+  "saving a generated output as an asset should merge artifact and job metadata"
+);
+
+assert.match(
+  workbenchSource,
+  /const outputPrompt = getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata: artifactMetadata \}\)/,
+  "saving a generated output as an asset should capture the original prompt"
+);
+
+assert.match(
+  workbenchSource,
+  /\.\.\.buildSavedGenerationOutputTraceMetadata\(\{[\s\S]*metadata: artifactMetadata,[\s\S]*artifact,[\s\S]*job,[\s\S]*prompt: outputPrompt,[\s\S]*\}\)/,
+  "saved output assets should preserve trace metadata in one explicit helper"
+);
+
+assert.match(
+  workbenchSource,
+  /setPersistedAssets\(\(items\) => \[asset,[\s\S]*setActiveCategory\(asset\.category\)[\s\S]*setAssetFavoritesOnly\(false\)[\s\S]*setActiveBottomPanel\("assets"\)[\s\S]*setAssetLibraryFocusItemId\(`asset:\$\{asset\.id\}`\)/,
+  "saving a generated output should open the asset library and select the saved asset"
+);
+
+assert.match(
+  workbenchSource,
+  /showGenerator=\{false\}/,
+  "asset library opened from saved outputs should keep the bottom tray in asset-management mode"
+);
+
+assert.match(
+  workbenchSource,
+  /function buildSavedGenerationOutputTraceMetadata[\s\S]*getOutputPreviewProviderReferenceImages\(metadata\)[\s\S]*getOutputPreviewPromptOnlyReferenceImages\(metadata\)[\s\S]*assetInvocationPlan:[\s\S]*copyRenderPolicy:/,
+  "saved output trace metadata should include strong references, weak references, invocation plan, and copy policy"
+);
+
+assert.match(
+  workbenchSource,
+  /activeOutputCopyPolicy = getOutputPreviewCopyRenderPolicy\(activeOutputPreviewMetadata\)[\s\S]*copyPolicy=\{activeOutputCopyPolicy\}/,
+  "canvas image preview should pass copy policy details to the extracted preview modal"
+);
+
+assert.match(
+  outputPreviewModalSource,
+  /文案策略[\s\S]*画面文字：[\s\S]*禁止声明：/,
+  "canvas image preview modal should show copy policy details next to prompt and references"
+);
+
+assert.match(
+  imageDetailPanelSource,
+  /providerReferenceRoles\?: string\[\];[\s\S]*promptOnlyRoles\?: string\[\];[\s\S]*调用总览[\s\S]*强参考：[\s\S]*文字\/约束：/,
+  "shared image detail panel should summarize strong and prompt-only invocation roles"
+);
+
+assert.match(
+  imageDetailPanelSource,
+  /onSaveAsAsset\?: \(item: ImageDetailItem\) => void;[\s\S]*<ActionBtn icon=\{Save\} label="存为资产"/,
+  "shared image detail panel should expose save-as-asset only inside the detail surface"
+);
+
+assert.match(
+  imageDetailPanelSource,
+  /item\.url && \([\s\S]*label="看原图"/,
+  "shared image detail panel should allow opening the original image even when prompt metadata is missing"
+);
+
+assert.match(
+  imageDetailPanelSource,
+  /h-\[min\(70vh,720px\)\] w-full[\s\S]*h-full w-full rounded-lg object-contain/,
+  "shared image detail panel should scale small originals up inside the large preview area"
+);
+
+assert.match(
+  imageDetailPanelSource,
+  /exportCopy\?: string\[\];[\s\S]*forbiddenClaims\?: string\[\];[\s\S]*导出文案[\s\S]*禁止声明/,
+  "shared image detail panel should expose structured copy layers beyond in-image text"
+);
+
+assert.match(
+  workbenchSource,
+  /focusItemId\?: string;[\s\S]*useEffect\(\(\) => \{[\s\S]*if \(!focusItemId\) return;[\s\S]*setSelectedTrayItemId\(focusItemId\)/,
+  "asset library should focus the saved asset when opened from a generated result"
+);
+
+assert.match(
+  workbenchSource,
+  /function getTraceableImageUrl[\s\S]*data:image\/[\s\S]*url\.length > 4096/,
+  "saved output trace metadata should avoid persisting large inline reference images"
+);
+
+assert.match(
+  assetsRouteSource,
+  /assetInvocationPlan: summarizeAssetInvocationPlan\(metadata\.assetInvocationPlan\)[\s\S]*copyRenderPolicy: summarizeCopyRenderPolicy\(metadata\.copyRenderPolicy\)[\s\S]*productReferenceFocus:/,
+  "asset list summaries should keep saved-output trace metadata after reload"
+);
+
+assert.match(
+  resultPageSource,
+  /providerReferenceRoles: getStringArray\(plan\.providerReferenceRoles\)[\s\S]*promptOnlyRoles: getStringArray\(plan\.promptOnlyRoles\)/,
+  "result detail data should keep asset invocation strong and prompt-only roles"
+);
+
+assert.match(
+  resultPageSource,
+  /resolveGenerationOutputAssetTarget[\s\S]*handleSaveAsAsset[\s\S]*fetch\("\/api\/assets"[\s\S]*source: "result-page-save"[\s\S]*savedAssetType: saveTarget\.savedAssetType/,
+  "result page details should save generated images back into the asset library with trace metadata"
+);
+
+assert.match(
+  resultPageSource,
+  /handleOpenFolder[\s\S]*fetch\("\/api\/generated-images\/open-folder"[\s\S]*onOpenFolder=\{handleOpenFolder\}/,
+  "result page image wall should expose local folder access through the detail/action path"
+);
+
+assert.match(
+  imageGroupSource,
+  /previewUrl=\{getImagePreviewUrl\(img\)\}[\s\S]*metadata\.thumbnailUrl[\s\S]*imageStorage\?\.thumbnailUrl[\s\S]*resultStorage\?\.thumbnailUrl/,
+  "result cards should use persisted thumbnails for grid previews before falling back to original images"
+);
+
+assert.match(
+  imageGroupSource,
+  /grid-cols-\[repeat\(auto-fill,minmax\(220px,1fr\)\)\]/,
+  "result groups should use responsive real-ratio image-wall columns instead of a fixed two-column card grid"
+);
+
+assert.match(
+  imageCardSource,
+  /const imagePreviewUrl = previewUrl \|\| url[\s\S]*src=\{imagePreviewUrl\}[\s\S]*loading="lazy"[\s\S]*sizes="\(min-width: 1024px\) 320px, 50vw"/,
+  "result image cards should lazy-load the preview URL with bounded responsive sizes"
+);
+
+assert.match(
+  imageCardSource,
+  /border border-transparent bg-transparent[\s\S]*overflow-hidden rounded-md bg-warm-soft[\s\S]*object-contain p-1/,
+  "result image cards should keep chrome light so large result sets read as an image wall"
+);
+
+console.log("generation output save metadata smoke passed");

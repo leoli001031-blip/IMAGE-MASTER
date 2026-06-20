@@ -5,6 +5,7 @@ import type {
 } from "@/lib/types";
 import "server-only";
 import db from "./db";
+import { prepareMetadataForPersistence } from "./metadata-image-sanitizer";
 
 type GenerationJobRow = Omit<GenerationJob, "workflowId" | "nodeId" | "assetId" | "metadata"> & {
   workflowId: string | null;
@@ -23,7 +24,15 @@ export interface JobListFilters {
   exportPackId?: string;
   planId?: string;
   limit?: number;
+  updatedAfter?: string;
 }
+
+export interface JobQueueSnapshotRow {
+  id: string;
+  status: string;
+}
+
+export type JobStatusCounts = Record<string, number>;
 
 function parseMetadata(value: string): Record<string, unknown> {
   try {
@@ -65,6 +74,11 @@ export async function list(filters: JobListFilters = {}): Promise<GenerationJob[
     }
   }
 
+  if (filters.updatedAfter) {
+    clauses.push("updatedAt > ?");
+    values.push(filters.updatedAfter);
+  }
+
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const limit = Number.isFinite(filters.limit) && filters.limit && filters.limit > 0
     ? Math.floor(filters.limit)
@@ -72,11 +86,26 @@ export async function list(filters: JobListFilters = {}): Promise<GenerationJob[
   const limitSql = limit ? " LIMIT ?" : "";
   if (limit) values.push(limit);
 
+  const orderSql = filters.updatedAfter ? "ORDER BY updatedAt DESC, createdAt DESC" : "ORDER BY createdAt DESC";
   const rows = db
-    .prepare(`SELECT * FROM generation_jobs ${where} ORDER BY createdAt DESC${limitSql}`)
+    .prepare(`SELECT * FROM generation_jobs ${where} ${orderSql}${limitSql}`)
     .all(...values);
 
   return (rows as GenerationJobRow[]).map(toJob);
+}
+
+export async function listQueueSnapshotRows(options: { activeOnly?: boolean } = {}): Promise<JobQueueSnapshotRow[]> {
+  const where = options.activeOnly ? "WHERE status IN ('queued', 'running')" : "";
+  return db
+    .prepare(`SELECT id, status FROM generation_jobs ${where} ORDER BY createdAt DESC`)
+    .all() as JobQueueSnapshotRow[];
+}
+
+export async function countByStatus(): Promise<JobStatusCounts> {
+  const rows = db
+    .prepare("SELECT status, COUNT(*) as count FROM generation_jobs GROUP BY status")
+    .all() as Array<{ status: string; count: number }>;
+  return Object.fromEntries(rows.map((row) => [row.status, row.count]));
 }
 
 export async function get(id: string): Promise<GenerationJob | undefined> {
@@ -88,8 +117,10 @@ export async function get(id: string): Promise<GenerationJob | undefined> {
 
 export async function add(params: CreateGenerationJobParams): Promise<GenerationJob> {
   const now = new Date().toISOString();
+  const id = `job_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+  const metadata = await prepareMetadataForPersistence(params.metadata || {}, id);
   const job: GenerationJob = {
-    id: `job_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+    id,
     workflowId: params.workflowId?.trim() || undefined,
     nodeId: params.nodeId?.trim() || undefined,
     assetId: params.assetId?.trim() || undefined,
@@ -97,7 +128,7 @@ export async function add(params: CreateGenerationJobParams): Promise<Generation
     prompt: params.prompt?.trim() || "",
     resultUrl: params.resultUrl?.trim() || "",
     error: params.error?.trim() || "",
-    metadata: params.metadata || {},
+    metadata,
     createdAt: now,
     updatedAt: now,
   };
@@ -140,7 +171,9 @@ export async function update(
     prompt: updates.prompt !== undefined ? updates.prompt.trim() : existing.prompt,
     resultUrl: updates.resultUrl !== undefined ? updates.resultUrl.trim() : existing.resultUrl,
     error: updates.error !== undefined ? updates.error.trim() : existing.error,
-    metadata: updates.metadata ?? existing.metadata,
+    metadata: updates.metadata !== undefined
+      ? await prepareMetadataForPersistence(updates.metadata, id)
+      : existing.metadata,
     updatedAt: new Date().toISOString(),
   };
 

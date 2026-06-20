@@ -138,6 +138,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_generation_jobs_assetId ON generation_jobs(assetId);
   CREATE INDEX IF NOT EXISTS idx_generation_jobs_status ON generation_jobs(status);
   CREATE INDEX IF NOT EXISTS idx_generation_jobs_createdAt ON generation_jobs(createdAt);
+  CREATE INDEX IF NOT EXISTS idx_generation_jobs_updatedAt ON generation_jobs(updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_generation_jobs_workflow_updatedAt ON generation_jobs(workflowId, updatedAt);
 
   CREATE TABLE IF NOT EXISTS job_leases (
     job_id TEXT PRIMARY KEY,
@@ -203,6 +205,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_assetId ON generated_artifacts(assetId);
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_status ON generated_artifacts(status);
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_createdAt ON generated_artifacts(createdAt);
+  CREATE INDEX IF NOT EXISTS idx_generated_artifacts_updatedAt ON generated_artifacts(updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_generated_artifacts_workflow_updatedAt ON generated_artifacts(workflowId, updatedAt);
 
   CREATE TABLE IF NOT EXISTS review_sessions (
     id TEXT PRIMARY KEY,
@@ -300,10 +304,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_generation_jobs_exportPackId ON generation_jobs(exportPackId);
   CREATE INDEX IF NOT EXISTS idx_generation_jobs_planId ON generation_jobs(planId);
   CREATE INDEX IF NOT EXISTS idx_generation_jobs_batch_status ON generation_jobs(batchId, status);
+  CREATE INDEX IF NOT EXISTS idx_generation_jobs_updatedAt ON generation_jobs(updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_generation_jobs_workflow_updatedAt ON generation_jobs(workflowId, updatedAt);
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_batchId ON generated_artifacts(batchId);
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_exportPackId ON generated_artifacts(exportPackId);
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_planId ON generated_artifacts(planId);
   CREATE INDEX IF NOT EXISTS idx_generated_artifacts_batch_status ON generated_artifacts(batchId, status);
+  CREATE INDEX IF NOT EXISTS idx_generated_artifacts_updatedAt ON generated_artifacts(updatedAt);
+  CREATE INDEX IF NOT EXISTS idx_generated_artifacts_workflow_updatedAt ON generated_artifacts(workflowId, updatedAt);
 `);
 
 function backfillScopedMetadataColumns(table: "generation_jobs" | "generated_artifacts"): void {

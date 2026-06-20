@@ -73,7 +73,6 @@ try {
       method: "POST",
       body: JSON.stringify(
         buildPayload({
-          enqueue: true,
           confirmedProviderCallLimit: dryRun.estimate.maxProviderCallCount,
         })
       ),

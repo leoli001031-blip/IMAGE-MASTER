@@ -89,6 +89,7 @@ const claimLeaseTransaction = db.transaction((params: Required<ClaimJobLeasePara
 
   let claimedLease = inserted.changes === 1;
   if (!claimedLease) {
+    const existingLease = getLease(params.jobId);
     const updated = db
       .prepare(
         `UPDATE job_leases
@@ -101,6 +102,7 @@ const claimLeaseTransaction = db.transaction((params: Required<ClaimJobLeasePara
            released_at = NULL,
            updated_at = @now
          WHERE job_id = @jobId
+           AND lease_id = @previousLeaseId
            AND (
              status != 'active'
              OR released_at IS NOT NULL
@@ -113,6 +115,7 @@ const claimLeaseTransaction = db.transaction((params: Required<ClaimJobLeasePara
         owner: params.owner,
         now: params.now,
         expiresAt,
+        previousLeaseId: existingLease?.leaseId ?? "",
       });
     claimedLease = updated.changes === 1;
   }
@@ -150,7 +153,7 @@ const claimLeaseTransaction = db.transaction((params: Required<ClaimJobLeasePara
 
 export function claimJobLease(params: ClaimJobLeaseParams): ClaimJobLeaseResult {
   const now = params.now ?? new Date().toISOString();
-  return claimLeaseTransaction({
+  return claimLeaseTransaction.immediate({
     ...params,
     now,
     error: params.error ?? "",

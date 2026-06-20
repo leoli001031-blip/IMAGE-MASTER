@@ -92,7 +92,13 @@ try {
     result.reclaim.reclaimedJobIds.includes(ids.queuedExpired)
   );
   if (atomicClaims.length !== 1) {
-    throw new Error(`Expected exactly one atomic reclaim winner, got ${atomicClaims.length}`);
+    throw new Error(
+      `Expected exactly one atomic reclaim winner, got ${atomicClaims.length}: ` +
+        JSON.stringify([
+          atomicA.reclaim.reclaimedJobIds,
+          atomicB.reclaim.reclaimedJobIds,
+        ])
+    );
   }
   const atomicLease = readLease(ids.queuedExpired);
   if (atomicLease.owner !== atomicClaims[0].reclaim.owner || atomicLease.status !== "active") {

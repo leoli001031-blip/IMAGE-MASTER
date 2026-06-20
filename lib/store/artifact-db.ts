@@ -5,6 +5,7 @@ import type {
 } from "@/lib/types";
 import "server-only";
 import db from "./db";
+import { prepareMetadataForPersistence } from "./metadata-image-sanitizer";
 
 type GeneratedArtifactRow = Omit<
   GeneratedArtifact,
@@ -29,6 +30,8 @@ export interface ArtifactListFilters {
   batchId?: string;
   exportPackId?: string;
   planId?: string;
+  limit?: number;
+  updatedAfter?: string;
 }
 
 function parseMetadata(value: string): Record<string, unknown> {
@@ -53,7 +56,7 @@ function toArtifact(row: GeneratedArtifactRow): GeneratedArtifact {
 
 export async function list(filters: ArtifactListFilters = {}): Promise<GeneratedArtifact[]> {
   const clauses: string[] = [];
-  const values: string[] = [];
+  const values: Array<string | number> = [];
 
   for (const key of [
     "workflowId",
@@ -71,9 +74,20 @@ export async function list(filters: ArtifactListFilters = {}): Promise<Generated
     }
   }
 
+  if (filters.updatedAfter) {
+    clauses.push("updatedAt > ?");
+    values.push(filters.updatedAfter);
+  }
+
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const limit = Number.isFinite(filters.limit) && filters.limit && filters.limit > 0
+    ? Math.floor(filters.limit)
+    : undefined;
+  const limitSql = limit ? " LIMIT ?" : "";
+  if (limit) values.push(limit);
+  const orderSql = filters.updatedAfter ? "ORDER BY updatedAt DESC, createdAt DESC" : "ORDER BY createdAt DESC";
   const rows = db
-    .prepare(`SELECT * FROM generated_artifacts ${where} ORDER BY createdAt DESC`)
+    .prepare(`SELECT * FROM generated_artifacts ${where} ${orderSql}${limitSql}`)
     .all(...values);
 
   return (rows as GeneratedArtifactRow[]).map(toArtifact);
@@ -88,8 +102,10 @@ export async function get(id: string): Promise<GeneratedArtifact | undefined> {
 
 export async function add(params: CreateGeneratedArtifactParams): Promise<GeneratedArtifact> {
   const now = new Date().toISOString();
+  const id = `artifact_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+  const metadata = await prepareMetadataForPersistence(params.metadata || {}, id);
   const artifact: GeneratedArtifact = {
-    id: `artifact_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+    id,
     workflowId: params.workflowId?.trim() || undefined,
     nodeId: params.nodeId?.trim() || undefined,
     jobId: params.jobId?.trim() || undefined,
@@ -101,7 +117,7 @@ export async function add(params: CreateGeneratedArtifactParams): Promise<Genera
     prompt: params.prompt?.trim() || "",
     provider: params.provider?.trim() || "",
     model: params.model?.trim() || "",
-    metadata: params.metadata || {},
+    metadata,
     createdAt: now,
     updatedAt: now,
   };
@@ -151,7 +167,9 @@ export async function update(
     prompt: updates.prompt !== undefined ? updates.prompt.trim() : existing.prompt,
     provider: updates.provider !== undefined ? updates.provider.trim() : existing.provider,
     model: updates.model !== undefined ? updates.model.trim() : existing.model,
-    metadata: updates.metadata ?? existing.metadata,
+    metadata: updates.metadata !== undefined
+      ? await prepareMetadataForPersistence(updates.metadata, id)
+      : existing.metadata,
     updatedAt: new Date().toISOString(),
   };
 

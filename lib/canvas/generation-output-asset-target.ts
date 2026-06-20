@@ -1,6 +1,6 @@
 import type { AssetType } from "@/lib/types";
 
-export type GenerationOutputCanvasCategory = "商品" | "模特" | "场景" | "风格";
+export type GenerationOutputCanvasCategory = "商品" | "模特" | "场景" | "风格" | "平台";
 
 export interface GenerationOutputAssetTargetInput {
   outputType?: unknown;
@@ -34,7 +34,7 @@ export function resolveGenerationOutputAssetTarget({
       componentType: "product_asset",
       savedAssetType: "product_asset",
       label: "商品素材",
-      description: "从商品框生成后手动保存的商品资产，可继续拖入生成框复用",
+      description: "手动保存的商品资产，可拖到画布供 Agent 复用",
       message: "已保存为商品素材",
     };
   }
@@ -46,7 +46,7 @@ export function resolveGenerationOutputAssetTarget({
       componentType: "model_asset",
       savedAssetType: "model_asset",
       label: "模特素材",
-      description: "从模特框生成后手动保存的模特资产，可继续拖入生成框复用",
+      description: "手动保存的模特资产，可拖到画布供 Agent 复用",
       message: "已保存为模特素材",
     };
   }
@@ -58,7 +58,7 @@ export function resolveGenerationOutputAssetTarget({
       componentType: "scene",
       savedAssetType: "scene_asset",
       label: "场景素材",
-      description: "从场景框生成后手动保存的场景资产，可继续拖入生成框复用",
+      description: "手动保存的场景资产，可拖到画布供 Agent 复用",
       message: "已保存为场景素材",
     };
   }
@@ -74,17 +74,17 @@ export function resolveGenerationOutputAssetTarget({
       componentType: "visual_style",
       savedAssetType: "style_asset",
       label: "风格素材",
-      description: "从风格框生成后手动保存的风格资产，可继续拖入生成框复用",
+      description: "手动保存的风格资产，可拖到画布供 Agent 复用",
       message: "已保存为风格素材",
     };
   }
 
   return {
     assetType: "output",
-    canvasCategory: "风格",
+    canvasCategory: "平台",
     savedAssetType: "output_reference",
     label: "输出参考",
-    description: "手动保存到全局资产库的输出参考，可跨项目拖入生成框复用",
+    description: "手动保存到全局资产库的输出参考，可跨项目拖到画布供 Agent 复用",
     message: "已保存到素材库",
   };
 }

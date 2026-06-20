@@ -10,6 +10,7 @@ import {
   FolderOpen,
   Info,
   RefreshCw,
+  Save,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
@@ -58,8 +59,24 @@ export interface ImageDetailItem {
   copyPolicy?: {
     mode?: string;
     reason?: string;
+    allowBurnIn?: boolean;
     inImageText?: string[];
     sellingPoints?: string[];
+    exportCopy?: string[];
+    forbiddenClaims?: string[];
+  };
+  assetInvocation?: {
+    mode?: string;
+    fallbackUsed?: boolean;
+    fallbackReason?: string;
+    providerReferenceRoles?: string[];
+    promptOnlyRoles?: string[];
+    decisions: Array<{
+      role: string;
+      mode: string;
+      providerInput: boolean;
+      reason?: string;
+    }>;
   };
   prevItem?: { id: string; title: string };
   nextItem?: { id: string; title: string };
@@ -95,6 +112,19 @@ function typeLabel(type: string | undefined): string {
   return (type && TYPE_LABELS[type]) || type || "";
 }
 
+function invocationModeLabel(mode: string): string {
+  const labels: Record<string, string> = {
+    hard_reference: "硬参考",
+    identity_reference: "身份参考",
+    lighting_space: "空间光影",
+    style_finish: "风格完成",
+    copy_layer: "文案图层",
+    prompt_only: "提示词约束",
+    unused: "未使用",
+  };
+  return labels[mode] || mode;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -106,6 +136,7 @@ interface ImageDetailPanelProps {
   onNavigate?: (item: { id: string; title: string }) => void;
   onDownload?: (item: ImageDetailItem) => void;
   onRetry?: (item: ImageDetailItem) => void;
+  onSaveAsAsset?: (item: ImageDetailItem) => void;
   onOpenFolder?: (item: ImageDetailItem) => void;
 }
 
@@ -116,12 +147,23 @@ export function ImageDetailPanel({
   onNavigate,
   onDownload,
   onRetry,
+  onSaveAsAsset,
   onOpenFolder,
 }: ImageDetailPanelProps) {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
 
   if (!open || !item) return null;
+  const providerReferenceRoles = item.assetInvocation?.providerReferenceRoles?.length
+    ? item.assetInvocation.providerReferenceRoles
+    : Array.from(new Set((item.assetInvocation?.decisions ?? [])
+        .filter((decision) => decision.providerInput)
+        .map((decision) => decision.role)));
+  const promptOnlyRoles = item.assetInvocation?.promptOnlyRoles?.length
+    ? item.assetInvocation.promptOnlyRoles
+    : Array.from(new Set((item.assetInvocation?.decisions ?? [])
+        .filter((decision) => !decision.providerInput)
+        .map((decision) => decision.role)));
 
   const handleCopyPrompt = async () => {
     if (!item.prompt) return;
@@ -139,7 +181,7 @@ export function ImageDetailPanel({
       />
 
       {/* panel */}
-      <div className="relative z-10 flex max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-warm-line bg-warm-paper shadow-2xl">
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-lg border border-warm-line bg-warm-paper shadow-2xl">
         {/* close */}
         <button
           onClick={onClose}
@@ -178,13 +220,13 @@ export function ImageDetailPanel({
           {/* image area */}
           <div className="relative flex min-h-0 flex-1 items-center justify-center bg-warm-ink/5 p-4 lg:p-8">
             {item.url ? (
-              <div className="relative max-h-[70vh] w-full">
+              <div className="relative h-[min(70vh,720px)] w-full">
                 <Image
                   src={item.url}
                   alt={item.title}
                   width={1200}
                   height={1200}
-                  className="mx-auto max-h-[70vh] w-auto rounded-lg object-contain"
+                  className="h-full w-full rounded-lg object-contain"
                   unoptimized={item.url.startsWith("data:")}
                 />
               </div>
@@ -285,6 +327,70 @@ export function ImageDetailPanel({
               </Section>
             ) : null}
 
+            {/* asset invocation */}
+            {item.assetInvocation?.decisions.length ? (
+              <Section icon={Info} title="调用策略">
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-warm-line bg-warm-bg px-2.5 py-2 text-xs">
+                    <div className="font-medium text-warm-ink">调用总览</div>
+                    <div className="mt-1 space-y-0.5 text-warm-muted">
+                      <p>强参考：{providerReferenceRoles.length ? providerReferenceRoles.map(roleLabel).join("、") : "无"}</p>
+                      <p>文字/约束：{promptOnlyRoles.length ? promptOnlyRoles.map(roleLabel).join("、") : "无"}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {item.assetInvocation.mode && (
+                      <span className="rounded-full bg-warm-soft px-2 py-0.5 text-[11px] text-warm-muted">
+                        {item.assetInvocation.mode}
+                      </span>
+                    )}
+                    {item.assetInvocation.fallbackUsed && (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
+                        fallback
+                      </span>
+                    )}
+                  </div>
+                  {item.assetInvocation.fallbackReason && (
+                    <p className="text-xs leading-relaxed text-warm-muted">
+                      {item.assetInvocation.fallbackReason}
+                    </p>
+                  )}
+                  <div className="space-y-1.5">
+                    {item.assetInvocation.decisions.map((decision) => (
+                      <div
+                        key={`${decision.role}-${decision.mode}`}
+                        className="rounded-lg border border-warm-line bg-warm-soft/60 px-2 py-1.5"
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-medium text-warm-ink">
+                            {roleLabel(decision.role)}
+                          </span>
+                          <span className="rounded-full bg-warm-paper px-1.5 py-0.5 text-[10px] text-warm-muted">
+                            {invocationModeLabel(decision.mode)}
+                          </span>
+                          <span
+                            className={cn(
+                              "rounded-full px-1.5 py-0.5 text-[10px]",
+                              decision.providerInput
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "bg-warm-paper text-warm-muted"
+                            )}
+                          >
+                            {decision.providerInput ? "进模型" : "只约束"}
+                          </span>
+                        </div>
+                        {decision.reason && (
+                          <p className="mt-1 text-xs leading-relaxed text-warm-muted">
+                            {decision.reason}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Section>
+            ) : null}
+
             {/* copy policy */}
             {item.copyPolicy && (item.copyPolicy.mode || item.copyPolicy.inImageText?.length || item.copyPolicy.sellingPoints?.length) ? (
               <Section icon={Info} title="文案策略">
@@ -308,6 +414,26 @@ export function ImageDetailPanel({
                       <p className="font-medium text-warm-ink/60">画面文字</p>
                       <ul className="mt-0.5 list-inside list-disc space-y-0.5 text-warm-muted">
                         {item.copyPolicy.inImageText.map((text, i) => (
+                          <li key={i}>{text}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {item.copyPolicy.exportCopy?.length ? (
+                    <div>
+                      <p className="font-medium text-warm-ink/60">导出文案</p>
+                      <ul className="mt-0.5 list-inside list-disc space-y-0.5 text-warm-muted">
+                        {item.copyPolicy.exportCopy.map((text, i) => (
+                          <li key={i}>{text}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {item.copyPolicy.forbiddenClaims?.length ? (
+                    <div>
+                      <p className="font-medium text-warm-ink/60">禁止声明</p>
+                      <ul className="mt-0.5 list-inside list-disc space-y-0.5 text-warm-muted">
+                        {item.copyPolicy.forbiddenClaims.map((text, i) => (
                           <li key={i}>{text}</li>
                         ))}
                       </ul>
@@ -354,10 +480,13 @@ export function ImageDetailPanel({
               {onRetry && (
                 <ActionBtn icon={RefreshCw} label="重做" onClick={() => onRetry(item)} />
               )}
+              {onSaveAsAsset && (
+                <ActionBtn icon={Save} label="存为资产" onClick={() => onSaveAsAsset(item)} />
+              )}
               {onOpenFolder && (
                 <ActionBtn icon={FolderOpen} label="打开文件夹" onClick={() => onOpenFolder(item)} />
               )}
-              {item.prompt && (
+              {item.url && (
                 <ActionBtn
                   icon={ExternalLink}
                   label="看原图"
@@ -416,7 +545,7 @@ function ReferenceThumb({ reference }: { reference: ImageDetailReference }) {
   const [errored, setErrored] = useState(false);
 
   return (
-    <div className="group relative flex-shrink-0 overflow-hidden rounded-lg border border-warm-line bg-warm-soft">
+    <div className="group relative flex-shrink-0 overflow-hidden rounded-md border border-warm-line bg-warm-soft">
       {reference.url && !errored ? (
         <Image
           src={reference.url}
@@ -450,7 +579,7 @@ function ActionBtn({
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-warm-muted transition hover:bg-warm-primary-soft hover:text-warm-ink"
+      className="flex items-center gap-1.5 rounded-md px-3 py-2 text-xs text-warm-muted transition hover:bg-warm-primary-soft hover:text-warm-ink"
     >
       <Icon className="h-3.5 w-3.5" />
       {label}

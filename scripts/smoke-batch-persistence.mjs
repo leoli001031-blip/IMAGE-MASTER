@@ -5,16 +5,22 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { createSmokeRuntime, stopSmokeServer } from "./smoke-runtime.mjs";
 
 const port = Number(process.env.BATCH_PERSISTENCE_SMOKE_PORT || 3478);
 const externalBaseUrl = process.env.BATCH_PERSISTENCE_SMOKE_BASE_URL?.trim();
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
 const stamp = Date.now();
+const runtime = createSmokeRuntime({
+  name: "batch-persistence",
+  stamp,
+  externalBaseUrl,
+});
 const batchId = `smoke_batch_persist_${stamp}`;
 const workflowId = `workflow_${batchId}`;
 const nodeId = `node_${batchId}`;
-const dbPath = path.join(process.cwd(), ".data", "image-master.db");
+const dbPath = runtime.dbPath;
 
 let server;
 let serverOutput = "";
@@ -22,11 +28,10 @@ let serverOutput = "";
 if (shouldSpawnServer) {
   server = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
+    env: runtime.serverEnv({
       NEXT_TELEMETRY_DISABLED: "1",
       IMAGE_MASTER_ENABLE_MOCK_BATCH: "1",
-    },
+    }),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -120,7 +125,8 @@ try {
   }
   process.exitCode = 1;
 } finally {
-  if (server) server.kill("SIGTERM");
+  await stopSmokeServer(server);
+  runtime.cleanup();
 }
 
 function buildPayload(extra) {
