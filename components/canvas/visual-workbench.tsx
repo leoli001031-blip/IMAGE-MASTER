@@ -2773,7 +2773,9 @@ export function VisualWorkbench() {
     const sourceArtifacts = groupArtifacts.length > 0
       ? groupArtifacts
       : resolveAgentResultGroupArtifacts(group, artifacts);
-    const targets = sourceArtifacts
+    const actionableArtifacts = getAgentActionableGroupSuggestionArtifacts(sourceArtifacts);
+    const protectedCount = sourceArtifacts.length - actionableArtifacts.length;
+    const targets = actionableArtifacts
       .filter((artifact) => artifact.url)
       .map((artifact): AgentImageEditTarget => {
         const job = artifact.jobId ? jobs.find((item) => item.id === artifact.jobId) : undefined;
@@ -2795,15 +2797,21 @@ export function VisualWorkbench() {
       return;
     }
     if (targets.length === 0) {
-      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, 0, 0));
+      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, 0, 0, protectedCount));
       setAgentLastUserBrief(brief);
-      setComposeMessage(`已选中「${group.title}」，但没有找到可重做的成片。可以先点单张图确认结果是否还在画布里。`);
+      setComposeMessage(
+        protectedCount > 0
+          ? `已选中「${group.title}」，但没有找到可重做的待处理成片；已保留/已淘汰的 ${protectedCount} 张不会被修改。`
+          : `已选中「${group.title}」，但没有找到可重做的成片。可以先点单张图确认结果是否还在画布里。`
+      );
       return;
     }
 
     setComposingWorkflow(true);
     setAgentLastUserBrief(brief);
-    setComposeMessage(`正在为「${group.title}」创建 ${targets.length} 张分组修改任务...`);
+    setComposeMessage(
+      `正在为「${group.title}」创建 ${targets.length} 张待处理图片的分组修改任务${protectedCount > 0 ? `，跳过 ${protectedCount} 张已保留/已淘汰图片` : ""}...`
+    );
     setJobMessage("正在创建分组修改任务...");
 
     const batchId = `agent_group_revision_${Date.now()}`;
@@ -2886,7 +2894,9 @@ export function VisualWorkbench() {
                 mode: "group_only",
                 targetGroup: group.title,
                 targetCount: targets.length,
+                skippedProtectedCount: protectedCount,
                 preserveOtherGroups: true,
+                preserveApprovedRejected: true,
                 context: groupContextPrompt,
               },
               revisionSource: {
@@ -2922,13 +2932,13 @@ export function VisualWorkbench() {
         ...queuedJobs,
         ...items.filter((item) => !queuedJobs.some((job) => job.id === item.id)),
       ]);
-      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, targets.length, queuedJobs.length));
+      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, targets.length, queuedJobs.length, protectedCount));
       setWorkflowMessage(`已提交「${group.title}」分组修改任务`);
-      setComposeMessage(buildAgentResultGroupRevisionMessage(group, brief, targets.length, queuedJobs.length, failedCount));
+      setComposeMessage(buildAgentResultGroupRevisionMessage(group, brief, targets.length, queuedJobs.length, failedCount, protectedCount));
       setComposeBrief("");
       void Promise.allSettled([refreshJobs(), refreshArtifacts(), refreshQueue(), refreshProjects()]);
     } else {
-      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, targets.length, 0));
+      setAgentPlanDiff(buildAgentResultGroupRevisionDiff(group, brief, targets.length, 0, protectedCount));
       setComposeMessage(`「${group.title}」分组修改任务创建失败，没有任务提交成功。`);
       setJobMessage("分组修改任务创建失败");
     }
@@ -10949,12 +10959,14 @@ function buildAgentResultGroupRevisionDiff(
   group: AgentPlanGroup,
   userBrief: string,
   targetCount: number,
-  submittedCount: number
+  submittedCount: number,
+  protectedCount = 0
 ): AgentPlanDiff {
   const otherChanges = [
     `只调整「${group.title}」`,
     `修改要求：${truncateRevisionText(userBrief, 120)}`,
-  ];
+    protectedCount > 0 ? `跳过已保留/已淘汰 ${protectedCount} 张` : "",
+  ].filter(Boolean);
   const countChanges = targetCount > 0
     ? [`本组 ${targetCount} 张，已提交 ${submittedCount} 张`]
     : [`本组暂无可重做成片`];
@@ -10963,8 +10975,10 @@ function buildAgentResultGroupRevisionDiff(
     : [];
   return {
     summary: `只影响「${group.title}」这一组，其他图组保持不动。`,
-    scopeSummary: `修改范围：只重做「${group.title}」这一组。`,
-    preservedSummary: "未点名的图组、比例和参考图角色保持不变。",
+    scopeSummary: `修改范围：只重做「${group.title}」这一组的待处理图片。`,
+    preservedSummary: protectedCount > 0
+      ? `已保留/已淘汰的 ${protectedCount} 张和未点名图组都保持不变。`
+      : "未点名的图组、比例和参考图角色保持不变。",
     nextAction: targetCount > 0
       ? "下一步先看本组重做结果，再决定是否继续扩大修改范围。"
       : "下一步可以换一个有成片的图组继续改。",
@@ -11017,7 +11031,8 @@ function buildAgentResultGroupRevisionMessage(
   userBrief: string,
   targetCount: number,
   submittedCount: number,
-  failedCount: number
+  failedCount: number,
+  protectedCount = 0
 ): string {
   const roles = agentUniqueStrings([
     ...group.providerRoles.map(getAgentPlanRoleLabel),
@@ -11026,6 +11041,7 @@ function buildAgentResultGroupRevisionMessage(
   const roleText = roles.length ? `保留参考角色：${roles.join("、")}。` : "保留上一版成片主体和构图。";
   const ratioText = group.ratios.length ? `比例沿用 ${group.ratios.slice(0, 3).join(" / ")}。` : "";
   const purposeText = group.summary ? `图组用途继续按：${group.summary}。` : "";
+  const protectedText = protectedCount > 0 ? `已保留/已淘汰的 ${protectedCount} 张不会被修改。` : "";
   const failText = failedCount > 0 ? `有 ${failedCount} 张创建失败，稍后可单张重试。` : "";
   return [
     targetCount > 0
@@ -11034,6 +11050,7 @@ function buildAgentResultGroupRevisionMessage(
     purposeText,
     roleText,
     ratioText,
+    protectedText,
     group.copyModes.includes("burn_in") ? "文案继续按原烧字策略处理，注意安全区。" : "",
     `修改要求：${formatRevisionTextForSentence(userBrief, 120)}。`,
     failText,

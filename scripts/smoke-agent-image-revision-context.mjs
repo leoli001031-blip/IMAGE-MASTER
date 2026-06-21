@@ -134,8 +134,13 @@ assert.match(
 
 assert.match(
   source,
-  /const sourceArtifacts = groupArtifacts\.length > 0[\s\S]*resolveAgentResultGroupArtifacts\(group, artifacts\)[\s\S]*const targets = sourceArtifacts[\s\S]*const job = artifact\.jobId \? jobs\.find[\s\S]*const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\)[\s\S]*metadata,/,
+  /const sourceArtifacts = groupArtifacts\.length > 0[\s\S]*resolveAgentResultGroupArtifacts\(group, artifacts\)[\s\S]*const actionableArtifacts = getAgentActionableGroupSuggestionArtifacts\(sourceArtifacts\)[\s\S]*const protectedCount = sourceArtifacts\.length - actionableArtifacts\.length[\s\S]*const targets = actionableArtifacts[\s\S]*const job = artifact\.jobId \? jobs\.find[\s\S]*const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\)[\s\S]*metadata,/,
   "group image revision targets should merge artifact and job metadata before rebuilding prompts and references"
+);
+assert.match(
+  source,
+  /revisionScope: \{[\s\S]*skippedProtectedCount: protectedCount[\s\S]*preserveApprovedRejected: true[\s\S]*function buildAgentResultGroupRevisionMessage[\s\S]*已保留\/已淘汰的 \$\{protectedCount\} 张不会被修改/,
+  "group image revision should preserve approved/rejected images and explain the skipped protected count"
 );
 assert.match(
   source,
