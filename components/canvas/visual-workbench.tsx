@@ -2653,6 +2653,27 @@ export function VisualWorkbench() {
       setComposeMessage("说一下这张图要怎么改");
       return;
     }
+    const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
+    if (keepCountIntent) {
+      if (keepCountIntent === 1 && target.artifactId) {
+        const filter = getResultReviewFilterForArtifactReviewStatus("approved");
+        if (filter) {
+          setResultReviewFilter(filter);
+          setHighlightedResultReviewFilter(filter);
+        }
+        await handleSetArtifactReviewStatus(
+          target.artifactId,
+          "approved",
+          `Agent 自然语言只保留 1 张：${brief}`
+        );
+        setAgentLastUserBrief(brief);
+        setComposeMessage(`已保留「${target.title}」；只影响这张，其他图不变。`);
+        setComposeBrief("");
+        return;
+      }
+      setComposeMessage(`当前选中的是单张图；要只保留 ${keepCountIntent} 张，请先点一个结果分组再说。`);
+      return;
+    }
     const reviewStatusIntent = getAgentResultReviewStatusIntent(brief);
     if (reviewStatusIntent) {
       if (!target.artifactId) {
@@ -2796,6 +2817,41 @@ export function VisualWorkbench() {
     const sourceArtifacts = groupArtifacts.length > 0
       ? groupArtifacts
       : resolveAgentResultGroupArtifacts(group, artifacts);
+    const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
+    if (keepCountIntent) {
+      if (sourceArtifacts.length === 0) {
+        setComposeMessage(`「${group.title}」没有可挑选的成片。`);
+        return;
+      }
+      const keepArtifacts = selectAgentResultGroupKeepArtifacts(sourceArtifacts, keepCountIntent);
+      const keepIds = keepArtifacts.map((artifact) => artifact.id);
+      const rejectIds = sourceArtifacts
+        .filter((artifact) => !keepIds.includes(artifact.id))
+        .map((artifact) => artifact.id);
+      setResultReviewFilter("approved");
+      setHighlightedResultReviewFilter("approved");
+      setHighlightedArtifactGroupTitle(group.title);
+      if (keepIds.length > 0) {
+        await handleSetArtifactGroupReviewStatus(
+          keepIds,
+          "approved",
+          `Agent 自然语言只保留 ${keepCountIntent} 张：${brief}`
+        );
+      }
+      if (rejectIds.length > 0) {
+        await handleSetArtifactGroupReviewStatus(
+          rejectIds,
+          "rejected",
+          `Agent 自然语言只保留 ${keepCountIntent} 张，其余淘汰：${brief}`
+        );
+      }
+      setAgentLastUserBrief(brief);
+      setComposeMessage(
+        `已为「${group.title}」只保留 ${keepIds.length}/${sourceArtifacts.length} 张，其余标记为已淘汰；只影响这组，其他图组不变。`
+      );
+      setComposeBrief("");
+      return;
+    }
     const reviewStatusIntent = getAgentResultReviewStatusIntent(brief);
     if (reviewStatusIntent) {
       const artifactIds = sourceArtifacts.map((artifact) => artifact.id);
@@ -11207,11 +11263,44 @@ function buildAgentFocusedGroupScopeText(
 function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | null {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return null;
+  if (getAgentResultGroupKeepCountIntent(text)) return null;
   if (/(恢复|改回|设为|标为)?待检查|取消标记|取消状态/.test(compactText)) return "pending";
   if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(compactText)) return "needs_redo";
   if (/(淘汰|不要这组|不用这组|不留这组|弃用|废掉|拒绝|打掉)/.test(compactText)) return "rejected";
   if (/(保留|留下|留着|可用|通过|要这组|这组可以|先留|先收|选中)/i.test(compactText)) return "approved";
   return null;
+}
+
+function getAgentResultGroupKeepCountIntent(text: string): number | null {
+  const compactText = text.replace(/\s+/g, "");
+  const patterns = [
+    /(?:只保留|只留|只要|保留|留)([0-9一二两三四五六七八九十]+)(?:张|个)/,
+    /([0-9一二两三四五六七八九十]+)(?:张|个)(?:就够|即可|够了|就行)/,
+  ];
+  for (const pattern of patterns) {
+    const count = parseAgentPlanEditCount(compactText.match(pattern)?.[1]);
+    if (count > 0 && count <= 20) return count;
+  }
+  return null;
+}
+
+function selectAgentResultGroupKeepArtifacts(
+  artifacts: PersistedGeneratedArtifact[],
+  count: number
+): PersistedGeneratedArtifact[] {
+  return [...artifacts]
+    .sort((a, b) => getAgentResultGroupKeepRank(a) - getAgentResultGroupKeepRank(b))
+    .slice(0, Math.min(count, artifacts.length));
+}
+
+function getAgentResultGroupKeepRank(artifact: PersistedGeneratedArtifact): number {
+  const status = getArtifactReviewStatus(artifact);
+  if (status === "approved") return 0;
+  if (status === "pending" && !isArtifactVisualQaRisk(artifact) && !isAgentArtifactFailed(artifact)) return 1;
+  if (status === "pending") return 2;
+  if (status === "needs_redo") return 3;
+  if (status === "failed" || isAgentArtifactFailed(artifact)) return 4;
+  return 5;
 }
 
 function buildAgentResultGroupRevisionDiff(

@@ -427,6 +427,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*Agent 自然语言只保留 1 张[\s\S]*当前选中的是单张图；要只保留 \$\{keepCountIntent\} 张[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
+  "focused single-image chat should not create revision jobs for only-keep-N group commands"
+);
+assert.match(
+  workbenchSource,
   /action === "group_redo"[\s\S]*retryableGroupArtifacts[\s\S]*length === 0[\s\S]*selectGroupForEdit[\s\S]*没有可直接重跑的任务[\s\S]*artifactIds: retryableGroupArtifacts\.map[\s\S]*\$\{retryableGroupArtifacts\.length\} 张待处理图[\s\S]*getRemainingReviewText\(\)/,
   "Agent group redo suggestions should report batch size and remaining review work, with scoped editing fallback"
 );
@@ -437,8 +442,18 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /function getAgentResultReviewStatusIntent[\s\S]*待检查[\s\S]*needs_redo[\s\S]*rejected[\s\S]*approved/,
-  "focused Agent chat should parse keep, redo, reject, and pending review-state intents"
+  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*其余淘汰[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
+  "focused result-group chat should execute only-keep-N picking before generic review-state or revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentResultReviewStatusIntent[\s\S]*getAgentResultGroupKeepCountIntent\(text\)[\s\S]*待检查[\s\S]*needs_redo[\s\S]*rejected[\s\S]*approved/,
+  "focused Agent chat should parse keep, redo, reject, and pending review-state intents without swallowing only-keep-N requests"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentResultGroupKeepCountIntent[\s\S]*只保留[\s\S]*parseAgentPlanEditCount[\s\S]*function selectAgentResultGroupKeepArtifacts[\s\S]*getAgentResultGroupKeepRank[\s\S]*status === "approved"[\s\S]*isArtifactVisualQaRisk/,
+  "only-keep-N group picking should prefer already kept and lower-risk images"
 );
 assert.match(
   workbenchSource,
