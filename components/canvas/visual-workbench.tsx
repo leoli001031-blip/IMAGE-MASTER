@@ -8603,29 +8603,35 @@ function CanvasAgentPanel({
     activeJobCount,
     visibleOutputCount,
   });
+  const canShowResultReviewAssistant = !workflowPlanPreview && !hasEditTarget && visibleOutputCount > 0 && activeJobCount === 0;
   const completionSummary = buildAgentCompletionSummary({
-    visibleOutputCount,
-    visibleArtifacts,
-    activeJobCount,
+    visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
+    visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
+    activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
     hasPlan: Boolean(workflowPlanPreview || hasAppliedWorkflow),
     planGroups,
     matrixItems,
   });
   const qaSummaryItems = buildAgentQaSummaryItems({
-    visibleOutputCount,
-    visibleArtifacts,
-    activeJobCount,
+    visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
+    visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
+    activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
     planGroups,
     matrixItems,
   });
   const executableReviewSuggestions = buildAgentExecutableReviewSuggestions({
-    visibleArtifacts,
+    visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
     planGroups,
     matrixItems,
-    activeJobCount,
+    activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
   });
+  const visibleAgentHistory = canShowResultReviewAssistant
+    ? agentEventHistory
+    : agentEventHistory.filter((message) =>
+        !message.id.startsWith("completion:") && message.title !== "生成总结"
+      );
   const agentMessages = buildAgentConversationMessages({
-    historyMessages: agentEventHistory,
+    historyMessages: visibleAgentHistory,
     composeBrief,
     lastUserBrief,
     agentUnderstanding,

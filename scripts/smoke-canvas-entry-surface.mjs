@@ -583,6 +583,16 @@ assert.match(
 );
 assert.match(
   source,
+  /const canShowResultReviewAssistant = !workflowPlanPreview && !hasEditTarget[\s\S]*visibleOutputCount > 0 && activeJobCount === 0[\s\S]*visibleOutputCount: canShowResultReviewAssistant \? visibleOutputCount : 0[\s\S]*visibleArtifacts: canShowResultReviewAssistant \? visibleArtifacts : \[\]/,
+  "Agent result-review summary should stay hidden while a new plan preview or single-image edit is active"
+);
+assert.match(
+  source,
+  /const visibleAgentHistory = canShowResultReviewAssistant[\s\S]*agentEventHistory\.filter[\s\S]*!message\.id\.startsWith\("completion:"\) && message\.title !== "生成总结"[\s\S]*historyMessages: visibleAgentHistory/,
+  "stale completion-summary history should not compete with active planning or edit context"
+);
+assert.match(
+  source,
   /whitespace-pre-line[\s\S]*function buildAgentCompletionSummary[\s\S]*join\("\\n"\)/,
   "Agent completion summary should render as short chat lines instead of one dense paragraph"
 );
