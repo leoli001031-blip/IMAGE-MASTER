@@ -1118,6 +1118,7 @@ interface AgentExecutableReviewSuggestion {
 }
 
 interface AgentReviewSuggestionExecutionState {
+  suggestionId: string;
   action: AgentReviewSuggestionAction;
   label: string;
   scopeText?: string;
@@ -9227,12 +9228,17 @@ function CanvasAgentPanel({
     }
     if (!executableReviewSuggestionIds) {
       setExecutedReviewSuggestionActions({});
+      setLastReviewSuggestionExecution(null);
       return;
     }
     const ids = new Set(executableReviewSuggestionIds.split("|"));
     setExecutedReviewSuggestionActions((items) => {
       const next = Object.fromEntries(Object.entries(items).filter(([id]) => ids.has(id)));
       return Object.keys(next).length === Object.keys(items).length ? items : next;
+    });
+    setLastReviewSuggestionExecution((execution) => {
+      if (!execution || ids.has(execution.suggestionId)) return execution;
+      return null;
     });
   }, [canShowResultReviewAssistant, executableReviewSuggestionIds]);
   const visibleAgentHistory = canShowResultReviewAssistant
@@ -9463,6 +9469,7 @@ function CanvasAgentPanel({
     const groupTitle = suggestion.groupTitle || group?.title || suggestion.title;
     const recordAction = (text: string) => {
       const execution = {
+        suggestionId: suggestion.id,
         action,
         label: getAgentReviewSuggestionActionLabel(action),
         scopeText: getAgentReviewSuggestionExecutionScopeText(suggestion),

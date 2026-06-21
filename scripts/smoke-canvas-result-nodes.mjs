@@ -442,8 +442,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /interface AgentReviewSuggestionExecutionState[\s\S]*scopeText\?: string;[\s\S]*recordAction[\s\S]*scopeText: getAgentReviewSuggestionExecutionScopeText\(suggestion\)[\s\S]*function getAgentReviewSuggestionExecutionScopeText[\s\S]*只影响「\$\{suggestion\.title\}」这张结果图[\s\S]*只影响「\$\{suggestion\.groupTitle\}」\$\{count\} 张待处理图/,
+  /interface AgentReviewSuggestionExecutionState[\s\S]*suggestionId: string;[\s\S]*scopeText\?: string;[\s\S]*recordAction[\s\S]*suggestionId: suggestion\.id[\s\S]*scopeText: getAgentReviewSuggestionExecutionScopeText\(suggestion\)[\s\S]*function getAgentReviewSuggestionExecutionScopeText[\s\S]*只影响「\$\{suggestion\.title\}」这张结果图[\s\S]*只影响「\$\{suggestion\.groupTitle\}」\$\{count\} 张待处理图/,
   "Agent review suggestion execution state should persist the affected target for post-click traceability"
+);
+assert.match(
+  workbenchSource,
+  /if \(!executableReviewSuggestionIds\) \{[\s\S]*setLastReviewSuggestionExecution\(null\)[\s\S]*const ids = new Set\(executableReviewSuggestionIds\.split\("\|"\)\);[\s\S]*setLastReviewSuggestionExecution\(\(execution\) => \{[\s\S]*ids\.has\(execution\.suggestionId\)[\s\S]*return null;/,
+  "Agent review suggestion feedback should clear when the active result filter no longer contains that suggestion"
 );
 assert.match(
   workbenchSource,
