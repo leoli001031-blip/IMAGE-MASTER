@@ -8827,6 +8827,10 @@ function CanvasAgentPanel({
     assetGroupsById,
     missingInputById,
   });
+  const planGroupSyncSignature = planGroups.map(getAgentFocusedGroupSignature).join("|");
+  const focusedPlanGroupSyncSignature = focusedPlanGroup
+    ? getAgentFocusedGroupSignature(focusedPlanGroup)
+    : "";
   const planExplanation = buildAgentPlanExplanation({
     workflowPlanPreview,
     planGroups,
@@ -9025,7 +9029,25 @@ function CanvasAgentPanel({
   useEffect(() => {
     setShowAgentPlanAdvanced(false);
     setFocusedPlanGroup(null);
-  }, [workflowPlanPreview?.title, workflowPlanPreview?.estimatedCount]);
+  }, [workflowPlanPreview?.title]);
+
+  useEffect(() => {
+    if (!workflowPlanPreview || !focusedPlanGroup || isArtifactFocusedPlanGroup(focusedPlanGroup)) return;
+    const syncedGroup = findUpdatedFocusedPlanGroup(planGroups, focusedPlanGroup);
+    if (!syncedGroup) {
+      setFocusedPlanGroup(null);
+      return;
+    }
+    if (getAgentFocusedGroupSignature(syncedGroup) !== focusedPlanGroupSyncSignature) {
+      setFocusedPlanGroup(syncedGroup);
+    }
+  }, [
+    focusedPlanGroup,
+    focusedPlanGroupSyncSignature,
+    planGroups,
+    planGroupSyncSignature,
+    workflowPlanPreview,
+  ]);
 
   useEffect(() => {
     const target = takePendingResultGroupEditTarget();
@@ -10933,6 +10955,38 @@ function buildAgentFocusedGroupHint(group: AgentPlanGroup | null): string {
     roles.length ? `参考角色继续按 ${roles.join("、")}。` : "没有强参考角色时，会优先沿用本组成片主体和构图。",
     "可以直接说换场景、改数量、文案烧进图或不要这组。",
   ].filter(Boolean).join("\n");
+}
+
+function isArtifactFocusedPlanGroup(group: AgentPlanGroup): boolean {
+  return group.id.startsWith("artifact-group:");
+}
+
+function findUpdatedFocusedPlanGroup(
+  groups: AgentPlanGroup[],
+  focusedGroup: AgentPlanGroup
+): AgentPlanGroup | null {
+  const focusedId = normalizeAgentPlanScopeKey(focusedGroup.id);
+  const focusedTitle = normalizeAgentPlanScopeKey(focusedGroup.title);
+  return groups.find((group) =>
+    normalizeAgentPlanScopeKey(group.id) === focusedId ||
+    (!!focusedTitle && normalizeAgentPlanScopeKey(group.title) === focusedTitle)
+  ) ?? null;
+}
+
+function getAgentFocusedGroupSignature(group: AgentPlanGroup): string {
+  return [
+    group.id,
+    group.title,
+    group.count,
+    group.status,
+    group.ratios.join(","),
+    group.copyModes.join(","),
+    group.providerRoles.join(","),
+    group.promptOnlyRoles.join(","),
+    group.artifactIds?.join(",") ?? "",
+    group.jobIds?.join(",") ?? "",
+    group.summary ?? "",
+  ].join("~");
 }
 
 function buildAgentFocusedGroupScopeText(

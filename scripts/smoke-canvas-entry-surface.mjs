@@ -238,6 +238,16 @@ assert.match(
 );
 assert.match(
   source,
+  /setShowAgentPlanAdvanced\(false\)[\s\S]*setFocusedPlanGroup\(null\)[\s\S]*\}, \[workflowPlanPreview\?\.title\]\)/,
+  "focused plan group should not be cleared just because a scoped plan edit changed the image count"
+);
+assert.match(
+  source,
+  /planGroupSyncSignature = planGroups\.map\(getAgentFocusedGroupSignature\)\.join\("\|"\)[\s\S]*findUpdatedFocusedPlanGroup\(planGroups, focusedPlanGroup\)[\s\S]*setFocusedPlanGroup\(syncedGroup\)[\s\S]*function findUpdatedFocusedPlanGroup[\s\S]*normalizeAgentPlanScopeKey\(group\.id\)[\s\S]*function getAgentFocusedGroupSignature/,
+  "focused plan group should sync to the edited plan group after natural-language plan changes"
+);
+assert.match(
+  source,
   /function applyAgentScopedPlanEdit[\s\S]*agentPlanMatrixItemMatchesScopeGroup[\s\S]*agentPlanPreviewItemMatchesScopeGroup[\s\S]*changes\.push\(`「\$\{groupLabel\}」/,
   "focused plan-group edits should use exact group scope instead of broad target keywords"
 );
