@@ -457,8 +457,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /AgentReviewSuggestionCards[\s\S]*executedActions[\s\S]*已执行：\{execution\.label\}[\s\S]*execution\.text[\s\S]*executed && "border-emerald-300[\s\S]*disabled=\{executed\}[\s\S]*这个建议动作已执行/,
-  "Agent review suggestion cards should show and disable the action that has already run"
+  /AgentReviewSuggestionCards[\s\S]*executedActions[\s\S]*已执行：\{execution\.label\}[\s\S]*execution\.text[\s\S]*const disabled = executed && !isAgentReviewSuggestionRepeatableAction\(action\)[\s\S]*disabled=\{disabled\}[\s\S]*function isAgentReviewSuggestionRepeatableAction[\s\S]*action === "open"[\s\S]*action === "group_edit"/,
+  "Agent review suggestion cards should keep repeatable detail/edit actions clickable while disabling completed status actions"
 );
 assert.match(
   workbenchSource,

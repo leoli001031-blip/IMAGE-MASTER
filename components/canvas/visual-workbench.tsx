@@ -10828,6 +10828,7 @@ function AgentReviewSuggestionCards({
               {suggestion.actions.map((action) => {
                 const ActionIcon = getAgentReviewSuggestionActionIcon(action);
                 const executed = execution?.action === action;
+                const disabled = executed && !isAgentReviewSuggestionRepeatableAction(action);
                 return (
                   <button
                     key={`${suggestion.id}-${action}`}
@@ -10843,8 +10844,8 @@ function AgentReviewSuggestionCards({
                             : "border-warm-line/60 text-warm-ink hover:border-warm-primary/40 hover:text-warm-primary",
                       executed && "border-emerald-300 bg-emerald-50 text-emerald-700"
                     )}
-                    disabled={executed}
-                    title={executed ? "这个建议动作已执行" : getAgentReviewSuggestionActionLabel(action)}
+                    disabled={disabled}
+                    title={disabled ? "这个建议动作已执行" : getAgentReviewSuggestionActionLabel(action)}
                     onClick={() => onAction(suggestion, action)}
                   >
                     <ActionIcon className="h-3 w-3" />
@@ -11000,6 +11001,10 @@ function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction
   if (action === "copy") return "修改文案";
   if (action === "group_edit") return "调整这组";
   return "重做这组";
+}
+
+function isAgentReviewSuggestionRepeatableAction(action: AgentReviewSuggestionAction): boolean {
+  return action === "open" || action === "edit" || action === "copy" || action === "group_edit";
 }
 
 function getAgentReviewSuggestionActionIcon(action: AgentReviewSuggestionAction) {
