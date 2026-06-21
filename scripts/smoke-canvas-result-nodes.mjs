@@ -546,6 +546,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasRetryIntent = hasAgentGlobalResultReviewRetryIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可重做的\$\{scopeLabel\}[\s\S]*image-master:artifact-group-retry[\s\S]*artifactIds: targets\.map[\s\S]*return true[\s\S]*const reviewStatus = getAgentResultReviewStatusIntent\(brief\)/,
+  "global result review commands should execute scoped redo requests before treating them as status-marking commands"
+);
+assert.match(
+  workbenchSource,
   /canApplyResultReviewCommand = !hasEditTarget && visibleOutputCount > 0 && activeJobCount === 0[\s\S]*handlePrimaryAction = async[\s\S]*canApplyResultReviewCommand && composeBrief\.trim\(\) && !focusedPlanGroup && !hasEditTarget[\s\S]*onApplyResultReviewCommand\(composeBrief\)[\s\S]*if \(handled\) return[\s\S]*workflowPlanPreview && focusedPlanGroup/,
   "Agent primary action should try global result review commands before plan or generation actions, even when a stale plan preview still exists"
 );
@@ -563,6 +568,19 @@ assert.match(
   workbenchSource,
   /function getAgentGlobalResultReviewTargets[\s\S]*activeFilter: ResultReviewFilter = "all"[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent\(compactText\)[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*return artifacts[\s\S]*function hasAgentCurrentFilteredResultScopeIntent[\s\S]*所有结果\|全部结果\|结果墙[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
   "global result review commands should separate explicit status scopes and let current-filter pronouns target the filtered subset"
+);
+const resultReviewRetryIntentSource = workbenchSource.slice(
+  workbenchSource.indexOf("function hasAgentGlobalResultReviewRetryIntent"),
+  workbenchSource.indexOf("function getAgentGlobalResultReviewScopeLabel")
+);
+assert.ok(
+  resultReviewRetryIntentSource.includes("标记|标为|标成") &&
+    resultReviewRetryIntentSource.includes("重新生成") &&
+    resultReviewRetryIntentSource.includes("重做一下") &&
+    resultReviewRetryIntentSource.includes("待重做(都|图|结果|项|的)") &&
+    resultReviewRetryIntentSource.includes("当前筛选") &&
+    resultReviewRetryIntentSource.includes("return hasRetryAction && hasTargetScope"),
+  "global redo execution intent should require an execution verb plus an explicit result scope, while excluding status-marking language"
 );
 assert.match(
   workbenchSource,

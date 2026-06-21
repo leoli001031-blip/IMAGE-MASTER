@@ -3086,6 +3086,31 @@ export function VisualWorkbench() {
 
   const handleApplyGlobalResultReviewCommand = async (userBrief: string): Promise<boolean> => {
     const brief = userBrief.trim();
+    const hasRetryIntent = hasAgentGlobalResultReviewRetryIntent(brief);
+    if (hasRetryIntent) {
+      const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
+      const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter);
+      if (targets.length === 0) {
+        setAgentLastUserBrief(brief);
+        setComposeBrief("");
+        setComposeMessage(`当前结果墙里没有找到可重做的${scopeLabel}。`);
+        return true;
+      }
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(`正在按原上下文重做 ${targets.length} 张${scopeLabel}...`);
+      window.dispatchEvent(
+        new CustomEvent("image-master:artifact-group-retry", {
+          detail: {
+            group: scopeLabel,
+            count: targets.length,
+            artifactIds: targets.map((artifact) => artifact.id),
+            artifactTitles: targets.map((artifact) => artifact.title),
+          },
+        })
+      );
+      return true;
+    }
     const reviewStatus = getAgentResultReviewStatusIntent(brief);
     const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent(brief);
     const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
@@ -11939,6 +11964,15 @@ function hasAgentCurrentFilteredResultScopeIntent(compactText: string): boolean 
 function hasAgentGlobalResultReviewScopeIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   return /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的)|已保留(都|图|结果|的)|可用图|通过图|保留图|已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图|当前|当前筛选|筛选结果|这批|这一批|这类|这部分|当前这批|当前这些|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
+}
+
+function hasAgentGlobalResultReviewRetryIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  if (/(标记|标为|标成|设为|改成|改为|恢复|淘汰|保留|留下|留着|通过|可用)/.test(compactText)) return false;
+  const hasRetryAction = /(执行|重跑|重试|重新生成|重新跑|再跑|跑一下|处理|重做一下|重做一遍|重做一轮|再生成)/.test(compactText);
+  const hasTargetScope = /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|当前|当前筛选|筛选结果|这批|这一批|这类|这部分|当前这批|当前这些|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
+  return hasRetryAction && hasTargetScope;
 }
 
 function getAgentGlobalResultReviewScopeLabel(text: string, activeFilter: ResultReviewFilter = "all"): string {
