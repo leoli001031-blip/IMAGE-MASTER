@@ -507,8 +507,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*getAgentImageVisualQaIntent\(brief\)[\s\S]*!target\.artifactId[\s\S]*还没有可质检的产物记录[\s\S]*handleRunArtifactVisualQa\(target\.artifactId\)[\s\S]*正在用 Agent 审核「\$\{target\.title\}」[\s\S]*return[\s\S]*getAgentImageRetryIntent\(brief\)/,
-  "focused single-image chat should run visual QA for the selected artifact before falling through to revision jobs"
+  /handleRunAgentImageRevision[\s\S]*getAgentImageVisualQaIntent\(brief\)[\s\S]*!target\.artifactId[\s\S]*还没有可质检的产物记录[\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(target\.artifactId\)[\s\S]*isArtifactVisualQaRisk\(updatedArtifact\)[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已完成「\$\{updatedArtifact\.title\}」视觉 QA，发现风险[\s\S]*未发现明显风险[\s\S]*return[\s\S]*getAgentImageRetryIntent\(brief\)/,
+  "focused single-image chat should run visual QA, surface risk, and switch to QA-risk filtering before falling through to revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -527,8 +527,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*正在用 Agent 审核「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图[\s\S]*for \(const artifact of qaArtifacts\)[\s\S]*await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*已完成「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图的视觉 QA[\s\S]*return[\s\S]*getAgentResultGroupSaveAsAssetIntent\(brief\)/,
-  "focused result-group chat should run visual QA for the selected group before falling through to picking or revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*reviewedArtifacts: PersistedGeneratedArtifact\[\] = \[\][\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*riskCount = reviewedArtifacts\.filter\(isArtifactVisualQaRisk\)\.length[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已切到 QA 风险筛选[\s\S]*未发现明显风险[\s\S]*return[\s\S]*getAgentResultGroupSaveAsAssetIntent\(brief\)/,
+  "focused result-group chat should run visual QA, summarize risk, and switch to QA-risk filtering before falling through to picking or revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -658,8 +658,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleApplyGlobalResultReviewCommand[\s\S]*hasVisualQaIntent = hasAgentGlobalResultReviewVisualQaIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*qaArtifacts = targets\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*正在用 Agent 审核 \$\{qaArtifacts\.length\} 张\$\{scopeLabel\}[\s\S]*for \(const artifact of qaArtifacts\)[\s\S]*await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*已完成 \$\{qaArtifacts\.length\} 张\$\{scopeLabel\}的视觉 QA[\s\S]*return true[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)/,
-  "global result review commands should run visual QA for scoped result-wall targets before open-folder, save, retry, or status commands"
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasVisualQaIntent = hasAgentGlobalResultReviewVisualQaIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*qaArtifacts = targets\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*reviewedArtifacts: PersistedGeneratedArtifact\[\] = \[\][\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*riskCount = reviewedArtifacts\.filter\(isArtifactVisualQaRisk\)\.length[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已切到 QA 风险筛选[\s\S]*未发现明显风险[\s\S]*return true[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)/,
+  "global result review commands should run visual QA, summarize risk, and switch scoped result-wall targets to QA-risk filtering before open-folder, save, retry, or status commands"
 );
 assert.match(
   workbenchSource,
@@ -823,8 +823,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunArtifactVisualQa[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}\/visual-qa[\s\S]*setOutputPreview/,
-  "visual workbench should call the visual QA route and refresh the active preview metadata"
+  /handleRunArtifactVisualQa[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}\/visual-qa[\s\S]*setOutputPreview[\s\S]*return updatedArtifact[\s\S]*return null/,
+  "visual workbench should call the visual QA route, refresh preview metadata, and return updated artifacts for risk summaries"
 );
 assert.match(
   workbenchSource,

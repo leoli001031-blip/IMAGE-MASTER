@@ -2761,8 +2761,18 @@ export function VisualWorkbench() {
         setComposeMessage(`「${target.title}」还没有可质检的产物记录。`);
         return;
       }
-      void handleRunArtifactVisualQa(target.artifactId);
-      setComposeMessage(`正在用 Agent 审核「${target.title}」，完成后会同步到详情和 QA 风险筛选。`);
+      const updatedArtifact = await handleRunArtifactVisualQa(target.artifactId);
+      if (updatedArtifact && isArtifactVisualQaRisk(updatedArtifact)) {
+        setResultReviewFilter("qa_risk");
+        setHighlightedResultReviewFilter("qa_risk");
+        setComposeMessage(`已完成「${updatedArtifact.title}」视觉 QA，发现风险，已切到 QA 风险筛选。`);
+        return;
+      }
+      setComposeMessage(
+        updatedArtifact
+          ? `已完成「${updatedArtifact.title}」视觉 QA，未发现明显风险。`
+          : `「${target.title}」视觉 QA 未完成，请稍后重试。`
+      );
       return;
     }
     if (getAgentImageRetryIntent(brief)) {
@@ -2993,10 +3003,21 @@ export function VisualWorkbench() {
       }
       setHighlightedArtifactGroupTitle(group.title);
       setComposeMessage(`正在用 Agent 审核「${group.title}」这一组 ${qaArtifacts.length} 张图...`);
+      const reviewedArtifacts: PersistedGeneratedArtifact[] = [];
       for (const artifact of qaArtifacts) {
-        await handleRunArtifactVisualQa(artifact.id);
+        const updatedArtifact = await handleRunArtifactVisualQa(artifact.id);
+        if (updatedArtifact) reviewedArtifacts.push(updatedArtifact);
       }
-      setComposeMessage(`已完成「${group.title}」这一组 ${qaArtifacts.length} 张图的视觉 QA。`);
+      const riskCount = reviewedArtifacts.filter(isArtifactVisualQaRisk).length;
+      if (riskCount > 0) {
+        setResultReviewFilter("qa_risk");
+        setHighlightedResultReviewFilter("qa_risk");
+      }
+      setComposeMessage(
+        riskCount > 0
+          ? `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，其中 ${riskCount} 张有风险，已切到 QA 风险筛选。`
+          : `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，未发现明显风险。`
+      );
       return;
     }
     if (getAgentResultGroupSaveAsAssetIntent(brief)) {
@@ -3370,10 +3391,21 @@ export function VisualWorkbench() {
         return true;
       }
       setComposeMessage(`正在用 Agent 审核 ${qaArtifacts.length} 张${scopeLabel}...`);
+      const reviewedArtifacts: PersistedGeneratedArtifact[] = [];
       for (const artifact of qaArtifacts) {
-        await handleRunArtifactVisualQa(artifact.id);
+        const updatedArtifact = await handleRunArtifactVisualQa(artifact.id);
+        if (updatedArtifact) reviewedArtifacts.push(updatedArtifact);
       }
-      setComposeMessage(`已完成 ${qaArtifacts.length} 张${scopeLabel}的视觉 QA。`);
+      const riskCount = reviewedArtifacts.filter(isArtifactVisualQaRisk).length;
+      if (riskCount > 0) {
+        setResultReviewFilter("qa_risk");
+        setHighlightedResultReviewFilter("qa_risk");
+      }
+      setComposeMessage(
+        riskCount > 0
+          ? `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，其中 ${riskCount} 张有风险，已切到 QA 风险筛选。`
+          : `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，未发现明显风险。`
+      );
       return true;
     }
     const hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent(brief);
@@ -5035,7 +5067,7 @@ export function VisualWorkbench() {
       const artifact = artifacts.find((item) => item.id === artifactId);
       if (!artifact) {
         setArtifactMessage("没有找到这张结果图");
-        return;
+        return null;
       }
 
       setVisualQaReviewingArtifactId(artifactId);
@@ -5076,10 +5108,12 @@ export function VisualWorkbench() {
             : preview
         );
         setArtifactMessage(`已完成「${updatedArtifact.title}」视觉 QA`);
+        return updatedArtifact;
       } catch (error) {
         console.error("Failed to run artifact visual QA:", error);
         setArtifactMessage("视觉 QA 失败，请稍后重试");
         void refreshArtifacts();
+        return null;
       } finally {
         setVisualQaReviewingArtifactId((current) => (current === artifactId ? null : current));
       }
