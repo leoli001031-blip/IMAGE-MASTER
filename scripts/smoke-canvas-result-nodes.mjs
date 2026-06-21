@@ -518,6 +518,9 @@ assert.ok(
   resultReviewStatusIntentSource.includes("const actionText = compactText") &&
     resultReviewStatusIntentSource.includes(".replace(/待重做(都|图|结果|项|的)/g, \"\")") &&
     resultReviewStatusIntentSource.includes(".replace(/已淘汰(都|图|结果|的)?/g, \"\")") &&
+    resultReviewStatusIntentSource.includes("这组不要") &&
+    resultReviewStatusIntentSource.includes("这些不要") &&
+    resultReviewStatusIntentSource.includes("一张都不要") &&
     resultReviewStatusIntentSource.indexOf("return \"rejected\"") < resultReviewStatusIntentSource.indexOf("return \"approved\"") &&
     resultReviewStatusIntentSource.indexOf("return \"approved\"") < resultReviewStatusIntentSource.indexOf("return \"needs_redo\""),
   "result review status parsing should strip target-scope words before detecting actions like 已淘汰都保留 or 待重做都淘汰"
