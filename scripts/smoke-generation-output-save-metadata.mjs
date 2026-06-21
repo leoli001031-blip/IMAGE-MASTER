@@ -39,6 +39,12 @@ assert.match(
 
 assert.match(
   workbenchSource,
+  /getArtifactReviewStatus\(artifact\) !== "approved"[\s\S]*source: "generation-frame-output-save"[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifact\.id\)\}[\s\S]*已标记为可用/,
+  "saving a generated output as an asset should mark the source result as approved for picking"
+);
+
+assert.match(
+  workbenchSource,
   /showGenerator=\{false\}/,
   "asset library opened from saved outputs should keep the bottom tray in asset-management mode"
 );

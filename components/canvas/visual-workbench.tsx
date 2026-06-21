@@ -4260,13 +4260,69 @@ export function VisualWorkbench() {
         setAssetFavoritesOnly(false);
         setActiveBottomPanel("assets");
         setAssetLibraryFocusItemId(`asset:${asset.id}`);
-        setArtifactMessage(saveTarget.message);
+        let reviewMarked = false;
+        if (artifact?.id && getArtifactReviewStatus(artifact) !== "approved") {
+          const status: ArtifactReviewStatus = "approved";
+          const reviewState = {
+            status,
+            label: getArtifactReviewStatusLabel(status),
+            note: "保存为资产时自动标记可用",
+            source: "generation-frame-output-save",
+            updatedAt: new Date().toISOString(),
+          };
+          setArtifacts((items) =>
+            items.map((item) =>
+              item.id === artifact.id
+                ? { ...item, metadata: { ...item.metadata, reviewState }, updatedAt: reviewState.updatedAt }
+                : item
+            )
+          );
+          setOutputPreview((preview) =>
+            preview
+              ? {
+                  ...preview,
+                  items: preview.items.map((item) =>
+                    item.artifactId === artifact.id
+                      ? {
+                          ...item,
+                          reviewStatus: status,
+                          metadata: { ...(item.metadata ?? {}), reviewState },
+                        }
+                      : item
+                  ),
+                }
+              : preview
+          );
+          const highlightedFilter = getResultReviewFilterForArtifactReviewStatus(status);
+          if (highlightedFilter) setHighlightedResultReviewFilter(highlightedFilter);
+
+          try {
+            const reviewResponse = await apiFetch(`/api/artifacts/${encodeURIComponent(artifact.id)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reviewState }),
+            });
+            const reviewPayload = await reviewResponse.json().catch(() => null);
+            const updatedArtifact = mapPersistedArtifact(reviewPayload);
+            if (!reviewResponse.ok || !updatedArtifact) throw new Error("artifact review update failed");
+            setArtifacts((items) =>
+              items.map((item) => (item.id === updatedArtifact.id ? updatedArtifact : item))
+            );
+            reviewMarked = true;
+          } catch (reviewError) {
+            console.error("Failed to mark saved generation output as approved:", reviewError);
+            setArtifactMessage(`${saveTarget.message}；挑图状态保存失败，刷新后可能丢失`);
+            void refreshArtifacts();
+            return;
+          }
+        }
+        setArtifactMessage(reviewMarked ? `${saveTarget.message}，已标记为可用` : saveTarget.message);
       } catch (error) {
         console.error("Failed to save generation output as asset:", error);
         setArtifactMessage("保存失败，请稍后重试");
       }
     },
-    [artifacts, canvasNodes, jobs]
+    [artifacts, canvasNodes, jobs, refreshArtifacts]
   );
 
   const handleSetArtifactReviewStatus = useCallback(
