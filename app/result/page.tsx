@@ -878,6 +878,7 @@ function buildImageDetailItem(image: GeneratedImage, images: GeneratedImage[]): 
     diagnostics: getResultDiagnostics(image),
     copyPolicy: getCopyRenderPolicy(metadata),
     assetInvocation: getAssetInvocation(metadata),
+    sourceVersion: getResultSourceVersion(metadata),
     prevItem: index > 0 ? { id: images[index - 1].id, title: images[index - 1].title || images[index - 1].type } : undefined,
     nextItem:
       index >= 0 && index < images.length - 1
@@ -1161,6 +1162,27 @@ function getAssetInvocation(metadata: Record<string, unknown>): ImageDetailItem[
     providerReferenceRoles: getStringArray(plan.providerReferenceRoles),
     promptOnlyRoles: getStringArray(plan.promptOnlyRoles),
     decisions,
+  };
+}
+
+function getResultSourceVersion(metadata: Record<string, unknown>): ImageDetailItem["sourceVersion"] {
+  const title =
+    getMetadataString(metadata, "rerunSourceArtifactTitle") ||
+    getMetadataString(metadata, "rerunSourcePlanItemTitle") ||
+    getMetadataString(metadata, "rerunSourceExportSpecTitle");
+  const url =
+    getMetadataString(metadata, "rerunSourceArtifactUrl") ||
+    getMetadataString(metadata, "rerunSourceResultUrl");
+  const artifactId = getMetadataString(metadata, "rerunSourceArtifactId");
+  const jobId = getMetadataString(metadata, "rerunOfJobId");
+
+  if (!title && !url && !artifactId && !jobId) return undefined;
+
+  return {
+    title: title || "上一版成片",
+    url: url && isDisplayableImageUrl(url) ? url : undefined,
+    artifactId,
+    jobId,
   };
 }
 

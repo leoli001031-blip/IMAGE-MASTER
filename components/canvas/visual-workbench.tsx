@@ -3859,7 +3859,12 @@ export function VisualWorkbench() {
 
   const handleRerunImageJob = async (
     job: PersistedGenerationJob,
-    options: { groupTitle?: string } = {}
+    options: {
+      groupTitle?: string;
+      sourceArtifactId?: string;
+      sourceArtifactTitle?: string;
+      sourceArtifactUrl?: string;
+    } = {}
   ) => {
     setRunningJobId(job.id);
     setJobMessage("正在带原参考图再做一版...");
@@ -3872,6 +3877,9 @@ export function VisualWorkbench() {
           title: `${getJobNodeLabel(job)} 再做一版`,
           note: "Created from canvas image detail with original references",
           groupTitle: options.groupTitle,
+          sourceArtifactId: options.sourceArtifactId,
+          sourceArtifactTitle: options.sourceArtifactTitle,
+          sourceArtifactUrl: options.sourceArtifactUrl,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -4678,6 +4686,22 @@ export function VisualWorkbench() {
       return true;
     };
 
+    const getRerunSourceArtifactOptions = (
+      detail: GenerationFrameOutputActionDetail | undefined,
+      job?: PersistedGenerationJob | null
+    ) => {
+      const artifact =
+        (detail?.artifactId ? artifacts.find((item) => item.id === detail.artifactId) : undefined) ??
+        (job?.id ? artifacts.find((item) => item.jobId === job.id) : undefined) ??
+        (detail?.jobId ? artifacts.find((item) => item.jobId === detail.jobId) : undefined);
+
+      return {
+        sourceArtifactId: artifact?.id ?? detail?.artifactId,
+        sourceArtifactTitle: artifact?.title ?? detail?.title,
+        sourceArtifactUrl: artifact?.url ?? detail?.url,
+      };
+    };
+
     const handleRetry = (event: Event) => {
       const detail = readDetail(event);
       if (!detail?.jobId) {
@@ -4697,7 +4721,10 @@ export function VisualWorkbench() {
           return;
         }
         if (canRerunImageJob(job)) {
-          void handleRerunImageJob(job, { groupTitle: getStringValue(detail.group) });
+          void handleRerunImageJob(job, {
+            groupTitle: getStringValue(detail.group),
+            ...getRerunSourceArtifactOptions(detail, job),
+          });
           return;
         }
         if (canRetryJob(job)) {
@@ -4729,7 +4756,10 @@ export function VisualWorkbench() {
           if (canRetryImageJob(job)) {
             await handleRetryImageJob(job, { groupTitle: getStringValue(detail?.group) });
           } else if (canRerunImageJob(job)) {
-            await handleRerunImageJob(job, { groupTitle: getStringValue(detail?.group) });
+            await handleRerunImageJob(job, {
+              groupTitle: getStringValue(detail?.group),
+              ...getRerunSourceArtifactOptions(detail, job),
+            });
           } else {
             await handleRetryJob(job);
           }

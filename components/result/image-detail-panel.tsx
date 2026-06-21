@@ -84,6 +84,12 @@ export interface ImageDetailItem {
       reason?: string;
     }>;
   };
+  sourceVersion?: {
+    artifactId?: string;
+    jobId?: string;
+    title?: string;
+    url?: string;
+  };
   prevItem?: { id: string; title: string };
   nextItem?: { id: string; title: string };
 }
@@ -100,6 +106,7 @@ const ROLE_LABELS: Record<string, string> = {
   scene: "场景",
   style: "风格",
   copy: "文案",
+  previous: "上一版",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -344,6 +351,28 @@ export function ImageDetailPanel({
                   {item.diagnostics.providerHost && <Row label="host" value={String(item.diagnostics.providerHost)} />}
                   {item.diagnostics.summary && <Row label="summary" value={item.diagnostics.summary} />}
                 </dl>
+              </Section>
+            )}
+
+            {item.sourceVersion && (
+              <Section icon={RefreshCw} title="上一版来源">
+                <div className="flex gap-2 rounded-lg border border-warm-line bg-warm-bg p-2">
+                  {item.sourceVersion.url && (
+                    <ReferenceThumb
+                      reference={{
+                        role: "previous",
+                        title: item.sourceVersion.title || "上一版成片",
+                        url: item.sourceVersion.url,
+                        providerUsable: true,
+                      }}
+                    />
+                  )}
+                  <dl className="min-w-0 flex-1 space-y-1 text-xs">
+                    {item.sourceVersion.title && <Row label="原图" value={item.sourceVersion.title} />}
+                    {item.sourceVersion.artifactId && <Row label="artifact" value={item.sourceVersion.artifactId} />}
+                    {item.sourceVersion.jobId && <Row label="job" value={item.sourceVersion.jobId} />}
+                  </dl>
+                </div>
               </Section>
             )}
 

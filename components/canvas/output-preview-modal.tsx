@@ -135,6 +135,7 @@ export function OutputPreviewModal({
 }: OutputPreviewModalProps) {
   const outputPurposeLabel = getOutputPreviewPurposeLabel(item);
   const outputRatioLabel = getOutputPreviewRatioLabel(item.metadata ?? {});
+  const outputSourceVersion = getOutputPreviewSourceVersion(item.metadata ?? {});
   const canRetryOrEdit = Boolean(item.jobId || item.url);
   const retryTitle = item.jobId
     ? "立即重做当前图"
@@ -338,6 +339,12 @@ export function OutputPreviewModal({
               <div className="space-y-1 text-[11px] leading-4 text-warm-muted">
                 <div>用途：{outputPurposeLabel}</div>
                 <div>比例：{outputRatioLabel}</div>
+                {outputSourceVersion && (
+                  <div className="truncate">
+                    上一版：{outputSourceVersion.title}
+                    {outputSourceVersion.artifactId ? ` · ${outputSourceVersion.artifactId}` : ""}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -582,6 +589,24 @@ function getOutputPreviewRatioLabel(metadata: Record<string, unknown>): string {
     getOutputPreviewMetadataString(metadata, "size") ||
     "未记录"
   );
+}
+
+function getOutputPreviewSourceVersion(metadata: Record<string, unknown>): {
+  artifactId?: string;
+  title: string;
+} | null {
+  const title =
+    getOutputPreviewMetadataString(metadata, "rerunSourceArtifactTitle") ||
+    getOutputPreviewMetadataString(metadata, "rerunSourcePlanItemTitle") ||
+    getOutputPreviewMetadataString(metadata, "rerunSourceExportSpecTitle");
+  const artifactId = getOutputPreviewMetadataString(metadata, "rerunSourceArtifactId");
+  const jobId = getOutputPreviewMetadataString(metadata, "rerunOfJobId");
+
+  if (!title && !artifactId && !jobId) return null;
+  return {
+    artifactId,
+    title: title || "上一版成片",
+  };
 }
 
 function getOutputPreviewMetadataString(

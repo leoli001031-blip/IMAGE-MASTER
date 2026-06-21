@@ -15,6 +15,9 @@ interface RerunBody {
   title?: unknown;
   note?: unknown;
   groupTitle?: unknown;
+  sourceArtifactId?: unknown;
+  sourceArtifactTitle?: unknown;
+  sourceArtifactUrl?: unknown;
 }
 
 export async function POST(
@@ -63,6 +66,9 @@ export async function POST(
       now,
       note: getString(body.note),
       groupTitle: getString(body.groupTitle),
+      sourceArtifactId: getString(body.sourceArtifactId),
+      sourceArtifactTitle: getString(body.sourceArtifactTitle),
+      sourceArtifactUrl: getString(body.sourceArtifactUrl),
     });
 
     const rerunJob = await jobDB.add({
@@ -151,6 +157,9 @@ function buildRerunMetadata({
   now,
   note,
   groupTitle,
+  sourceArtifactId,
+  sourceArtifactTitle,
+  sourceArtifactUrl,
 }: {
   sourceJob: GenerationJob;
   title: string;
@@ -159,6 +168,9 @@ function buildRerunMetadata({
   now: string;
   note?: string;
   groupTitle?: string;
+  sourceArtifactId?: string;
+  sourceArtifactTitle?: string;
+  sourceArtifactUrl?: string;
 }): Record<string, unknown> {
   const base = stripGeneratedResultMetadata(sourceJob.metadata);
   const resultGroupTitle = groupTitle || getString(base.resultGroupTitle) || getString(base.rerunGroupTitle);
@@ -178,6 +190,9 @@ function buildRerunMetadata({
     rerunSourcePlanItemTitle: getString(base.planItemTitle),
     rerunSourceOutputSlotId: getString(base.outputSlotId),
     rerunSourceExportSpecTitle: getString(base.exportSpecTitle),
+    rerunSourceArtifactId: sourceArtifactId,
+    rerunSourceArtifactTitle: sourceArtifactTitle,
+    rerunSourceArtifactUrl: sourceArtifactUrl || sourceJob.resultUrl,
     rerunSourceStatus: sourceJob.status,
     rerunSourceResultUrl: sourceJob.resultUrl,
     source: getString(base.source) || "project-batch-result-rerun",

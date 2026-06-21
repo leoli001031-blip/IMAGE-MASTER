@@ -12,6 +12,9 @@ const retryImageRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/[id]
 const jobsRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/route.ts"), "utf8");
 const artifactsRouteSource = fs.readFileSync(path.join(root, "app/api/artifacts/route.ts"), "utf8");
 const jobRunnerSource = fs.readFileSync(path.join(root, "lib/store/job-runner.ts"), "utf8");
+const resultPageSource = fs.readFileSync(path.join(root, "app/result/page.tsx"), "utf8");
+const imageDetailPanelSource = fs.readFileSync(path.join(root, "components/result/image-detail-panel.tsx"), "utf8");
+const outputPreviewModalSource = fs.readFileSync(path.join(root, "components/canvas/output-preview-modal.tsx"), "utf8");
 
 assert.match(
   source,
@@ -204,13 +207,13 @@ assert.match(
 
 assert.match(
   source,
-  /const handleRerunImageJob = async \([\s\S]*options: \{ groupTitle\?: string \} = \{\}[\s\S]*groupTitle: options\.groupTitle/,
-  "rerun requests should accept the source group title so regenerated results can return to their group"
+  /const handleRerunImageJob = async \([\s\S]*groupTitle\?: string;[\s\S]*sourceArtifactId\?: string;[\s\S]*groupTitle: options\.groupTitle[\s\S]*sourceArtifactId: options\.sourceArtifactId/,
+  "rerun requests should accept the source group title and source artifact so regenerated results can return to their group"
 );
 assert.match(
   source,
-  /handleRerunImageJob\(job, \{ groupTitle: getStringValue\(detail\.group\) \}\)[\s\S]*handleRerunImageJob\(job, \{ groupTitle: getStringValue\(detail\?\.group\) \}\)/,
-  "single and grouped rerun paths should pass through the source group title"
+  /handleRerunImageJob\(job, \{[\s\S]*groupTitle: getStringValue\(detail\.group\)[\s\S]*\.\.\.getRerunSourceArtifactOptions\(detail, job\)[\s\S]*handleRerunImageJob\(job, \{[\s\S]*groupTitle: getStringValue\(detail\?\.group\)[\s\S]*\.\.\.getRerunSourceArtifactOptions\(detail, job\)/,
+  "single and grouped rerun paths should pass through the source group title and source artifact"
 );
 assert.match(
   source,
@@ -224,8 +227,8 @@ assert.match(
 );
 assert.match(
   rerunRouteSource,
-  /groupTitle\?: unknown[\s\S]*groupTitle: getString\(body\.groupTitle\)[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId/,
-  "rerun API should persist source group and original slot metadata"
+  /groupTitle\?: unknown[\s\S]*sourceArtifactId\?: unknown[\s\S]*groupTitle: getString\(body\.groupTitle\)[\s\S]*sourceArtifactId: getString\(body\.sourceArtifactId\)[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId[\s\S]*rerunSourceArtifactId[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl/,
+  "rerun API should persist source group, original slot, and source artifact metadata"
 );
 assert.match(
   rerunRouteSource,
@@ -244,24 +247,44 @@ assert.match(
 );
 assert.match(
   jobRunnerSource,
-  /generationResultTraceMetadataKeys[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId[\s\S]*rerunSourceExportSpecTitle/,
-  "job runner should carry rerun group trace metadata onto generated artifacts"
+  /generationResultTraceMetadataKeys[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId[\s\S]*rerunSourceExportSpecTitle[\s\S]*rerunSourceArtifactId[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl/,
+  "job runner should carry rerun group and source artifact trace metadata onto generated artifacts"
 );
 assert.match(
   artifactsRouteSource,
-  /resultGroupTitle: getString\(metadata\.resultGroupTitle\)[\s\S]*rerunGroupTitle: getString\(metadata\.rerunGroupTitle\)[\s\S]*rerunSourcePlanItemTitle/,
-  "artifact list summaries should expose rerun group trace metadata to the canvas"
+  /resultGroupTitle: getString\(metadata\.resultGroupTitle\)[\s\S]*rerunGroupTitle: getString\(metadata\.rerunGroupTitle\)[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceArtifactId[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl/,
+  "artifact list summaries should expose rerun group and source artifact trace metadata to the canvas"
 );
 assert.match(
   jobsRouteSource,
-  /resultGroupTitle: getString\(metadata\.resultGroupTitle\)[\s\S]*rerunGroupTitle: getString\(metadata\.rerunGroupTitle\)[\s\S]*rerunSourcePlanItemTitle/,
-  "job list summaries should expose rerun group trace metadata while reruns are queued"
+  /resultGroupTitle: getString\(metadata\.resultGroupTitle\)[\s\S]*rerunGroupTitle: getString\(metadata\.rerunGroupTitle\)[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceArtifactId[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl/,
+  "job list summaries should expose rerun group and source artifact trace metadata while reruns are queued"
 );
 
 assert.match(
   source,
-  /const handleRerunImageJob = async \([\s\S]*job: PersistedGenerationJob[\s\S]*\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/rerun[\s\S]*Created from canvas image detail with original references[\s\S]*已带原参考图加入队列/,
+  /const handleRerunImageJob = async \([\s\S]*job: PersistedGenerationJob[\s\S]*sourceArtifactId\?: string[\s\S]*\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/rerun[\s\S]*Created from canvas image detail with original references[\s\S]*sourceArtifactId: options\.sourceArtifactId[\s\S]*已带原参考图加入队列/,
   "canvas image detail should create a new version for completed Agent images through the rerun API"
+);
+assert.match(
+  source,
+  /const getRerunSourceArtifactOptions[\s\S]*sourceArtifactId: artifact\?\.id \?\? detail\?\.artifactId[\s\S]*sourceArtifactTitle: artifact\?\.title \?\? detail\?\.title[\s\S]*sourceArtifactUrl: artifact\?\.url \?\? detail\?\.url[\s\S]*handleRerunImageJob\(job, \{[\s\S]*\.\.\.getRerunSourceArtifactOptions\(detail, job\)/,
+  "canvas retry actions should pass the clicked source artifact into rerun jobs"
+);
+assert.match(
+  resultPageSource,
+  /sourceVersion: getResultSourceVersion\(metadata\)[\s\S]*function getResultSourceVersion[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl[\s\S]*rerunOfJobId/,
+  "result detail data should map rerun source metadata into a previous-version summary"
+);
+assert.match(
+  imageDetailPanelSource,
+  /sourceVersion\?: \{[\s\S]*title\?: string[\s\S]*url\?: string[\s\S]*上一版来源[\s\S]*ReferenceThumb[\s\S]*role: "previous"/,
+  "image detail panel should show the previous version source for rerun images"
+);
+assert.match(
+  outputPreviewModalSource,
+  /const outputSourceVersion = getOutputPreviewSourceVersion\(item\.metadata \?\? \{\}\)[\s\S]*上一版：\{outputSourceVersion\.title\}[\s\S]*function getOutputPreviewSourceVersion[\s\S]*rerunSourceArtifactTitle/,
+  "canvas image preview should show the previous version source for rerun images"
 );
 
 assert.match(

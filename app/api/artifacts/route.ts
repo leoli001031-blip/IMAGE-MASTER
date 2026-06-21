@@ -287,6 +287,9 @@ function summarizeArtifactMetadataForList(metadata: Record<string, unknown>): Re
     rerunSourcePlanItemTitle: getString(metadata.rerunSourcePlanItemTitle),
     rerunSourceOutputSlotId: getString(metadata.rerunSourceOutputSlotId),
     rerunSourceExportSpecTitle: getString(metadata.rerunSourceExportSpecTitle),
+    rerunSourceArtifactId: getString(metadata.rerunSourceArtifactId),
+    rerunSourceArtifactTitle: getString(metadata.rerunSourceArtifactTitle),
+    rerunSourceArtifactUrl: getString(metadata.rerunSourceArtifactUrl),
     assetInvocationPlan: summarizeAssetInvocationPlan(metadata.assetInvocationPlan),
     assetInvocationPlanner: isPlainObject(metadata.assetInvocationPlanner)
       ? {
