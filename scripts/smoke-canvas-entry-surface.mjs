@@ -38,8 +38,8 @@ assert.doesNotMatch(
 );
 assert.match(
   source,
-  /你可以直接说“不要这组”“这类少两张”“这张重做”；Agent 会先改计划，再执行。/,
-  "Agent panel should explain the natural-language plan editing path"
+  /agentInputHelperText[\s\S]*删组、加组、改数量、改比例或改画面文字/,
+  "Agent panel should explain the natural-language plan editing path with scoped helper copy"
 );
 assert.match(
   source,
@@ -335,6 +335,16 @@ assert.match(
   source,
   /<div className="shrink-0 space-y-2\.5 border-t border-warm-line\/50 bg-warm-paper\/95 p-3">[\s\S]*<textarea[\s\S]*placeholder=\{planInputPlaceholder\}[\s\S]*<AgentProgressSteps steps=\{progressSteps\} jobMessage=\{jobMessage\} \/>[\s\S]*\{primaryLabel\}/,
   "Agent input, progress, and primary action should stay in a fixed footer instead of being pushed below the plan board"
+);
+assert.match(
+  source,
+  /const planInputPlaceholder = editTarget[\s\S]*focusedPlanGroup[\s\S]*workflowPlanPreview[\s\S]*不要小红书封面[\s\S]*加两张商场场景/,
+  "Agent input placeholder should prefer single-image and scoped-group context before generic plan-edit examples"
+);
+assert.match(
+  source,
+  /const agentInputHelperText = editTarget[\s\S]*当前只修改这张图[\s\S]*focusedPlanGroup[\s\S]*当前只调整这组[\s\S]*workflowPlanPreview[\s\S]*可以直接删组、加组、改数量、改比例或改画面文字/,
+  "Agent footer helper should explain the current edit scope instead of showing one generic instruction"
 );
 assert.match(
   source,

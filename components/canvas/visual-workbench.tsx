@@ -9131,13 +9131,22 @@ function CanvasAgentPanel({
     focusedGroupHint,
     completionSummary,
   });
-  const planInputPlaceholder = workflowPlanPreview
-    ? "直接说怎么改计划，比如：整套只要 6 张，海报标题改成暖意随身，主图改 4:5。"
-    : editTarget
-      ? "比如：把背景换成室外街拍，人物表情更自然，保留产品和构图。"
-      : focusedPlanGroup
-        ? "比如：这组动作太重复，换一批姿势；或这组改成商场场景。"
-      : "说你要做什么，比如：羽绒服，淘宝详情页，雪山场景，带模特。";
+  const planInputPlaceholder = editTarget
+    ? "比如：把背景换成室外街拍，人物表情更自然，保留产品和构图。"
+    : focusedPlanGroup
+      ? "比如：这组只留 2 张；动作太重复，换一批姿势；这组改成商场场景。"
+      : workflowPlanPreview
+        ? "比如：不要小红书封面；加两张商场场景；海报标题改成暖意随身。"
+        : "说你要做什么，比如：羽绒服，淘宝详情页，雪山场景，带模特。";
+  const agentInputHelperText = editTarget
+    ? "当前只修改这张图；原参考图、比例、用途和文案策略会带回。"
+    : focusedPlanGroup
+      ? "当前只调整这组；可以说只留几张、换动作、换场景、改烧字策略。"
+      : workflowPlanPreview
+        ? "可以直接删组、加组、改数量、改比例或改画面文字；未提到的图组保持不变。"
+        : visibleOutputCount > 0
+          ? "生成后可以说保留、淘汰、标待重做，也可以点一张图继续改。"
+          : "素材从素材库进入；需求在这里说，Agent 会先出计划再执行。";
   const criticalGapHistoryText = criticalGapItems
     .slice(0, 3)
     .map((item) => `${item.label}：${item.text}`)
@@ -9913,7 +9922,7 @@ function CanvasAgentPanel({
           />
 
           <p className="text-[11px] leading-4 text-warm-muted">
-            你可以直接说“不要这组”“这类少两张”“这张重做”；Agent 会先改计划，再执行。
+            {agentInputHelperText}
           </p>
 
           <AgentProgressSteps steps={progressSteps} jobMessage={jobMessage} />
@@ -10223,7 +10232,7 @@ function AgentPlanBoard({
         )}
       </div>
       <div className="mt-2 rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
-        想改就直接说：整套只要 6 张、海报标题改成暖意随身、主图改 4:5。
+        想改就直接说：不要小红书封面、加两张商场场景、海报标题改成暖意随身、主图改 4:5。
       </div>
     </div>
   );
@@ -11642,8 +11651,8 @@ function buildAgentConversationMessages({
     title: workflowPlanPreview ? "Agent 理解" : editTarget ? "Agent 修改目标" : "Agent 准备",
     text: workflowPlanPreview
       ? planFallbackReason
-        ? `我先把需求整理成 ${workflowPlanPreview.estimatedCount} 张基础制作清单。${planFallbackReason}。你可以继续修改数量、图组、比例和文案策略。`
-        : `我已把需求拆成 ${workflowPlanPreview.estimatedCount} 张制作清单。你可以继续说要删哪组、加哪组、文案要不要进图。`
+        ? `我先把需求整理成 ${workflowPlanPreview.estimatedCount} 张基础制作清单。${planFallbackReason}。你可以继续删组、加组、改数量、比例和文案策略。`
+        : `我已把需求拆成 ${workflowPlanPreview.estimatedCount} 张制作清单。你可以继续说删哪组、加几张场景、改标题或文案要不要进图。`
       : agentUnderstanding,
   });
 
