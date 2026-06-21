@@ -9215,6 +9215,10 @@ function CanvasAgentPanel({
     matrixItems,
     activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
   });
+  const showReviewSuggestionEmptyState =
+    canShowResultReviewAssistant &&
+    visibleOutputCount > 0 &&
+    executableReviewSuggestions.length === 0;
   const executableReviewSuggestionIds = executableReviewSuggestions.map((suggestion) => suggestion.id).join("|");
   useEffect(() => {
     if (!canShowResultReviewAssistant) {
@@ -9888,6 +9892,13 @@ function CanvasAgentPanel({
               suggestions={executableReviewSuggestions}
               executedActions={executedReviewSuggestionActions}
               onAction={handleAgentReviewSuggestionAction}
+            />
+          )}
+          {showReviewSuggestionEmptyState && (
+            <AgentReviewSuggestionEmptyState
+              filter={resultReviewFilter}
+              count={reviewSuggestionArtifacts.length}
+              onShowAll={() => onShowResultReviewFilter?.("all")}
             />
           )}
           {qaSummaryItems.length > 0 && (
@@ -10835,6 +10846,48 @@ function AgentReviewSuggestionCards({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function AgentReviewSuggestionEmptyState({
+  filter,
+  count,
+  onShowAll,
+}: {
+  filter: ResultReviewFilter;
+  count: number;
+  onShowAll: () => void;
+}) {
+  const label = getResultReviewFilterLabel(filter);
+  const isFiltered = filter !== "all";
+  const title = isFiltered
+    ? `当前「${label}」没有可执行建议`
+    : "当前没有需要优先处理的建议";
+  const body = count > 0
+    ? "这批结果已经没有明显的优先动作；可以点开单张检查，或直接用输入框说要怎么处理。"
+    : "当前筛选没有命中结果；可以显示全部继续挑图。";
+
+  return (
+    <div
+      className="rounded-lg border border-dashed border-warm-line/70 bg-warm-bg px-3 py-2 text-[11px] leading-4"
+      data-testid="agent-review-suggestion-empty"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium text-warm-ink">{title}</div>
+          <div className="mt-0.5 text-warm-muted">{body}</div>
+        </div>
+        {isFiltered && (
+          <button
+            type="button"
+            className="shrink-0 rounded-md border border-warm-line/60 bg-warm-paper px-2 py-1 text-[10px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+            onClick={onShowAll}
+          >
+            显示全部
+          </button>
+        )}
+      </div>
     </div>
   );
 }

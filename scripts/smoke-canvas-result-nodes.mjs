@@ -402,6 +402,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /showReviewSuggestionEmptyState[\s\S]*executableReviewSuggestions\.length === 0[\s\S]*<AgentReviewSuggestionEmptyState[\s\S]*filter=\{resultReviewFilter\}[\s\S]*count=\{reviewSuggestionArtifacts\.length\}[\s\S]*onShowAll=\{\(\) => onShowResultReviewFilter\?\.\("all"\)\}[\s\S]*function AgentReviewSuggestionEmptyState[\s\S]*当前「\$\{label\}」没有可执行建议[\s\S]*data-testid="agent-review-suggestion-empty"[\s\S]*显示全部/,
+  "Agent review assistant should explain empty suggestion states and offer to show all results"
+);
+assert.match(
+  workbenchSource,
   /AgentReviewSuggestionCards[\s\S]*getAgentReviewSuggestionImpactItems\(suggestion\)[\s\S]*\{item\.label\}[\s\S]*\{item\.text\}[\s\S]*function getAgentReviewSuggestionImpactItems[\s\S]*只影响这张结果图[\s\S]*只影响「\$\{suggestion\.groupTitle\}」\$\{count\} 张待处理图[\s\S]*已保留\/已淘汰和其他图组不动/,
   "Agent review suggestion cards should show what each executable suggestion affects before the user clicks"
 );
