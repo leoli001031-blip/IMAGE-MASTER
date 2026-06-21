@@ -2981,6 +2981,24 @@ export function VisualWorkbench() {
       setComposeMessage(`正在打开「${group.title}」这一组 ${urls.length} 张图所在文件夹。`);
       return;
     }
+    if (getAgentResultGroupVisualQaIntent(brief)) {
+      const qaArtifacts = sourceArtifacts.filter(
+        (artifact) => artifact.id && artifact.url && !isAgentArtifactFailed(artifact)
+      );
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (qaArtifacts.length === 0) {
+        setComposeMessage(`「${group.title}」没有可执行视觉 QA 的成片。`);
+        return;
+      }
+      setHighlightedArtifactGroupTitle(group.title);
+      setComposeMessage(`正在用 Agent 审核「${group.title}」这一组 ${qaArtifacts.length} 张图...`);
+      for (const artifact of qaArtifacts) {
+        await handleRunArtifactVisualQa(artifact.id);
+      }
+      setComposeMessage(`已完成「${group.title}」这一组 ${qaArtifacts.length} 张图的视觉 QA。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (sourceArtifacts.length === 0) {
@@ -12170,6 +12188,13 @@ function getAgentImageVisualQaIntent(text: string): boolean {
   if (!compactText) return false;
   if (/(待检查|未检查|没检查|标记|状态|设为|改成|改为|回到|恢复)/.test(compactText)) return false;
   return /(?:(跑|做|执行|开始|重新|再|帮我)?(视觉)?(qa|质检|审核))(这张|当前)?(图|图片|结果)?|(?:检查)(这张|当前)(图|图片|结果)?|(?:这张|当前)(图|图片|结果)?(检查|质检|审核)|(?:商品|模特|光影|文案)(一致性|安全区)?(检查|质检|审核)/i.test(compactText);
+}
+
+function getAgentResultGroupVisualQaIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  if (/(待检查|未检查|没检查|标记|状态|设为|改成|改为|回到|恢复)/.test(compactText)) return false;
+  return /(?:(跑|做|执行|开始|重新|再|帮我)?(视觉)?(qa|质检|审核))(这组|本组|这一组|当前组|这批|这一批|当前这组)?(图|图片|结果)?|(?:检查)(这组|本组|这一组|当前组|这批|这一批|当前这组)(图|图片|结果)?|(?:这组|本组|这一组|当前组|这批|这一批|当前这组)(图|图片|结果)?(检查|质检|审核)|(?:商品|模特|光影|文案)(一致性|安全区)?(检查|质检|审核)(这组|本组|这一组|当前组|这批|这一批|当前这组)?/i.test(compactText);
 }
 
 function getAgentImageRetryIntent(text: string): boolean {

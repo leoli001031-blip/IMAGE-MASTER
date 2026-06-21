@@ -522,8 +522,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupOpenFolderIntent\(brief\)[\s\S]*urls = sourceArtifacts[\s\S]*image-master:generation-frame-output-open-folder[\s\S]*urls,[\s\S]*artifactIds: sourceArtifacts\.map[\s\S]*正在打开「\$\{group\.title\}」这一组 \$\{urls\.length\} 张图所在文件夹[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupOpenFolderIntent\(brief\)[\s\S]*urls = sourceArtifacts[\s\S]*image-master:generation-frame-output-open-folder[\s\S]*urls,[\s\S]*artifactIds: sourceArtifacts\.map[\s\S]*正在打开「\$\{group\.title\}」这一组 \$\{urls\.length\} 张图所在文件夹[\s\S]*return[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)/,
   "focused result-group chat should open the selected group folder before falling through to picking or revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*正在用 Agent 审核「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图[\s\S]*for \(const artifact of qaArtifacts\)[\s\S]*await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*已完成「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图的视觉 QA[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused result-group chat should run visual QA for the selected group before falling through to picking or revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -615,6 +620,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageVisualQaIntent[\s\S]*待检查\|未检查\|没检查\|标记\|状态[\s\S]*return false[\s\S]*qa\|质检\|审核[\s\S]*检查\)\(这张\|当前\)/i,
   "single-image visual QA intent should avoid review-state wording and require explicit QA or check wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentResultGroupVisualQaIntent[\s\S]*待检查\|未检查\|没检查\|标记\|状态[\s\S]*return false[\s\S]*qa\|质检\|审核[\s\S]*这组\|本组\|这一组\|当前组/,
+  "result-group visual QA intent should avoid review-state wording and require explicit group QA wording"
 );
 assert.match(
   workbenchSource,
