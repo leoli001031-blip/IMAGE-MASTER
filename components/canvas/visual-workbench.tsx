@@ -19142,6 +19142,26 @@ function applyAgentNaturalLanguagePlanEdit({
     for (const edit of countEdits) {
       const beforeItems = nextItems.length;
       const beforeMatrix = nextMatrix.length;
+      const currentCount = getAgentPlanTargetCount({
+        items: nextItems,
+        matrix: nextMatrix,
+        editsUseMatrix,
+        target: edit.target,
+      });
+      if (currentCount === 0 && edit.count > 0) {
+        const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
+        const added = createAgentPlanItemsForNewTarget({
+          target: edit.target,
+          count: edit.count,
+          instruction,
+          existingItems: nextItems,
+          existingMatrix: nextMatrix,
+        });
+        nextItems = [...nextItems, ...added.items];
+        if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
+        changes.push(`新增${edit.target.label} ${edit.count} 张${instruction ? `，方向：${instruction}` : ""}`);
+        continue;
+      }
       if (editsUseMatrix) {
         nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, edit.count);
       } else {
@@ -19200,8 +19220,8 @@ function applyAgentNaturalLanguagePlanEdit({
       changes.push(`整套计划改为 ${globalTotalCountEdit.count} 张`);
     }
 
-    const copyEdit = getAgentPlanCopyEdit(text);
-    if (copyEdit) {
+    const copyEdits = getAgentPlanCopyEdits(text);
+    for (const copyEdit of copyEdits) {
       nextMatrix = nextMatrix.map((item) =>
         copyEdit.targets.length === 0 || copyEdit.targets.some((target) => agentPlanMatrixItemMatchesTarget(item, target))
           ? { ...item, copyMode: copyEdit.mode }
@@ -20212,6 +20232,33 @@ function getAgentPlanGlobalTotalCountEdit(text: string): { count: number } | nul
   return null;
 }
 
+function getAgentPlanCopyEdits(text: string): Array<{ mode: "burn_in" | "layout_layer"; targets: AgentPlanEditTarget[] }> {
+  const compactText = text.replace(/\s+/g, "");
+  const wantsNoBurn = hasLocalKeywordIntent(text, ["烧字", "烧进", "进图", "带字", "出字"], ["不", "别", "不要", "无需", "不需要"]);
+  const wantsBurn =
+    /(烧字|烧进|进图|带字|出字|文案.*图)/.test(compactText) ||
+    ((compactText.includes("文案") || compactText.includes("文字")) && /(烧|进图|带字|出字)/.test(compactText));
+  if (wantsBurn && wantsNoBurn) {
+    const noBurnTargets = agentPlanEditTargets.filter((target) =>
+      targetHasLocalIntent(text, target, ["图层", "不进图", "不入图", "不烧字", "不烧进", "后期改字", "可编辑", "文案", "文字"])
+    );
+    const noBurnTargetIds = new Set(noBurnTargets.map((target) => target.id));
+    const burnTargets = agentPlanEditTargets.filter((target) =>
+      !noBurnTargetIds.has(target.id) &&
+      targetHasLocalIntent(text, target, ["烧字", "烧进", "进图", "带字", "出字"])
+    );
+    const burnTargetIds = new Set(burnTargets.map((target) => target.id));
+    const layerTargets = noBurnTargets.filter((target) => !burnTargetIds.has(target.id));
+    const edits = [
+      burnTargets.length > 0 ? { mode: "burn_in" as const, targets: burnTargets } : null,
+      layerTargets.length > 0 ? { mode: "layout_layer" as const, targets: layerTargets } : null,
+    ].filter((item): item is { mode: "burn_in" | "layout_layer"; targets: AgentPlanEditTarget[] } => Boolean(item));
+    if (edits.length > 0) return edits;
+  }
+  const edit = getAgentPlanCopyEdit(text);
+  return edit ? [edit] : [];
+}
+
 function getAgentPlanCopyEdit(text: string): { mode: "burn_in" | "layout_layer"; targets: AgentPlanEditTarget[] } | null {
   const compactText = text.replace(/\s+/g, "");
   const wantsNoBurn = hasLocalKeywordIntent(text, ["烧字", "烧进", "进图", "带字", "出字"], ["不", "别", "不要", "无需", "不需要"]);
@@ -20725,6 +20772,12 @@ function agentPlanPreviewItemMatchesTarget(item: WorkflowPlanPreviewItem, target
   if (target.id === "detail" && /(海报|poster|cover|hero|收尾|scene|场景|主图|静物|still|模特|真人|人物|上身|穿搭|model)/i.test(text)) {
     return false;
   }
+  if (target.id === "poster" && /(detail|细节|详情|材质|特写|结构|工艺|main|主图|scene|场景|model|模特|真人|收尾|closing)/i.test(text)) {
+    return false;
+  }
+  if (target.id === "model" && /(scene|场景|detail|细节|详情|海报|poster|cover|收尾|closing|main|主图)/i.test(text)) {
+    return false;
+  }
   return target.keywords.some((keyword) => text.includes(keyword.toLowerCase()));
 }
 
@@ -20745,6 +20798,12 @@ function agentPlanMatrixItemMatchesTarget(
     return true;
   }
   if (target.id === "detail" && /(海报|poster|cover|hero|closing|收尾|scene|场景|主图|静物|still|模特|真人|人物|上身|穿搭|model)/i.test(text)) {
+    return false;
+  }
+  if (target.id === "poster" && /(detail|细节|详情|材质|特写|结构|工艺|main|主图|scene|场景|model|模特|真人|closing|收尾)/i.test(text)) {
+    return false;
+  }
+  if (target.id === "model" && /(scene|场景|detail|细节|详情|海报|poster|cover|closing|收尾|main|主图)/i.test(text)) {
     return false;
   }
   return target.keywords.some((keyword) => text.includes(keyword.toLowerCase()));

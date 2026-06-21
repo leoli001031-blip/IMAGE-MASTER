@@ -823,13 +823,28 @@ assert.match(
 );
 assert.match(
   source,
+  /currentCount === 0 && edit\.count > 0[\s\S]*createAgentPlanItemsForNewTarget[\s\S]*新增\$\{edit\.target\.label\} \$\{edit\.count\} 张/,
+  "absolute plan count edits should also create a missing target group instead of silently doing nothing"
+);
+assert.match(
+  source,
   /function createAgentPlanItemsForNewTarget[\s\S]*buildAgentPlanNewTargetPurpose[\s\S]*getAgentPlanNewTargetReferenceRoles/,
   "newly added plan groups should carry purpose, ratio, reference roles, and copy strategy"
 );
 assert.match(
   source,
+  /function getAgentPlanCopyEdits[\s\S]*wantsBurn && wantsNoBurn[\s\S]*noBurnTargets[\s\S]*noBurnTargetIds[\s\S]*!noBurnTargetIds\.has\(target\.id\)[\s\S]*layerTargets[\s\S]*getAgentPlanCopyEdit\(text\)/,
+  "mixed copy instructions should support burn-in posters and layout-layer detail copy in the same edit without treating no-burn targets as burn-in"
+);
+assert.match(
+  source,
   /if \(target\.id === "detail" && \/\(海报\|poster\|cover\|hero\|收尾\|scene\|场景\|主图\|静物\|still\|模特\|真人\|人物\|上身\|穿搭\|model\)/,
   "detail plan edits should not accidentally absorb model display or scene groups"
+);
+assert.match(
+  source,
+  /target\.id === "poster"[\s\S]*detail\|细节\|详情[\s\S]*return false[\s\S]*target\.id === "model"[\s\S]*scene\|场景[\s\S]*return false/,
+  "poster and model plan edits should not be polluted by detail or scene text"
 );
 assert.match(
   source,
