@@ -11,6 +11,7 @@ import {
   Info,
   RefreshCw,
   Save,
+  Wand2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
@@ -135,6 +136,7 @@ interface ImageDetailPanelProps {
   onClose: () => void;
   onNavigate?: (item: { id: string; title: string }) => void;
   onDownload?: (item: ImageDetailItem) => void;
+  onEdit?: (item: ImageDetailItem) => void;
   onRetry?: (item: ImageDetailItem) => void;
   onSaveAsAsset?: (item: ImageDetailItem) => void;
   onOpenFolder?: (item: ImageDetailItem) => void;
@@ -146,6 +148,7 @@ export function ImageDetailPanel({
   onClose,
   onNavigate,
   onDownload,
+  onEdit,
   onRetry,
   onSaveAsAsset,
   onOpenFolder,
@@ -476,6 +479,9 @@ export function ImageDetailPanel({
             <div className="mt-auto flex flex-wrap gap-2 border-t border-warm-line pt-4">
               {onDownload && (
                 <ActionBtn icon={Download} label="下载" onClick={() => onDownload(item)} />
+              )}
+              {onEdit && item.url && (
+                <ActionBtn icon={Wand2} label="让 Agent 改" onClick={() => onEdit(item)} />
               )}
               {onRetry && (
                 <ActionBtn icon={RefreshCw} label="重做" onClick={() => onRetry(item)} />

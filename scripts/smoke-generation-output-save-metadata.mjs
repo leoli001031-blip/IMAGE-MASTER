@@ -78,6 +78,11 @@ assert.match(
   /onSaveAsAsset\?: \(item: ImageDetailItem\) => void;[\s\S]*<ActionBtn icon=\{Save\} label="存为资产"/,
   "shared image detail panel should expose save-as-asset only inside the detail surface"
 );
+assert.match(
+  imageDetailPanelSource,
+  /onEdit\?: \(item: ImageDetailItem\) => void;[\s\S]*Wand2[\s\S]*label="让 Agent 改"/,
+  "shared image detail panel should expose a handoff action for Agent single-image edits"
+);
 
 assert.match(
   imageDetailPanelSource,
@@ -125,6 +130,16 @@ assert.match(
   resultPageSource,
   /resolveGenerationOutputAssetTarget[\s\S]*handleSaveAsAsset[\s\S]*fetch\("\/api\/assets"[\s\S]*source: "result-page-save"[\s\S]*savedAssetType: saveTarget\.savedAssetType/,
   "result page details should save generated images back into the asset library with trace metadata"
+);
+assert.match(
+  resultPageSource,
+  /writePendingResultEditTarget[\s\S]*prompt: sourceImage\.prompt \|\| getMetadataString\(metadata, "prompt"\)[\s\S]*router\.push\("\/canvas\?restore=1&editResult=1"\)/,
+  "result page detail edits should hand off the selected image, prompt, and metadata to the canvas Agent"
+);
+assert.match(
+  workbenchSource,
+  /takePendingResultEditTarget\(\)[\s\S]*setAgentImageEditTarget\(target\)[\s\S]*已从结果页带入/,
+  "canvas Agent should restore a pending result-page edit target"
 );
 
 assert.match(

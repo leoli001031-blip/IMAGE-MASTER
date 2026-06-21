@@ -18,6 +18,7 @@ import {
 import { JobCard } from "@/components/ui/job-card";
 import { StatusBean } from "@/components/ui/status-bean";
 import { resolveGenerationOutputAssetTarget } from "@/lib/canvas/generation-output-asset-target";
+import { writePendingResultEditTarget } from "@/lib/canvas/result-edit-target-storage";
 import type { GeneratedImage } from "@/lib/types";
 
 export default function ResultPage() {
@@ -317,6 +318,33 @@ export default function ResultPage() {
     }
   };
 
+  const handleEditInCanvas = (img: GeneratedImage) => {
+    const sourceImage = activeImages.find((item) => item.id === img.id) || img;
+    if (!sourceImage.url) {
+      showToast("这张图还没有可修改的大图");
+      return;
+    }
+
+    const metadata = getImageMetadata(sourceImage);
+    const stored = writePendingResultEditTarget({
+      url: sourceImage.url,
+      title: sourceImage.title || sourceImage.copyText || sourceImage.type || "成片",
+      outputId: sourceImage.id,
+      artifactId: getMetadataString(metadata, "artifactId"),
+      jobId: getImageJobId(sourceImage),
+      status: sourceImage.error ? "failed" : getMetadataString(metadata, "status") || "done",
+      prompt: sourceImage.prompt || getMetadataString(metadata, "prompt"),
+      metadata,
+    });
+    if (!stored) {
+      showToast("无法带入这张图，请回到画布后重新选择");
+      return;
+    }
+
+    showToast("已带入这张图，正在打开画布 Agent");
+    router.push("/canvas?restore=1&editResult=1");
+  };
+
   const handleBackToGenerate = () => {
     useGenerateStore.getState().reset();
     router.push("/canvas");
@@ -446,6 +474,10 @@ export default function ResultPage() {
           onDownload={(item) => {
             const source = displayImages.find((image) => image.id === item.id);
             if (source) void handleDownload(source);
+          }}
+          onEdit={(item) => {
+            const source = displayImages.find((image) => image.id === item.id);
+            if (source) handleEditInCanvas(source);
           }}
           onRetry={(item) => {
             const source = displayImages.find((image) => image.id === item.id);

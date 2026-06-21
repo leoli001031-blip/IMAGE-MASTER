@@ -139,6 +139,7 @@ import {
 } from "@/lib/canvas/generation-frame";
 import { resolveGenerationFrameRunRule } from "@/lib/canvas/generation-frame-action-registry";
 import { resolveGenerationOutputAssetTarget } from "@/lib/canvas/generation-output-asset-target";
+import { takePendingResultEditTarget } from "@/lib/canvas/result-edit-target-storage";
 import { buildStructuredCopyBrief, normalizeStructuredCopyBrief } from "@/lib/canvas/copy-brief";
 import { WorkflowNode } from "@/components/canvas/workflow-node";
 import type { CanvasFlowNode } from "@/components/canvas/workflow-node";
@@ -1489,6 +1490,18 @@ export function VisualWorkbench() {
     if (!hasActiveBackgroundJob) return;
     setJobMessage((message) => message || "任务生成中，正在等待产物回填");
   }, [hasActiveBackgroundJob]);
+
+  useEffect(() => {
+    const target = takePendingResultEditTarget();
+    if (!target) return;
+    setOutputPreview(null);
+    setAgentImageEditTarget(target);
+    setAgentPanelCollapsed(false);
+    setComposeBrief("");
+    setWorkflowPlanPreview(null);
+    setPendingWorkflowDraft(null);
+    setComposeMessage(`已从结果页带入「${target.title}」，直接说要怎么改。`);
+  }, []);
 
   useEffect(() => {
     let alive = true;
