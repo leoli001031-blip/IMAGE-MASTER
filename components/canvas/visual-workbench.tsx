@@ -4761,7 +4761,7 @@ export function VisualWorkbench() {
       }
       if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
       setComposeMessage(`按原上下文重做「${groupTitle}」；其他已保留图片不受影响。`);
-      handleRetryAll(new CustomEvent("image-master:generation-frame-output-retry-all", { detail: { jobIds } }));
+      handleRetryAll(new CustomEvent("image-master:generation-frame-output-retry-all", { detail: { jobIds, group: groupTitle } }));
     };
 
     const handleSave = (event: Event) => {

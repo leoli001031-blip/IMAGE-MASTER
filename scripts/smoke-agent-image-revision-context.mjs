@@ -203,6 +203,11 @@ assert.match(
   "single and grouped rerun paths should pass through the source group title"
 );
 assert.match(
+  source,
+  /handleGroupRetry[\s\S]*groupTitle[\s\S]*handleRetryAll\(new CustomEvent\("image-master:generation-frame-output-retry-all", \{ detail: \{ jobIds, group: groupTitle \} \}\)\)/,
+  "Agent group redo should preserve the group title when forwarding to retry-all"
+);
+assert.match(
   rerunRouteSource,
   /groupTitle\?: unknown[\s\S]*groupTitle: getString\(body\.groupTitle\)[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId/,
   "rerun API should persist source group and original slot metadata"
