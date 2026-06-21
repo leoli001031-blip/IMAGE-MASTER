@@ -9199,6 +9199,9 @@ function CanvasAgentPanel({
     activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
     activeFilter: resultReviewFilter,
   });
+  const reviewSuggestionArtifacts = canShowResultReviewAssistant
+    ? getAgentReviewArtifactsForFilter(visibleArtifacts, resultReviewFilter)
+    : [];
   const qaSummaryItems = buildAgentQaSummaryItems({
     visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
     visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
@@ -9207,7 +9210,7 @@ function CanvasAgentPanel({
     matrixItems,
   });
   const executableReviewSuggestions = buildAgentExecutableReviewSuggestions({
-    visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
+    visibleArtifacts: reviewSuggestionArtifacts,
     planGroups,
     matrixItems,
     activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
@@ -13081,9 +13084,7 @@ function buildAgentReviewProgressSummary({
   activeFilter: ResultReviewFilter;
 }): AgentReviewProgressSummary | null {
   if (activeJobCount > 0 || visibleArtifacts.length === 0) return null;
-  const scopedArtifacts = activeFilter === "all"
-    ? visibleArtifacts
-    : visibleArtifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, activeFilter));
+  const scopedArtifacts = getAgentReviewArtifactsForFilter(visibleArtifacts, activeFilter);
   if (scopedArtifacts.length === 0) return null;
   const scopeLabel = activeFilter === "all" ? "" : getResultReviewFilterLabel(activeFilter);
   let approved = 0;
@@ -13126,6 +13127,15 @@ function buildAgentReviewProgressSummary({
     percent,
     helper,
   };
+}
+
+function getAgentReviewArtifactsForFilter(
+  artifacts: PersistedGeneratedArtifact[],
+  filter: ResultReviewFilter
+): PersistedGeneratedArtifact[] {
+  return filter === "all"
+    ? artifacts
+    : artifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, filter));
 }
 
 function isAgentArtifactFailed(artifact: PersistedGeneratedArtifact): boolean {

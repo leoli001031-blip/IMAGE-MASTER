@@ -392,8 +392,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /reviewProgressSummary = buildAgentReviewProgressSummary[\s\S]*activeFilter: resultReviewFilter[\s\S]*<AgentReviewProgress summary=\{reviewProgressSummary\} \/>[\s\S]*function AgentReviewProgress[\s\S]*data-testid="agent-review-progress"[\s\S]*summary\.scopeLabel \? `\$\{summary\.scopeLabel\}进度` : "挑图进度"[\s\S]*QA 风险 \{summary\.risk\}[\s\S]*function buildAgentReviewProgressSummary[\s\S]*activeFilter: ResultReviewFilter[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*scopeLabel = activeFilter === "all" \? "" : getResultReviewFilterLabel\(activeFilter\)[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*isArtifactVisualQaRisk\(artifact\)/,
+  /reviewProgressSummary = buildAgentReviewProgressSummary[\s\S]*activeFilter: resultReviewFilter[\s\S]*<AgentReviewProgress summary=\{reviewProgressSummary\} \/>[\s\S]*function AgentReviewProgress[\s\S]*data-testid="agent-review-progress"[\s\S]*summary\.scopeLabel \? `\$\{summary\.scopeLabel\}进度` : "挑图进度"[\s\S]*QA 风险 \{summary\.risk\}[\s\S]*function buildAgentReviewProgressSummary[\s\S]*activeFilter: ResultReviewFilter[\s\S]*getAgentReviewArtifactsForFilter\(visibleArtifacts, activeFilter\)[\s\S]*scopeLabel = activeFilter === "all" \? "" : getResultReviewFilterLabel\(activeFilter\)[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*isArtifactVisualQaRisk\(artifact\)/,
   "Agent review assistant should show filtered pick progress before executable suggestions"
+);
+assert.match(
+  workbenchSource,
+  /reviewSuggestionArtifacts = canShowResultReviewAssistant[\s\S]*getAgentReviewArtifactsForFilter\(visibleArtifacts, resultReviewFilter\)[\s\S]*buildAgentExecutableReviewSuggestions\(\{[\s\S]*visibleArtifacts: reviewSuggestionArtifacts[\s\S]*function getAgentReviewArtifactsForFilter[\s\S]*filter === "all"[\s\S]*artifactMatchesResultReviewFilter\(artifact, filter\)/,
+  "Agent executable suggestions should be generated from the active result-review filter subset"
 );
 assert.match(
   workbenchSource,
