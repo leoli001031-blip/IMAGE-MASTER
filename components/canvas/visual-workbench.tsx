@@ -3058,11 +3058,17 @@ export function VisualWorkbench() {
     const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief);
     if (targets.length === 0) {
       setAgentLastUserBrief(brief);
+      setComposeBrief("");
       setComposeMessage(`当前结果墙里没有找到可处理的${scopeLabel}。`);
       return true;
     }
 
     const targetIds = targets.map((artifact) => artifact.id);
+    setAgentLastUserBrief(brief);
+    setComposeBrief("");
+    setComposeMessage(
+      `正在把 ${targetIds.length} 张${scopeLabel}标记为${getArtifactReviewStatusLabel(reviewStatus)}...`
+    );
     const filter = getResultReviewFilterForArtifactReviewStatus(reviewStatus);
     if (filter) {
       setResultReviewFilter(filter);
@@ -3073,11 +3079,9 @@ export function VisualWorkbench() {
       reviewStatus,
       `Agent 自然语言批量挑图：${brief}`
     );
-    setAgentLastUserBrief(brief);
     setComposeMessage(
       `已把 ${targetIds.length} 张${scopeLabel}标记为${getArtifactReviewStatusLabel(reviewStatus)}；只影响当前结果墙。`
     );
-    setComposeBrief("");
     return true;
   };
 
@@ -8852,6 +8856,7 @@ function CanvasAgentPanel({
         ? productLabel
         : "说需求，Agent 出计划";
   const hasEditTarget = Boolean(editTarget?.url);
+  const canApplyResultReviewCommand = !hasEditTarget && visibleOutputCount > 0 && activeJobCount === 0;
   const [showAgentPlanAdvanced, setShowAgentPlanAdvanced] = useState(false);
   const [focusedPlanGroup, setFocusedPlanGroup] = useState<AgentPlanGroup | null>(null);
   const hasFocusedGroupContext = Boolean(focusedPlanGroup && !hasEditTarget);
@@ -8904,7 +8909,7 @@ function CanvasAgentPanel({
     ? onComposeWorkflow
       : onComposeWorkflow;
   const handlePrimaryAction = async () => {
-    if (canShowResultReviewAssistant && composeBrief.trim() && !focusedPlanGroup && !workflowPlanPreview && !hasEditTarget) {
+    if (canApplyResultReviewCommand && composeBrief.trim() && !focusedPlanGroup && !hasEditTarget) {
       const handled = await onApplyResultReviewCommand(composeBrief);
       if (handled) return;
     }
@@ -9061,7 +9066,7 @@ function CanvasAgentPanel({
     activeJobCount,
     visibleOutputCount,
   });
-  const canShowResultReviewAssistant = !workflowPlanPreview && !hasEditTarget && visibleOutputCount > 0 && activeJobCount === 0;
+  const canShowResultReviewAssistant = canApplyResultReviewCommand && !workflowPlanPreview;
   const completionSummary = buildAgentCompletionSummary({
     visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
     visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
@@ -9144,6 +9149,16 @@ function CanvasAgentPanel({
     setAgentEventHistory((items) => {
       if (items.some((item) => item.id === signature || `${key}:${item.role}:${item.title ?? ""}:${item.text}` === signature)) {
         return items;
+      }
+      if (key.startsWith("completion:")) {
+        return [
+          ...items.filter((item) => !item.id.startsWith("completion:") && item.title !== "生成总结"),
+          {
+            ...message,
+            id: signature,
+            text: cleanText,
+          },
+        ].slice(-8);
       }
       return [
         ...items,
@@ -11303,11 +11318,21 @@ function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | 
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return null;
   if (getAgentResultGroupKeepCountIntent(text)) return null;
-  if (/(恢复|改回|设为|标为|标记?)(待检查)|取消标记|取消状态/.test(compactText)) return "pending";
-  if (/(淘汰|不要这组|不用这组|不留这组|弃用|废掉|拒绝|打掉)/.test(compactText)) return "rejected";
-  const approvedActionText = compactText.replace(/已保留(都|图|结果|的)?/g, "");
-  if (/(保留|留下|留着|可用|通过|要这组|这组可以|先留|先收|选中)/i.test(approvedActionText)) return "approved";
-  if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(compactText)) return "needs_redo";
+  const actionText = compactText
+    .replace(/待重做(都|图|结果|项|的)/g, "")
+    .replace(/建议重做(都|图|结果|的)/g, "")
+    .replace(/待检查(都|图|结果|的)/g, "")
+    .replace(/未检查(都|图|结果|的)/g, "")
+    .replace(/没检查(都|图|结果|的)/g, "")
+    .replace(/已保留(都|图|结果|的)?/g, "")
+    .replace(/已淘汰(都|图|结果|的)?/g, "")
+    .replace(/淘汰(都|图|结果|的)/g, "")
+    .replace(/已弃用(都|图|结果|的)?/g, "")
+    .replace(/弃用图/g, "");
+  if (/(恢复|改回|设为|标为|标记?)(待检查)|取消标记|取消状态/.test(actionText)) return "pending";
+  if (/(淘汰|不要这组|不用这组|不留这组|弃用|废掉|拒绝|打掉)/.test(actionText)) return "rejected";
+  if (/(保留|留下|留着|可用|通过|要这组|这组可以|先留|先收|选中)/i.test(actionText)) return "approved";
+  if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(actionText)) return "needs_redo";
   return null;
 }
 
@@ -11323,6 +11348,7 @@ function getAgentGlobalResultReviewTargets(
   const targetsRedoScope = /(待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项)/.test(compactText);
   const targetsPendingScope = /(待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的))/.test(compactText);
   const targetsApprovedScope = /(已保留(都|图|结果|的)|可用图|通过图|保留图)/.test(compactText);
+  const targetsRejectedScope = /(已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图)/.test(compactText);
   if (targetsRedoScope) {
     return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "needs_redo");
   }
@@ -11332,6 +11358,9 @@ function getAgentGlobalResultReviewTargets(
   if (targetsApprovedScope) {
     return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "approved");
   }
+  if (targetsRejectedScope) {
+    return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "rejected");
+  }
   if (/(全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText)) {
     return artifacts;
   }
@@ -11340,7 +11369,7 @@ function getAgentGlobalResultReviewTargets(
 
 function hasAgentGlobalResultReviewScopeIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
-  return /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的)|已保留(都|图|结果|的)|可用图|通过图|保留图|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
+  return /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的)|已保留(都|图|结果|的)|可用图|通过图|保留图|已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
 }
 
 function getAgentGlobalResultReviewScopeLabel(text: string): string {
@@ -11349,6 +11378,7 @@ function getAgentGlobalResultReviewScopeLabel(text: string): string {
   if (/(待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项)/.test(compactText)) return "待重做结果";
   if (/(待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的))/.test(compactText)) return "待检查结果";
   if (/(已保留(都|图|结果|的)|可用图|通过图|保留图)/.test(compactText)) return "已保留结果";
+  if (/(已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图)/.test(compactText)) return "已淘汰结果";
   return "当前结果";
 }
 

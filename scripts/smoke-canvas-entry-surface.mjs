@@ -623,7 +623,7 @@ assert.match(
 );
 assert.match(
   source,
-  /const canShowResultReviewAssistant = !workflowPlanPreview && !hasEditTarget[\s\S]*visibleOutputCount > 0 && activeJobCount === 0[\s\S]*visibleOutputCount: canShowResultReviewAssistant \? visibleOutputCount : 0[\s\S]*visibleArtifacts: canShowResultReviewAssistant \? visibleArtifacts : \[\]/,
+  /const canApplyResultReviewCommand = !hasEditTarget && visibleOutputCount > 0 && activeJobCount === 0[\s\S]*const canShowResultReviewAssistant = canApplyResultReviewCommand && !workflowPlanPreview[\s\S]*visibleOutputCount: canShowResultReviewAssistant \? visibleOutputCount : 0[\s\S]*visibleArtifacts: canShowResultReviewAssistant \? visibleArtifacts : \[\]/,
   "Agent result-review summary should stay hidden while a new plan preview or single-image edit is active"
 );
 assert.match(

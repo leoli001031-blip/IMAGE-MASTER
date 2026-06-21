@@ -450,10 +450,17 @@ assert.match(
   /function getAgentResultReviewStatusIntent[\s\S]*getAgentResultGroupKeepCountIntent\(text\)[\s\S]*待检查[\s\S]*needs_redo[\s\S]*rejected[\s\S]*approved/,
   "focused Agent chat should parse keep, redo, reject, and pending review-state intents without swallowing only-keep-N requests"
 );
-assert.match(
-  workbenchSource,
-  /approvedActionText = compactText\.replace\(\/已保留[\s\S]*return "approved"[\s\S]*return "needs_redo"/,
-  "result review status parsing should treat approved/redo words as actions, not confuse scoped subsets like 已保留图 or 待重做图"
+const resultReviewStatusIntentSource = workbenchSource.slice(
+  workbenchSource.indexOf("function getAgentResultReviewStatusIntent"),
+  workbenchSource.indexOf("function getAgentGlobalResultReviewTargets")
+);
+assert.ok(
+  resultReviewStatusIntentSource.includes("const actionText = compactText") &&
+    resultReviewStatusIntentSource.includes(".replace(/待重做(都|图|结果|项|的)/g, \"\")") &&
+    resultReviewStatusIntentSource.includes(".replace(/已淘汰(都|图|结果|的)?/g, \"\")") &&
+    resultReviewStatusIntentSource.indexOf("return \"rejected\"") < resultReviewStatusIntentSource.indexOf("return \"approved\"") &&
+    resultReviewStatusIntentSource.indexOf("return \"approved\"") < resultReviewStatusIntentSource.indexOf("return \"needs_redo\""),
+  "result review status parsing should strip target-scope words before detecting actions like 已淘汰都保留 or 待重做都淘汰"
 );
 assert.match(
   workbenchSource,
@@ -462,18 +469,28 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙/,
-  "global result review commands should mark scoped result subsets without falling through to planning"
+  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙/,
+  "global result review commands should clear the command, show progress, and mark scoped result subsets without falling through to planning"
 );
 assert.match(
   workbenchSource,
-  /handlePrimaryAction = async[\s\S]*canShowResultReviewAssistant[\s\S]*onApplyResultReviewCommand\(composeBrief\)[\s\S]*if \(handled\) return[\s\S]*workflowPlanPreview && focusedPlanGroup/,
-  "Agent primary action should try global result review commands before plan or generation actions"
+  /canApplyResultReviewCommand = !hasEditTarget && visibleOutputCount > 0 && activeJobCount === 0[\s\S]*handlePrimaryAction = async[\s\S]*canApplyResultReviewCommand && composeBrief\.trim\(\) && !focusedPlanGroup && !hasEditTarget[\s\S]*onApplyResultReviewCommand\(composeBrief\)[\s\S]*if \(handled\) return[\s\S]*workflowPlanPreview && focusedPlanGroup/,
+  "Agent primary action should try global result review commands before plan or generation actions, even when a stale plan preview still exists"
 );
 assert.match(
   workbenchSource,
-  /function getAgentGlobalResultReviewTargets[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*return artifacts[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
-  "global result review commands should separate target scopes like 待重做图 from actions like 全部标待重做"
+  /canShowResultReviewAssistant = canApplyResultReviewCommand && !workflowPlanPreview/,
+  "Agent should still hide review suggestions while a plan preview is open, without disabling review command parsing"
+);
+assert.match(
+  workbenchSource,
+  /if \(key\.startsWith\("completion:"\)\)[\s\S]*items\.filter\(\(item\) => !item\.id\.startsWith\("completion:"\) && item\.title !== "生成总结"\)[\s\S]*\.slice\(-8\)/,
+  "Agent conversation history should keep only the latest completion summary instead of stacking transient batch-review summaries"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentGlobalResultReviewTargets[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*return artifacts[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
+  "global result review commands should separate target scopes like 待重做图 or 已淘汰图 from actions like 全部标待重做"
 );
 assert.match(
   workbenchSource,
