@@ -1,5 +1,7 @@
+import { CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { ImageCard } from "./image-card";
 import type { GeneratedImage } from "@/lib/types";
+import type { ImageDetailReviewStatus } from "./image-detail-panel";
 
 interface ImageGroupProps {
   title: string;
@@ -8,6 +10,10 @@ interface ImageGroupProps {
   onRegenerate: (image: GeneratedImage) => void;
   onOpenFolder?: (image: GeneratedImage) => void;
   onPreview?: (image: GeneratedImage) => void;
+  onSetGroupReviewStatus?: (
+    images: GeneratedImage[],
+    status: Exclude<ImageDetailReviewStatus, "failed">
+  ) => void;
   getReviewLabel?: (image: GeneratedImage) => string | undefined;
   getCopyModeLabel?: (image: GeneratedImage) => string | undefined;
 }
@@ -19,6 +25,7 @@ export function ImageGroup({
   onRegenerate,
   onOpenFolder,
   onPreview,
+  onSetGroupReviewStatus,
   getReviewLabel,
   getCopyModeLabel,
 }: ImageGroupProps) {
@@ -26,6 +33,25 @@ export function ImageGroup({
 
   return (
     <div aria-label={title}>
+      {onSetGroupReviewStatus && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 px-1">
+          <GroupActionButton
+            icon={CheckCircle2}
+            label="保留这组"
+            onClick={() => onSetGroupReviewStatus(images, "approved")}
+          />
+          <GroupActionButton
+            icon={RefreshCw}
+            label="标待重做"
+            onClick={() => onSetGroupReviewStatus(images, "needs_redo")}
+          />
+          <GroupActionButton
+            icon={XCircle}
+            label="淘汰这组"
+            onClick={() => onSetGroupReviewStatus(images, "rejected")}
+          />
+        </div>
+      )}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-5">
         {images.map((img) => (
           <ImageCard
@@ -50,6 +76,27 @@ export function ImageGroup({
         ))}
       </div>
     </div>
+  );
+}
+
+function GroupActionButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ElementType;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-md border border-warm-line bg-warm-paper px-2.5 py-1.5 text-xs text-warm-muted transition hover:border-warm-primary/35 hover:bg-warm-primary-soft hover:text-warm-ink"
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
   );
 }
 

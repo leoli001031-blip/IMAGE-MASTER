@@ -346,68 +346,113 @@ export default function ResultPage() {
     router.push("/canvas?restore=1&editResult=1");
   };
 
+  const applyResultReviewStateUpdates = (updates: ResultReviewStateUpdate[]) => {
+    if (updates.length === 0) return;
+    const updateById = new Map(updates.map((update) => [update.imageId, update]));
+    const applyReviewState = (item: GeneratedImage): GeneratedImage => {
+      const update = updateById.get(item.id);
+      if (!update) return item;
+      return {
+        ...item,
+        metadata: {
+          ...item.metadata,
+          reviewState: update.reviewState,
+          ...(update.artifactId ? { artifactId: update.artifactId } : {}),
+        },
+      };
+    };
+
+    if (generatedImages.length > 0) setGeneratedImages(generatedImages.map(applyReviewState));
+    setRecentGeneratedImages((items) => items.map(applyReviewState));
+    setSelectedImage((current) => (current ? applyReviewState(current) : current));
+  };
+
+  const buildPersistedResultReviewUpdate = async (
+    sourceImage: GeneratedImage,
+    status: Exclude<ImageDetailReviewStatus, "failed">,
+    source: string
+  ): Promise<{ update: ResultReviewStateUpdate; persisted: boolean }> => {
+    const artifactId = getImageArtifactId(sourceImage);
+    const reviewState = buildResultReviewState(status, source);
+    if (!artifactId) {
+      return {
+        update: { imageId: sourceImage.id, reviewState },
+        persisted: false,
+      };
+    }
+
+    const response = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewState }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "审核状态保存失败");
+
+    const payloadMetadata = isRecord(payload.metadata) ? payload.metadata : {};
+    const persistedReviewState = isRecord(payloadMetadata.reviewState)
+      ? payloadMetadata.reviewState
+      : reviewState;
+    return {
+      update: {
+        imageId: sourceImage.id,
+        reviewState: persistedReviewState,
+        artifactId,
+      },
+      persisted: true,
+    };
+  };
+
   const handleSetResultReviewStatus = async (
     img: GeneratedImage,
     status: Exclude<ImageDetailReviewStatus, "failed">
   ) => {
     const sourceImage = activeImages.find((item) => item.id === img.id) || img;
-    const artifactId = getImageArtifactId(sourceImage);
-    const reviewState = buildResultReviewState(status, "result-page-review");
-
-    const applyReviewState = (item: GeneratedImage): GeneratedImage =>
-      item.id === sourceImage.id
-        ? {
-            ...item,
-            metadata: {
-              ...item.metadata,
-              reviewState,
-              ...(artifactId ? { artifactId } : {}),
-            },
-          }
-        : item;
-
-    if (!artifactId) {
-      if (generatedImages.length > 0) setGeneratedImages(generatedImages.map(applyReviewState));
-      setRecentGeneratedImages((items) => items.map(applyReviewState));
-      setSelectedImage((current) => (current?.id === sourceImage.id ? applyReviewState(current) : current));
-      showToast("已临时标记；这张图缺少产物记录，刷新后不会保留");
-      return;
-    }
-
     try {
-      const response = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reviewState }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "审核状态保存失败");
-
-      const payloadMetadata = isRecord(payload.metadata) ? payload.metadata : {};
-      const persistedReviewState = isRecord(payloadMetadata.reviewState)
-        ? payloadMetadata.reviewState
-        : reviewState;
-      const applyPersistedReviewState = (item: GeneratedImage): GeneratedImage =>
-        item.id === sourceImage.id
-          ? {
-              ...item,
-              metadata: {
-                ...item.metadata,
-                reviewState: persistedReviewState,
-                artifactId,
-              },
-            }
-          : item;
-
-      if (generatedImages.length > 0) setGeneratedImages(generatedImages.map(applyPersistedReviewState));
-      setRecentGeneratedImages((items) => items.map(applyPersistedReviewState));
-      setSelectedImage((current) =>
-        current?.id === sourceImage.id ? applyPersistedReviewState(current) : current
+      const result = await buildPersistedResultReviewUpdate(sourceImage, status, "result-page-review");
+      applyResultReviewStateUpdates([result.update]);
+      showToast(
+        result.persisted
+          ? `已标记为${RESULT_REVIEW_STATUS_LABELS[status]}`
+          : "已临时标记；这张图缺少产物记录，刷新后不会保留"
       );
-      showToast(`已标记为${RESULT_REVIEW_STATUS_LABELS[status]}`);
     } catch {
       showToast("审核状态保存失败");
     }
+  };
+
+  const handleSetResultGroupReviewStatus = async (
+    images: GeneratedImage[],
+    status: Exclude<ImageDetailReviewStatus, "failed">
+  ) => {
+    const sourceImages = images
+      .map((image) => activeImages.find((item) => item.id === image.id) || image)
+      .filter((image) => image.url && !image.error);
+    if (sourceImages.length === 0) {
+      showToast("这组暂时没有可标记的图片");
+      return;
+    }
+
+    const results = await Promise.all(
+      sourceImages.map((image) =>
+        buildPersistedResultReviewUpdate(image, status, "result-page-group-review")
+          .then((result) => ({ ok: true as const, result }))
+          .catch(() => ({ ok: false as const }))
+      )
+    );
+    const updates = results
+      .filter((item): item is { ok: true; result: { update: ResultReviewStateUpdate; persisted: boolean } } => item.ok)
+      .map((item) => item.result.update);
+    applyResultReviewStateUpdates(updates);
+
+    const failed = results.length - updates.length;
+    const temporary = results.filter((item) => item.ok && !item.result.persisted).length;
+    const suffix = failed > 0
+      ? `，${failed} 张保存失败`
+      : temporary > 0
+        ? `，${temporary} 张为临时标记`
+        : "";
+    showToast(`已将 ${updates.length} 张标记为${RESULT_REVIEW_STATUS_LABELS[status]}${suffix}`);
   };
 
   const handleBackToGenerate = () => {
@@ -498,6 +543,7 @@ export default function ResultPage() {
               onRegenerate={handleRegenerate}
               onOpenFolder={handleOpenFolder}
               onPreview={setSelectedImage}
+              onSetGroupReviewStatus={handleSetResultGroupReviewStatus}
               getReviewLabel={getResultReviewLabel}
               getCopyModeLabel={getCopyModeLabel}
             />
@@ -689,6 +735,12 @@ type ResultReference = {
 
 type ResultReviewStatus = "pass" | "manual" | "fail";
 type ResultArtifactReviewStatus = ImageDetailReviewStatus;
+
+type ResultReviewStateUpdate = {
+  imageId: string;
+  reviewState: Record<string, unknown>;
+  artifactId?: string;
+};
 
 const RESULT_REVIEW_STATUS_LABELS: Record<ResultArtifactReviewStatus, string> = {
   approved: "可用",

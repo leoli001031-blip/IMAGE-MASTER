@@ -144,8 +144,13 @@ assert.match(
 );
 assert.match(
   resultPageSource,
-  /handleSetResultReviewStatus[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}[\s\S]*reviewState[\s\S]*onSetReviewStatus=\{\(item, status\)/,
+  /buildPersistedResultReviewUpdate[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}[\s\S]*reviewState[\s\S]*handleSetResultReviewStatus[\s\S]*onSetReviewStatus=\{\(item, status\)/,
   "result page image details should persist keep, pending, redo, and reject review states"
+);
+assert.match(
+  resultPageSource,
+  /handleSetResultGroupReviewStatus[\s\S]*result-page-group-review[\s\S]*onSetGroupReviewStatus=\{handleSetResultGroupReviewStatus\}/,
+  "result page groups should batch mark keep, redo, and reject review states"
 );
 assert.match(
   workbenchSource,
@@ -184,6 +189,11 @@ assert.match(
   imageGroupSource,
   /grid-cols-\[repeat\(auto-fill,minmax\(220px,1fr\)\)\]/,
   "result groups should use responsive real-ratio image-wall columns instead of a fixed two-column card grid"
+);
+assert.match(
+  imageGroupSource,
+  /onSetGroupReviewStatus[\s\S]*保留这组[\s\S]*标待重做[\s\S]*淘汰这组/,
+  "result groups should expose lightweight group-level picking actions"
 );
 
 assert.match(
