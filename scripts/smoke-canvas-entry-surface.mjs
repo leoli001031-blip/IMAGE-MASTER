@@ -603,6 +603,21 @@ assert.match(
 );
 assert.match(
   source,
+  /function getAgentPlanCopyTextEdit[\s\S]*文案内容调整为[\s\S]*不要改商品包装标签/,
+  "natural-language copy text edits should preserve copy content as safe-area or layout text instead of changing product labels"
+);
+assert.match(
+  source,
+  /function cleanAgentPlanCopyText[\s\S]*图层[\s\S]*不进图[\s\S]*烧进图/,
+  "copy text edits should not mistake copy strategy phrases for visible copy content"
+);
+assert.match(
+  source,
+  /function applyAgentPlanCopyTextEditToMatrix[\s\S]*isAgentPlanCopyBearingMatrixItem[\s\S]*mergeAgentPlanContentInstruction/,
+  "copy text edits without an explicit target should only touch copy-bearing plan groups"
+);
+assert.match(
+  source,
   /planFallbackReason[\s\S]*我先展示基础计划[\s\S]*基础制作清单/,
   "Agent conversation should tell users when they are viewing a base plan fallback"
 );

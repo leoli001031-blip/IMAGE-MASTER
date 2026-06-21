@@ -3119,7 +3119,7 @@ export function VisualWorkbench() {
       }
 
       if (pendingAgentSamplePlan) {
-        setComposeMessage("这句计划修改我还没理解。可以直接说：整套只要 6 张、删掉某组、详情页烧字、主图改 4:5。");
+        setComposeMessage("这句计划修改我还没理解。可以直接说：整套只要 6 张、海报标题改成暖意随身、主图改 4:5。");
         return;
       }
 
@@ -3197,7 +3197,7 @@ export function VisualWorkbench() {
     }
 
     if (pendingAgentSamplePlan) {
-      setComposeMessage("这句计划修改我还没理解。可以直接说：整套只要 6 张、删掉某组、详情页烧字、主图改 4:5。");
+      setComposeMessage("这句计划修改我还没理解。可以直接说：整套只要 6 张、海报标题改成暖意随身、主图改 4:5。");
       return;
     }
 
@@ -9132,7 +9132,7 @@ function CanvasAgentPanel({
     completionSummary,
   });
   const planInputPlaceholder = workflowPlanPreview
-    ? "直接说怎么改计划，比如：整套只要 6 张，模特图少两张，主图改 4:5。"
+    ? "直接说怎么改计划，比如：整套只要 6 张，海报标题改成暖意随身，主图改 4:5。"
     : editTarget
       ? "比如：把背景换成室外街拍，人物表情更自然，保留产品和构图。"
       : focusedPlanGroup
@@ -10223,7 +10223,7 @@ function AgentPlanBoard({
         )}
       </div>
       <div className="mt-2 rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
-        想改就直接说：整套只要 6 张、这组少两张、不要封面、主图改 4:5。
+        想改就直接说：整套只要 6 张、海报标题改成暖意随身、主图改 4:5。
       </div>
     </div>
   );
@@ -17919,6 +17919,20 @@ function applyAgentNaturalLanguagePlanEdit({
       changes.push(copyEdit.mode === "burn_in" ? `${targetLabel}文案改为烧进图` : `${targetLabel}文案改为图层/不进图`);
     }
 
+    const copyTextEdit = getAgentPlanCopyTextEdit(text);
+    if (copyTextEdit) {
+      const matrixEdit = applyAgentPlanCopyTextEditToMatrix(nextMatrix, copyTextEdit);
+      const itemEdit = applyAgentPlanCopyTextEditToItems(nextItems, copyTextEdit);
+      nextMatrix = matrixEdit.items;
+      nextItems = itemEdit.items;
+      if (matrixEdit.changed || itemEdit.changed) {
+        const targetLabel = copyTextEdit.targets.length > 0
+          ? `${copyTextEdit.targets.map((target) => target.label).join("、")} `
+          : "文案图组 ";
+        changes.push(`${targetLabel}文案内容改为：${copyTextEdit.copyText}`);
+      }
+    }
+
     const ratioEdit = getAgentPlanRatioEdit(text);
     if (ratioEdit) {
       nextMatrix = nextMatrix.map((item) =>
@@ -18093,6 +18107,21 @@ function applyAgentScopedPlanEdit({
       agentPlanPreviewItemMatchesScopeGroup(item, group) ? { ...item, copyMode } : item
     );
     changes.push(copyMode === "burn_in" ? `「${groupLabel}」文案改为烧进图` : `「${groupLabel}」文案改为图层/不进图`);
+  }
+
+  const copyTextEdit = getAgentPlanCopyTextEdit(text);
+  if (copyTextEdit) {
+    nextMatrix = nextMatrix.map((item) =>
+      agentPlanMatrixItemMatchesScopeGroup(item, group)
+        ? { ...item, summary: mergeAgentPlanContentInstruction(item.summary, copyTextEdit.instruction) }
+        : item
+    );
+    nextItems = nextItems.map((item) =>
+      agentPlanPreviewItemMatchesScopeGroup(item, group)
+        ? { ...item, purpose: mergeAgentPlanContentInstruction(item.purpose, copyTextEdit.instruction) }
+        : item
+    );
+    changes.push(`「${groupLabel}」文案内容改为：${copyTextEdit.copyText}`);
   }
 
   const ratio = getAgentPlanRatioValue(text);
@@ -18907,6 +18936,95 @@ function getAgentPlanCopyEdit(text: string): { mode: "burn_in" | "layout_layer";
     mode: wantsNoBurn ? "layout_layer" : "burn_in",
     targets: isExplicitGlobalCopyIntent ? [] : targets,
   };
+}
+
+function getAgentPlanCopyTextEdit(text: string): {
+  copyText: string;
+  instruction: string;
+  targets: AgentPlanEditTarget[];
+} | null {
+  const patterns = [
+    /(?:画面文字|图中文字|主标题|副标题|短标题|标题|文案|卖点|slogan|headline)[^，。；、,.!?\n]{0,8}(?:改成|改为|换成|换为|设为|设置为|写成|写|用|使用)[:：]?([^，。；、,.!?\n]{2,40})/i,
+    /(?:改成|改为|换成|换为|设为|设置为|写成|写|用|使用)[:：]?([^，。；、,.!?\n]{2,40})(?:作为|当作)?(?:画面文字|图中文字|主标题|副标题|短标题|标题|文案|卖点|slogan|headline)/i,
+  ];
+  const matchedText = patterns
+    .map((pattern) => text.match(pattern)?.[1]?.trim())
+    .find(Boolean);
+  const copyText = cleanAgentPlanCopyText(matchedText ?? "");
+  if (!copyText) return null;
+
+  const compactText = text.replace(/\s+/g, "");
+  const targets = agentPlanEditTargets.filter((target) =>
+    target.keywords.some((keyword) => compactText.includes(keyword.toLowerCase().replace(/\s+/g, "")))
+  );
+  return {
+    copyText,
+    instruction: `文案内容调整为「${copyText}」，作为画面安全区或后期文案层内容，不要改商品包装标签、logo、屏幕或场景道具文字`,
+    targets,
+  };
+}
+
+function cleanAgentPlanCopyText(value: string): string {
+  const cleanValue = value
+    .replace(/^(一句|一条|一个|这个|那个|短句|短标题|标题|文案|卖点)\s*/, "")
+    .replace(/(烧进图|烧字|进图|带字|即可|就行|就好)$/g, "")
+    .trim()
+    .slice(0, 40);
+  if (/^(图层|文案图层|不进图|不烧字|烧字|烧进|烧进图|进图|带字|layout layer|burn in)$/i.test(cleanValue)) {
+    return "";
+  }
+  return cleanValue;
+}
+
+function applyAgentPlanCopyTextEditToMatrix(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  edit: { instruction: string; targets: AgentPlanEditTarget[] }
+): { items: WorkflowPlanPreviewAgentMatrixItem[]; changed: boolean } {
+  let changed = false;
+  const nextItems = items.map((item) => {
+    const matches = edit.targets.length > 0
+      ? edit.targets.some((target) => agentPlanMatrixItemMatchesTarget(item, target))
+      : isAgentPlanCopyBearingMatrixItem(item);
+    if (!matches) return item;
+    changed = true;
+    return {
+      ...item,
+      summary: mergeAgentPlanContentInstruction(item.summary, edit.instruction),
+    };
+  });
+  return { items: nextItems, changed };
+}
+
+function applyAgentPlanCopyTextEditToItems(
+  items: WorkflowPlanPreviewItem[],
+  edit: { instruction: string; targets: AgentPlanEditTarget[] }
+): { items: WorkflowPlanPreviewItem[]; changed: boolean } {
+  let changed = false;
+  const nextItems = items.map((item) => {
+    const matches = edit.targets.length > 0
+      ? edit.targets.some((target) => agentPlanPreviewItemMatchesTarget(item, target))
+      : isAgentPlanCopyBearingPreviewItem(item);
+    if (!matches) return item;
+    changed = true;
+    return {
+      ...item,
+      purpose: mergeAgentPlanContentInstruction(item.purpose, edit.instruction),
+    };
+  });
+  return { items: nextItems, changed };
+}
+
+function isAgentPlanCopyBearingMatrixItem(item: WorkflowPlanPreviewAgentMatrixItem): boolean {
+  const text = planItemText([item.title, item.type, item.outputSlotId, item.summary]).join(" ");
+  return item.copyMode === "burn_in" ||
+    item.referenceRoles.includes("copy") ||
+    /(文案|文字|标题|卖点|海报|封面|收尾|copy|text|headline|poster|feature|cover|closing)/i.test(text);
+}
+
+function isAgentPlanCopyBearingPreviewItem(item: WorkflowPlanPreviewItem): boolean {
+  const text = planItemText([item.title, item.purpose, item.slot, item.platform]).join(" ");
+  return item.copyMode === "burn_in" ||
+    /(文案|文字|标题|卖点|海报|封面|收尾|copy|text|headline|poster|feature|cover|closing)/i.test(text);
 }
 
 function getAgentPlanRatioEdit(text: string): { ratio: string; targets: AgentPlanEditTarget[] } | null {
