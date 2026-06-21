@@ -134,11 +134,21 @@ assert.match(
   /function buildAgentResultGroupRevisionMessage[\s\S]*比例沿用/,
   "group edit submission should explain preserved ratio"
 );
+assert.match(
+  source,
+  /function buildAgentResultGroupRevisionMessage[\s\S]*每张会继承各自原 prompt、上一版参考图和视觉 QA 约束/,
+  "group edit submission should explain that original prompt, reference image, and visual QA constraints are inherited per image"
+);
 
 assert.match(
   source,
   /const sourceArtifacts = groupArtifacts\.length > 0[\s\S]*resolveAgentResultGroupArtifacts\(group, artifacts\)[\s\S]*const actionableArtifacts = getAgentActionableGroupSuggestionArtifacts\(sourceArtifacts\)[\s\S]*const protectedCount = sourceArtifacts\.length - actionableArtifacts\.length[\s\S]*const targets = actionableArtifacts[\s\S]*const job = artifact\.jobId \? jobs\.find[\s\S]*const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\)[\s\S]*metadata,/,
   "group image revision targets should merge artifact and job metadata before rebuilding prompts and references"
+);
+assert.match(
+  source,
+  /revisionGroup: \{[\s\S]*assetTitles: group\.assetTitles[\s\S]*artifactIds: group\.artifactIds[\s\S]*jobIds: group\.jobIds/,
+  "group image revision metadata should preserve source asset titles, artifact ids, and job ids for traceability"
 );
 assert.match(
   source,

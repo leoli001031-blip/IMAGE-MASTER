@@ -2993,7 +2993,9 @@ export function VisualWorkbench() {
                 providerRoles: group.providerRoles,
                 promptOnlyRoles: group.promptOnlyRoles,
                 copyModes: group.copyModes,
+                assetTitles: group.assetTitles,
                 artifactIds: group.artifactIds,
+                jobIds: group.jobIds,
               },
               revisionScope: {
                 mode: "group_only",
@@ -11448,8 +11450,8 @@ function buildAgentResultGroupRevisionDiff(
     summary: `只影响「${group.title}」这一组，其他图组保持不动。`,
     scopeSummary: `修改范围：只重做「${group.title}」这一组的待处理图片。`,
     preservedSummary: protectedCount > 0
-      ? `已保留/已淘汰的 ${protectedCount} 张和未点名图组都保持不变。`
-      : "未点名的图组、比例和参考图角色保持不变。",
+      ? `已保留/已淘汰的 ${protectedCount} 张和未点名图组都保持不变；本组重做会继承每张原参考图、原 prompt、比例和文案策略。`
+      : "未点名的图组保持不变；本组重做会继承每张原参考图、原 prompt、比例和文案策略。",
     nextAction: targetCount > 0
       ? "下一步先看本组重做结果，再决定是否继续扩大修改范围。"
       : "下一步可以换一个有成片的图组继续改。",
@@ -11569,6 +11571,7 @@ function buildAgentResultGroupRevisionMessage(
     ratioText,
     protectedText,
     group.copyModes.includes("burn_in") ? "文案继续按原烧字策略处理，注意安全区。" : "",
+    "每张会继承各自原 prompt、上一版参考图和视觉 QA 约束。",
     `修改要求：${formatRevisionTextForSentence(userBrief, 120)}。`,
     failText,
   ].filter(Boolean).join("\n");
