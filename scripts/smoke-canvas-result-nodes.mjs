@@ -524,8 +524,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*getAgentGlobalResultReviewScopeLabel\(brief, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙/,
-  "global result review commands should clear the command, show progress, and mark scoped result subsets without falling through to planning"
+  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*getAgentGlobalResultReviewScopeLabel\(brief, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*remainingText = formatAgentReviewRemainingSummary[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙。\$\{remainingText\}/,
+  "global result review commands should clear the command, show progress, report remaining review work, and avoid falling through to planning"
 );
 assert.match(
   workbenchSource,

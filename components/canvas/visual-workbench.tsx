@@ -3091,13 +3091,17 @@ export function VisualWorkbench() {
       setResultReviewFilter(filter);
       setHighlightedResultReviewFilter(filter);
     }
+    const remainingText = formatAgentReviewRemainingSummary(
+      visibleArtifacts,
+      Object.fromEntries(targetIds.map((artifactId) => [artifactId, reviewStatus]))
+    );
     await handleSetArtifactGroupReviewStatus(
       targetIds,
       reviewStatus,
       `Agent 自然语言批量挑图：${brief}`
     );
     setComposeMessage(
-      `已把 ${targetIds.length} 张${scopeLabel}标记为${getArtifactReviewStatusLabel(reviewStatus)}；只影响当前结果墙。`
+      `已把 ${targetIds.length} 张${scopeLabel}标记为${getArtifactReviewStatusLabel(reviewStatus)}；只影响当前结果墙。${remainingText}`
     );
     return true;
   };
