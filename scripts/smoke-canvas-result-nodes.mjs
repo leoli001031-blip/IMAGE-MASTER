@@ -518,6 +518,8 @@ assert.ok(
   resultReviewStatusIntentSource.includes("const actionText = compactText") &&
     resultReviewStatusIntentSource.includes(".replace(/待重做(都|图|结果|项|的)/g, \"\")") &&
     resultReviewStatusIntentSource.includes(".replace(/已淘汰(都|图|结果|的)?/g, \"\")") &&
+    resultReviewStatusIntentSource.includes("撤销|撤回|取消") &&
+    resultReviewStatusIntentSource.includes("保留|淘汰|弃用|重做|待重做|建议重做|标记|状态") &&
     resultReviewStatusIntentSource.includes("待检") &&
     resultReviewStatusIntentSource.includes("回到") &&
     resultReviewStatusIntentSource.includes("这张|这组|这些") &&

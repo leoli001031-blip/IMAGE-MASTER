@@ -11952,6 +11952,7 @@ function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | 
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return null;
   if (getAgentResultGroupKeepCountIntent(text)) return null;
+  if (/(撤销|撤回|取消)(这张|这组|这些|这一批|这批|当前这些)?(已)?(保留|淘汰|弃用|重做|待重做|建议重做|标记|状态)/.test(compactText)) return "pending";
   const actionText = compactText
     .replace(/待重做(都|图|结果|项|的)/g, "")
     .replace(/建议重做(都|图|结果|的)/g, "")
