@@ -10142,6 +10142,8 @@ function CanvasAgentPanel({
         );
         return;
       }
+      onHighlightArtifactGroup(groupTitle);
+      const contextText = formatAgentGroupRetryContext(group);
       window.dispatchEvent(
         new CustomEvent("image-master:artifact-group-retry", {
           detail: {
@@ -10156,7 +10158,7 @@ function CanvasAgentPanel({
           },
         })
       );
-      recordAction(`已按原上下文重做「${groupTitle}」这一组 ${retryableGroupArtifacts.length} 张待处理图；其他图片不会被重写。${getRemainingReviewText()}`);
+      recordAction(`已按原上下文重做「${groupTitle}」这一组 ${retryableGroupArtifacts.length} 张待处理图；${contextText}其他图片不会被重写。${getRemainingReviewText()}`);
       return;
     }
 
@@ -11671,6 +11673,19 @@ function getAgentGroupPriorityTone(group: AgentPlanGroup): "warn" | "priority" |
 function formatAgentPlanCopyModes(modes: string[]): string {
   const labels = agentUniqueStrings(modes.map(getCopyModeLabel));
   return labels.length > 0 ? labels.join("、") : "图层";
+}
+
+function formatAgentGroupRetryContext(group?: AgentPlanGroup): string {
+  if (!group) return "会继承原图组用途和任务上下文，";
+  const parts = [
+    group.ratios.length > 0 ? `比例 ${group.ratios.join("、")}` : "",
+    group.providerRoles.length > 0 ? `强参考 ${group.providerRoles.map(getAgentPlanRoleLabel).join("、")}` : "",
+    group.promptOnlyRoles.length > 0 ? `文字约束 ${group.promptOnlyRoles.map(getAgentPlanRoleLabel).join("、")}` : "",
+    group.copyModes.length > 0 ? `文案 ${formatAgentPlanCopyModes(group.copyModes)}` : "",
+  ].filter(Boolean);
+  return parts.length > 0
+    ? `继续继承${parts.join("；")}；`
+    : "会继承原图组用途和任务上下文，";
 }
 
 function buildAgentMatrixFromPreviewItems(

@@ -482,6 +482,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /action === "group_redo"[\s\S]*onHighlightArtifactGroup\(groupTitle\)[\s\S]*contextText = formatAgentGroupRetryContext\(group\)[\s\S]*已按原上下文重做「\$\{groupTitle\}」这一组[\s\S]*\$\{contextText\}其他图片不会被重写[\s\S]*function formatAgentGroupRetryContext[\s\S]*比例 \$\{group\.ratios\.join\("、"\)\}[\s\S]*强参考[\s\S]*文字约束[\s\S]*文案 \$\{formatAgentPlanCopyModes\(group\.copyModes\)\}/,
+  "Agent group redo suggestions should highlight the group and explain inherited ratio, reference, and copy context"
+);
+assert.match(
+  workbenchSource,
   /handleEdit[\s\S]*const inferredGroup = artifact \? getAgentArtifactResultGroupLabel\(artifact\) : ""[\s\S]*const detailGroup = getStringValue\(detail\.group\)[\s\S]*metadata\.resultGroupTitle = detailGroup/,
   "single-image Agent edit targets should preserve or infer the source result group"
 );
