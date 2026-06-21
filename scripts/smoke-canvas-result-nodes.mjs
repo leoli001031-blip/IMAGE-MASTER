@@ -548,6 +548,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*filterIntent = getAgentGlobalResultReviewFilterIntent\(brief\)[\s\S]*setResultReviewFilter\(filterIntent\)[\s\S]*setHighlightedResultReviewFilter\(filterIntent\)[\s\S]*已切到「\$\{label\}」[\s\S]*const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)/,
+  "global result review commands should switch result-wall filters before treating text as status or redo commands"
+);
+assert.match(
+  workbenchSource,
   /handleApplyGlobalResultReviewCommand[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*getAgentGlobalResultReviewScopeLabel\(brief, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*remainingText = formatAgentReviewRemainingSummary[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙。\$\{remainingText\}/,
   "global result review commands should clear the command, show progress, report remaining review work, and avoid falling through to planning"
 );
@@ -575,6 +580,11 @@ assert.match(
   workbenchSource,
   /function getAgentGlobalResultReviewTargets[\s\S]*activeFilter: ResultReviewFilter = "all"[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent\(compactText\)[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*return artifacts[\s\S]*function hasAgentCurrentFilteredResultScopeIntent[\s\S]*所有结果\|全部结果\|结果墙[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
   "global result review commands should separate explicit status scopes and let current-filter pronouns target the filtered subset"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentGlobalResultReviewFilterIntent[\s\S]*只看\|仅看[\s\S]*全部\|所有[\s\S]*QA风险[\s\S]*待重做[\s\S]*待检查[\s\S]*已淘汰[\s\S]*已保留[\s\S]*return null/,
+  "global filter intent parsing should cover common result-wall filter phrases without requiring new UI controls"
 );
 const resultReviewRetryIntentSource = workbenchSource.slice(
   workbenchSource.indexOf("function hasAgentGlobalResultReviewRetryIntent"),

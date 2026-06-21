@@ -3086,6 +3086,21 @@ export function VisualWorkbench() {
 
   const handleApplyGlobalResultReviewCommand = async (userBrief: string): Promise<boolean> => {
     const brief = userBrief.trim();
+    const filterIntent = getAgentGlobalResultReviewFilterIntent(brief);
+    if (filterIntent) {
+      const count = resultReviewFilterCounts[filterIntent] ?? 0;
+      const label = getResultReviewFilterLabel(filterIntent);
+      setResultReviewFilter(filterIntent);
+      setHighlightedResultReviewFilter(filterIntent);
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(
+        filterIntent === "all"
+          ? `已显示全部结果，共 ${count} 张。`
+          : `已切到「${label}」，当前命中 ${count} 张；可以继续说保留、淘汰、标待重做或执行重做。`
+      );
+      return true;
+    }
     const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent(brief);
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent && (hasScopeIntent || !workflowPlanPreview)) {
@@ -12004,6 +12019,21 @@ function getAgentGlobalResultReviewTargets(
     return artifacts;
   }
   return [];
+}
+
+function getAgentGlobalResultReviewFilterIntent(text: string): ResultReviewFilter | null {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return null;
+  const hasFilterVerb = /(只看|仅看|看一下|看看|查看|显示|筛选|切到|切换到|回到|返回|恢复|取消筛选|清空筛选)/.test(compactText);
+  if (!hasFilterVerb) return null;
+  if (/(全部|所有|全量|完整|结果墙|整套|这一套|这套)/.test(compactText)) return "all";
+  if (/(QA风险|qa风险|风险图|风险结果|问题图|问题结果|视觉风险)/.test(compactText)) return "qa_risk";
+  if (/(失败|报错|出错|不可用)/.test(compactText)) return "failed";
+  if (/(待重做|建议重做|重做项)/.test(compactText)) return "needs_redo";
+  if (/(待检查|待检|未检查|没检查)/.test(compactText)) return "pending";
+  if (/(已淘汰|淘汰图|淘汰结果|已弃用|弃用图)/.test(compactText)) return "rejected";
+  if (/(已保留|保留图|可用图|通过图|可用结果)/.test(compactText)) return "approved";
+  return null;
 }
 
 function hasAgentCurrentFilteredResultScopeIntent(compactText: string): boolean {
