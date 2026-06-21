@@ -1082,6 +1082,7 @@ interface AgentQaSummaryItem {
 }
 
 interface AgentReviewProgressSummary {
+  scopeLabel: string;
   total: number;
   picked: number;
   remaining: number;
@@ -9196,6 +9197,7 @@ function CanvasAgentPanel({
   const reviewProgressSummary = buildAgentReviewProgressSummary({
     visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
     activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
+    activeFilter: resultReviewFilter,
   });
   const qaSummaryItems = buildAgentQaSummaryItems({
     visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
@@ -10847,7 +10849,7 @@ function AgentReviewProgress({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="font-medium text-warm-ink">
-            挑图进度 {summary.picked}/{summary.total}
+            {summary.scopeLabel ? `${summary.scopeLabel}进度` : "挑图进度"} {summary.picked}/{summary.total}
           </div>
           <div className="mt-0.5 text-warm-muted">{summary.helper}</div>
         </div>
@@ -13072,11 +13074,18 @@ function formatAgentReviewRemainingSummary(
 function buildAgentReviewProgressSummary({
   visibleArtifacts,
   activeJobCount,
+  activeFilter,
 }: {
   visibleArtifacts: PersistedGeneratedArtifact[];
   activeJobCount: number;
+  activeFilter: ResultReviewFilter;
 }): AgentReviewProgressSummary | null {
   if (activeJobCount > 0 || visibleArtifacts.length === 0) return null;
+  const scopedArtifacts = activeFilter === "all"
+    ? visibleArtifacts
+    : visibleArtifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, activeFilter));
+  if (scopedArtifacts.length === 0) return null;
+  const scopeLabel = activeFilter === "all" ? "" : getResultReviewFilterLabel(activeFilter);
   let approved = 0;
   let rejected = 0;
   let pending = 0;
@@ -13084,7 +13093,7 @@ function buildAgentReviewProgressSummary({
   let failed = 0;
   let risk = 0;
 
-  for (const artifact of visibleArtifacts) {
+  for (const artifact of scopedArtifacts) {
     const status = getArtifactReviewStatus(artifact);
     if (status === "approved") approved += 1;
     if (status === "rejected") rejected += 1;
@@ -13094,17 +13103,20 @@ function buildAgentReviewProgressSummary({
     if (status !== "approved" && status !== "rejected" && isArtifactVisualQaRisk(artifact)) risk += 1;
   }
 
-  const total = visibleArtifacts.length;
+  const total = scopedArtifacts.length;
   const picked = approved + rejected;
   const remaining = pending + needsRedo + failed;
   const percent = total > 0 ? Math.round((picked / total) * 100) : 0;
   const helper = remaining <= 0
-    ? "这套结果已经挑完，可以打开文件夹收图。"
+    ? scopeLabel
+      ? `当前筛选「${scopeLabel}」已处理完；可以显示全部继续收图。`
+      : "这套结果已经挑完，可以打开文件夹收图。"
     : risk > 0
-      ? `还有 ${remaining} 张待处理，其中 ${risk} 张有 QA 风险，建议先点开检查。`
-      : `还有 ${remaining} 张待处理，先保留可用图，再重做问题图。`;
+      ? `${scopeLabel ? `当前筛选「${scopeLabel}」` : "当前结果"}还有 ${remaining} 张待处理，其中 ${risk} 张有 QA 风险，建议先点开检查。`
+      : `${scopeLabel ? `当前筛选「${scopeLabel}」` : "当前结果"}还有 ${remaining} 张待处理，先保留可用图，再重做问题图。`;
 
   return {
+    scopeLabel,
     total,
     picked,
     remaining,

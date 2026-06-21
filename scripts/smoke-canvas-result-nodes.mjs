@@ -392,8 +392,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /reviewProgressSummary = buildAgentReviewProgressSummary[\s\S]*<AgentReviewProgress summary=\{reviewProgressSummary\} \/>[\s\S]*function AgentReviewProgress[\s\S]*data-testid="agent-review-progress"[\s\S]*挑图进度 \{summary\.picked\}\/\{summary\.total\}[\s\S]*QA 风险 \{summary\.risk\}[\s\S]*function buildAgentReviewProgressSummary[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*isArtifactVisualQaRisk\(artifact\)/,
-  "Agent review assistant should show a compact pick-progress strip before executable suggestions"
+  /reviewProgressSummary = buildAgentReviewProgressSummary[\s\S]*activeFilter: resultReviewFilter[\s\S]*<AgentReviewProgress summary=\{reviewProgressSummary\} \/>[\s\S]*function AgentReviewProgress[\s\S]*data-testid="agent-review-progress"[\s\S]*summary\.scopeLabel \? `\$\{summary\.scopeLabel\}进度` : "挑图进度"[\s\S]*QA 风险 \{summary\.risk\}[\s\S]*function buildAgentReviewProgressSummary[\s\S]*activeFilter: ResultReviewFilter[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*scopeLabel = activeFilter === "all" \? "" : getResultReviewFilterLabel\(activeFilter\)[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*isArtifactVisualQaRisk\(artifact\)/,
+  "Agent review assistant should show filtered pick progress before executable suggestions"
 );
 assert.match(
   workbenchSource,
