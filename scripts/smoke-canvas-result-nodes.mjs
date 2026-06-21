@@ -184,13 +184,18 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /让 Agent 修改[\s\S]*dispatchArtifactEdit\(data, id\)[\s\S]*改图/,
-  "artifact result cards should expose a direct single-image Agent edit action"
+  /让 Agent 修改[\s\S]*dispatchArtifactEdit\(data, id\)[\s\S]*改图[\s\S]*保存为资产[\s\S]*dispatchArtifactSave\(data, id\)/,
+  "artifact result cards should expose direct single-image Agent edit and save-as-asset actions"
 );
 assert.match(
   workflowNodeSource,
   /function dispatchArtifactEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
   "artifact result cards should dispatch the same single-image edit context as the detail preview"
+);
+assert.match(
+  workflowNodeSource,
+  /function dispatchArtifactSave[\s\S]*image-master:generation-frame-output-save[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
+  "artifact result cards should dispatch the same save-as-asset context as the detail preview"
 );
 assert.match(
   outputPreviewModalSource,

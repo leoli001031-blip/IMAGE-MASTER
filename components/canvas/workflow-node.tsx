@@ -1,6 +1,6 @@
 import { memo, type CSSProperties } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { Check, ExternalLink, ImageIcon, PenLine, RefreshCw, Wand2, XCircle } from "lucide-react";
+import { Check, ExternalLink, ImageIcon, PenLine, RefreshCw, Save, Wand2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { AssetPreview } from "@/components/canvas/asset-preview";
 import { CopyNodeSummary } from "@/components/canvas/copy-node-summary";
@@ -390,6 +390,19 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
                   </button>
                   <button
                     type="button"
+                    aria-label={`保存为资产：${data.label}`}
+                    className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-warm-ink shadow-sm backdrop-blur transition hover:bg-warm-paper hover:text-warm-primary"
+                    title="保存为资产"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      dispatchArtifactSave(data, id);
+                    }}
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
                     aria-label={`保留：${data.label}`}
                     className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-emerald-700 shadow-sm backdrop-blur transition hover:bg-emerald-50"
                     title="保留这张"
@@ -755,6 +768,21 @@ function dispatchArtifactGroupRetry(detail: ArtifactGroupEditDetail): void {
 function dispatchArtifactEdit(data: CanvasNodeData, nodeId: string): void {
   window.dispatchEvent(
     new CustomEvent("image-master:generation-frame-output-edit", {
+      detail: {
+        nodeId,
+        artifactId: getStringParameter(data.artifactId),
+        jobId: getStringParameter(data.jobId),
+        url: getStringParameter(data.referenceUrl) || getStringParameter(data.previewUrl),
+        title: getArtifactNodeFullTitle(data),
+        status: getStringParameter(data.artifactStatus),
+      },
+    })
+  );
+}
+
+function dispatchArtifactSave(data: CanvasNodeData, nodeId: string): void {
+  window.dispatchEvent(
+    new CustomEvent("image-master:generation-frame-output-save", {
       detail: {
         nodeId,
         artifactId: getStringParameter(data.artifactId),
