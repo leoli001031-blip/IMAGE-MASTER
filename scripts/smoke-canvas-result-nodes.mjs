@@ -372,6 +372,16 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /function formatAgentReviewRemainingSummary[\s\S]*statusOverrides[\s\S]*待检查 \$\{pending\}[\s\S]*建议重做 \$\{redo\}[\s\S]*生成失败 \$\{failed\}[\s\S]*当前还剩 \$\{remaining\} 张待处理/,
+  "Agent review suggestion feedback should summarize remaining pending, redo, and failed results"
+);
+assert.match(
+  workbenchSource,
+  /const getRemainingReviewText[\s\S]*formatAgentReviewRemainingSummary\(visibleArtifacts, overrides\)[\s\S]*const remainingText = getRemainingReviewText\(\[suggestion\.artifactId\], status\)[\s\S]*const remainingText = getRemainingReviewText\(groupArtifactIds, status\)/,
+  "Agent review status actions should compute remaining counts after the clicked status change"
+);
+assert.match(
+  workbenchSource,
   /lastReviewSuggestionExecution[\s\S]*setLastReviewSuggestionExecution\(execution\)[\s\S]*agent-review-action-feedback[\s\S]*最近执行：\{lastReviewSuggestionExecution\.label\}/,
   "Agent review suggestion actions should keep a visible recent-action confirmation even if suggestions recalculate"
 );
@@ -387,8 +397,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /action === "redo"[\s\S]*artifact\?\.url[\s\S]*image-master:generation-frame-output-edit[\s\S]*没有可直接重跑的任务，已切到让 Agent 改这张[\s\S]*接下来只修改这张/,
-  "Agent single-image redo suggestions should select the image for scoped edit when no direct retry job exists"
+  /action === "redo"[\s\S]*已按原参考图、比例和图组用途重做[\s\S]*getRemainingReviewText\(\)[\s\S]*artifact\?\.url[\s\S]*image-master:generation-frame-output-edit[\s\S]*没有可直接重跑的任务，已切到让 Agent 改这张[\s\S]*接下来只修改这张/,
+  "Agent single-image redo suggestions should report remaining review work and select scoped edit when no direct retry job exists"
 );
 assert.match(
   workbenchSource,
@@ -397,8 +407,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /action === "group_redo"[\s\S]*retryableGroupArtifacts[\s\S]*length === 0[\s\S]*selectGroupForEdit[\s\S]*没有可直接重跑的任务[\s\S]*artifactIds: retryableGroupArtifacts\.map/,
-  "Agent group redo suggestions should fall back to scoped group editing when no retryable jobs exist"
+  /action === "group_redo"[\s\S]*retryableGroupArtifacts[\s\S]*length === 0[\s\S]*selectGroupForEdit[\s\S]*没有可直接重跑的任务[\s\S]*artifactIds: retryableGroupArtifacts\.map[\s\S]*\$\{retryableGroupArtifacts\.length\} 张待处理图[\s\S]*getRemainingReviewText\(\)/,
+  "Agent group redo suggestions should report batch size and remaining review work, with scoped editing fallback"
 );
 assert.match(
   workbenchSource,

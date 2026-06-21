@@ -9153,6 +9153,15 @@ function CanvasAgentPanel({
       onShowResultReviewFilter?.(filter);
       return getResultReviewFilterLabel(filter);
     };
+    const getRemainingReviewText = (
+      artifactIds: string[] = [],
+      status?: ArtifactReviewStatus
+    ): string => {
+      const overrides = status && artifactIds.length > 0
+        ? Object.fromEntries(artifactIds.map((artifactId) => [artifactId, status]))
+        : {};
+      return formatAgentReviewRemainingSummary(visibleArtifacts, overrides);
+    };
 
     if (action === "approve" || action === "mark_needs_redo" || action === "reject") {
       const status: ArtifactReviewStatus =
@@ -9160,6 +9169,7 @@ function CanvasAgentPanel({
       const filterLabel = showReviewFilterForStatus(status);
       const filterText = filterLabel ? `，已切到「${filterLabel}」` : "";
       if (suggestion.artifactId) {
+        const remainingText = getRemainingReviewText([suggestion.artifactId], status);
         window.dispatchEvent(
           new CustomEvent("image-master:artifact-review-state", {
             detail: {
@@ -9169,10 +9179,11 @@ function CanvasAgentPanel({
             },
           })
         );
-        recordAction(`已把「${suggestion.title}」标记为${getArtifactReviewStatusLabel(status)}${filterText}。`);
+        recordAction(`已把「${suggestion.title}」标记为${getArtifactReviewStatusLabel(status)}${filterText}。${remainingText}`);
         return;
       }
       if (groupArtifactIds.length > 0) {
+        const remainingText = getRemainingReviewText(groupArtifactIds, status);
         window.dispatchEvent(
           new CustomEvent("image-master:artifact-group-review-state", {
             detail: {
@@ -9183,7 +9194,7 @@ function CanvasAgentPanel({
             },
           })
         );
-        recordAction(`已把「${groupTitle}」这一组标记为${getArtifactReviewStatusLabel(status)}${filterText}。`);
+        recordAction(`已把「${groupTitle}」这一组标记为${getArtifactReviewStatusLabel(status)}${filterText}。${remainingText}`);
       }
       return;
     }
@@ -9221,7 +9232,7 @@ function CanvasAgentPanel({
             },
           })
         );
-        recordAction(`已按原参考图、比例和图组用途重做「${artifact?.title || suggestion.title}」。`);
+        recordAction(`已按原参考图、比例和图组用途重做「${artifact?.title || suggestion.title}」。${getRemainingReviewText()}`);
         return;
       }
       if (artifact?.url) {
@@ -9323,7 +9334,7 @@ function CanvasAgentPanel({
           },
         })
       );
-      recordAction(`已按原上下文重做「${groupTitle}」这一组；其他图片不会被重写。`);
+      recordAction(`已按原上下文重做「${groupTitle}」这一组 ${retryableGroupArtifacts.length} 张待处理图；其他图片不会被重写。${getRemainingReviewText()}`);
       return;
     }
 
@@ -12228,6 +12239,29 @@ function formatAgentArtifactReviewSummary(artifacts: PersistedGeneratedArtifact[
       return count > 0 ? [`${getArtifactReviewStatusLabel(status)} ${count}`] : [];
     })
     .join(" / ");
+}
+
+function formatAgentReviewRemainingSummary(
+  artifacts: PersistedGeneratedArtifact[],
+  statusOverrides: Record<string, ArtifactReviewStatus> = {}
+): string {
+  if (artifacts.length === 0) return "";
+  const counts = new Map<ArtifactReviewStatus, number>();
+  for (const artifact of artifacts) {
+    const status = statusOverrides[artifact.id] ?? getArtifactReviewStatus(artifact);
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  const pending = counts.get("pending") ?? 0;
+  const redo = counts.get("needs_redo") ?? 0;
+  const failed = counts.get("failed") ?? 0;
+  const remaining = pending + redo + failed;
+  if (remaining <= 0) return "当前没有待处理结果。";
+  const parts = [
+    pending > 0 ? `待检查 ${pending}` : "",
+    redo > 0 ? `建议重做 ${redo}` : "",
+    failed > 0 ? `生成失败 ${failed}` : "",
+  ].filter(Boolean);
+  return `当前还剩 ${remaining} 张待处理（${parts.join(" / ")}）。`;
 }
 
 function isAgentArtifactFailed(artifact: PersistedGeneratedArtifact): boolean {
