@@ -287,8 +287,8 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /保留这组[\s\S]*重做这组[\s\S]*调整这组/,
-  "artifact group headers should expose keep, redo, and adjust actions"
+  /保留这组[\s\S]*重做这组[\s\S]*淘汰这组[\s\S]*调整这组/,
+  "artifact group headers should expose keep, redo, reject, and adjust actions"
 );
 assert.match(
   workflowNodeSource,

@@ -968,6 +968,25 @@ function ArtifactGroupHeaderNode({
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
+          dispatchArtifactGroupReviewState({
+            artifactIds,
+            group: data.label,
+            status: "rejected",
+            note: "用户淘汰整组",
+          });
+        }}
+        className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-zinc-300"
+        title={`淘汰「${data.label}」这一组`}
+      >
+        <XCircle className="h-3 w-3" />
+        淘汰这组
+      </button>
+      <button
+        type="button"
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
           handleEditGroup();
         }}
         className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-warm-line/70 bg-warm-paper px-2 text-[11px] font-medium text-warm-muted shadow-sm transition hover:border-warm-primary/35 hover:text-warm-primary"
