@@ -5,7 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { stopSmokeServer } from "./smoke-runtime.mjs";
+import { restoreSourceFiles, snapshotSourceFiles, stopSmokeServer } from "./smoke-runtime.mjs";
 
 const ROOT = process.cwd();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -13,6 +13,10 @@ const port = Number(process.env.REAL_AGENT_SUITE_PORT || 3498);
 const externalBaseUrl = process.env.REAL_AGENT_SUITE_BASE_URL?.trim();
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
+const distDir = process.env.NEXT_DIST_DIR || `.next-real-agent-suite-${stamp}`;
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 const outRoot = path.join(ROOT, "test_artifacts", "api-smoke");
 const suiteDir = path.join(outRoot, `real-agent-suite-${stamp}`);
 const generatedDir = path.join(ROOT, ".data", "generated");
@@ -53,7 +57,7 @@ if (shouldSpawnServer) {
       IMAGE_MASTER_QUEUE_OWNER: `real-agent-suite-${Date.now()}`,
       IMAGE_MASTER_JOB_CONCURRENCY: process.env.REAL_AGENT_SUITE_CONCURRENCY || "3",
       IMAGE_MASTER_JOB_LEASE_MS: "900000",
-      NEXT_DIST_DIR: process.env.NEXT_DIST_DIR || `.next-real-agent-suite-${stamp}`,
+      NEXT_DIST_DIR: distDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -130,6 +134,9 @@ try {
       providerReferenceStrategy: metadata.providerReferenceStrategy,
       providerRoles: metadata.itemProviderReferenceRoles,
       referenceRoles: metadata.itemReferenceRoles,
+      textAllowed: metadata.textAllowed,
+      copyText: metadata.copyText,
+      copyRenderPolicy: summarizeCopyRenderPolicy(metadata.copyRenderPolicy),
       agentAssetGroupIds: metadata.agentAssetGroupIds,
       promptWriterMode: metadata.providerPromptWriter?.mode,
       assetInvocationMode: metadata.assetInvocationPlanner?.mode,
@@ -193,6 +200,10 @@ try {
   process.exitCode = 1;
 } finally {
   await stopSmokeServer(server);
+  if (shouldSpawnServer && process.env.REAL_AGENT_SUITE_KEEP_DIST !== "1") {
+    fs.rmSync(distDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  }
+  restoreSourceFiles(sourceFileSnapshots);
 }
 
 async function assertConfigured() {
@@ -656,7 +667,7 @@ async function waitForServer(url) {
 async function waitForJobsDone(targetWorkflowId, expectedCount) {
   const started = Date.now();
   while (Date.now() - started < 30 * 60_000) {
-    const jobs = await requestJson(`${baseUrl}/api/jobs?workflowId=${encodeURIComponent(targetWorkflowId)}&summary=1`, {}, 200, 30_000);
+    const jobs = await requestJson(`${baseUrl}/api/jobs?workflowId=${encodeURIComponent(targetWorkflowId)}&summary=0`, {}, 200, 30_000);
     const relevant = Array.isArray(jobs) ? jobs : [];
     if (relevant.length >= expectedCount) {
       const terminal = relevant.filter((job) => ["done", "completed", "failed", "cancelled"].includes(job.status));
@@ -817,6 +828,19 @@ function summarizeJob(job) {
   };
 }
 
+function summarizeCopyRenderPolicy(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return {
+    mode: value.mode,
+    requestedMode: value.requestedMode,
+    allowBurnIn: value.allowBurnIn,
+    requiresExplicitApproval: value.requiresExplicitApproval,
+    inImageText: Array.isArray(value.inImageText) ? value.inImageText : undefined,
+    exportCopy: Array.isArray(value.exportCopy) ? value.exportCopy : undefined,
+    forbiddenClaims: Array.isArray(value.forbiddenClaims) ? value.forbiddenClaims : undefined,
+  };
+}
+
 function readLastProviderRequestId(metadata) {
   const ledger = Array.isArray(metadata.providerAttemptLedger) ? metadata.providerAttemptLedger : [];
   const latest = ledger.at(-1);
@@ -860,12 +884,16 @@ function normalizeReferenceMode(value) {
 function normalizeItemMode(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (["mall-model", "mall_model", "model", "single"].includes(normalized)) return "mall-model";
+  if (["copy", "burn", "burn-in", "burn_in", "taobao-copy", "taobao_copy"].includes(normalized)) return "taobao-copy";
   return "all";
 }
 
 function filterItemsByMode(items, mode) {
   if (mode === "mall-model") {
     return items.filter((item) => item.itemId === "mall-model-showcase");
+  }
+  if (mode === "taobao-copy") {
+    return items.filter((item) => item.itemId === "taobao-detail-selling-copy");
   }
   return items;
 }

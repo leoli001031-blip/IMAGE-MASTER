@@ -5,7 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { stopSmokeServer } from "./smoke-runtime.mjs";
+import { restoreSourceFiles, snapshotSourceFiles, stopSmokeServer } from "./smoke-runtime.mjs";
 
 const ROOT = process.cwd();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -13,6 +13,10 @@ const port = Number(process.env.REAL_MIXED_REF_E2E_PORT || 3494);
 const externalBaseUrl = process.env.REAL_MIXED_REF_E2E_BASE_URL?.trim();
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
+const distDir = process.env.NEXT_DIST_DIR || `.next-real-mixed-ref-${stamp}`;
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 const outDir = path.join(ROOT, "test_artifacts", "api-smoke");
 const workflowId = `workflow_real_mixed_ref_${stamp}`;
 const frameNodeId = `frame_real_mixed_ref_${stamp}`;
@@ -49,7 +53,7 @@ if (shouldSpawnServer) {
       IMAGE_MASTER_QUEUE_OWNER: `real-mixed-ref-${Date.now()}`,
       IMAGE_MASTER_JOB_CONCURRENCY: process.env.REAL_MIXED_REF_CONCURRENCY || "1",
       IMAGE_MASTER_JOB_LEASE_MS: "900000",
-      NEXT_DIST_DIR: process.env.NEXT_DIST_DIR || `.next-real-mixed-ref-${stamp}`,
+      NEXT_DIST_DIR: distDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -170,6 +174,10 @@ try {
   process.exitCode = 1;
 } finally {
   await stopSmokeServer(server);
+  if (shouldSpawnServer && process.env.REAL_MIXED_REF_KEEP_DIST !== "1") {
+    fs.rmSync(distDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  }
+  restoreSourceFiles(sourceFileSnapshots);
 }
 
 async function assertConfigured() {
@@ -466,7 +474,7 @@ async function waitForServer(url) {
 async function waitForJobsDone(targetWorkflowId, expectedCount) {
   const started = Date.now();
   while (Date.now() - started < 20 * 60_000) {
-    const jobs = await requestJson(`${baseUrl}/api/jobs?workflowId=${encodeURIComponent(targetWorkflowId)}`, {}, 200, 30_000);
+    const jobs = await requestJson(`${baseUrl}/api/jobs?workflowId=${encodeURIComponent(targetWorkflowId)}&summary=0`, {}, 200, 30_000);
     const relevant = Array.isArray(jobs) ? jobs : [];
     if (relevant.length >= expectedCount) {
       const terminal = relevant.filter((job) => ["done", "completed", "failed", "cancelled"].includes(job.status));
