@@ -317,6 +317,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleGroupRetry[\s\S]*jobIds\.length === 0[\s\S]*没有可重跑的任务，已切到调整这组[\s\S]*image-master:artifact-group-edit/,
+  "direct group retry should fall back to scoped group editing when no retryable jobs exist"
+);
+assert.match(
+  workbenchSource,
   /<CanvasAgentPanel[\s\S]*onHighlightArtifactGroup=\{setHighlightedArtifactGroupTitle\}[\s\S]*handleArtifactGroupEdit[\s\S]*onHighlightArtifactGroup\(title\)/,
   "group adjust actions should briefly highlight the affected result group"
 );

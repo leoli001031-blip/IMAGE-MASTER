@@ -4608,12 +4608,26 @@ export function VisualWorkbench() {
       const jobIds = artifactIds
         .map((artifactId) => artifacts.find((artifact) => artifact.id === artifactId)?.jobId)
         .filter((value): value is string => typeof value === "string" && !!value.trim());
+      const groupTitle = typeof detail?.group === "string" && detail.group.trim()
+        ? detail.group.trim()
+        : "当前图组";
       if (jobIds.length === 0) {
-        setJobMessage("这组没有可重跑的任务");
+        if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
+        setJobMessage("这组没有可重跑的任务，已切到调整这组");
+        setComposeMessage(`「${groupTitle}」没有可直接重跑的任务；已切到调整这组，后续只会改这一组。`);
+        window.dispatchEvent(
+          new CustomEvent("image-master:artifact-group-edit", {
+            detail: {
+              ...(detail ?? {}),
+              group: groupTitle,
+              artifactIds,
+            },
+          })
+        );
         return;
       }
       if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
-      setComposeMessage(`按原上下文重做「${detail?.group || "当前图组"}」；其他已保留图片不受影响。`);
+      setComposeMessage(`按原上下文重做「${groupTitle}」；其他已保留图片不受影响。`);
       handleRetryAll(new CustomEvent("image-master:generation-frame-output-retry-all", { detail: { jobIds } }));
     };
 
