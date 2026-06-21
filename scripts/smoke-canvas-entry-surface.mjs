@@ -308,6 +308,11 @@ assert.match(
 );
 assert.match(
   source,
+  /<AgentPlanDiffCard[\s\S]*actionLabel=\{[\s\S]*workflowPlanActionLabel[\s\S]*onAction=\{workflowPlanPreview \? onApplyWorkflowPlan : undefined\}[\s\S]*function AgentPlanDiffCard[\s\S]*确认无误后执行这份计划[\s\S]*disabled=\{actionDisabled\}[\s\S]*\{actionLabel\}/,
+  "plan diff card should expose a direct action for applying the adjusted plan"
+);
+assert.match(
+  source,
   /<AgentPlanBoard[\s\S]*planDiff=\{planDiff\}[\s\S]*function AgentPlanBoard[\s\S]*isAgentPlanGroupAffectedByDiff\(group, planDiff\)[\s\S]*已调整/,
   "plan board should mark groups affected by the latest natural-language plan edit"
 );

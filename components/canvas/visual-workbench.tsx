@@ -9473,7 +9473,21 @@ function CanvasAgentPanel({
           )}
 
           {planDiff && (
-            <AgentPlanDiffCard diff={planDiff} />
+            <AgentPlanDiffCard
+              diff={planDiff}
+              actionLabel={
+                workflowPlanPreview
+                  ? workflowPlanActionLabel || (hasActiveGenerationFrame ? "应用到当前任务" : "应用到画布")
+                  : undefined
+              }
+              actionDisabled={Boolean(workflowPlanPreview && hasBlockedAgentPlanItems)}
+              actionHelpText={
+                workflowPlanPreview && hasBlockedAgentPlanItems
+                  ? "先补齐关键素材，再应用这份已调整计划。"
+                  : "确认无误后，可以直接执行这份已调整计划。"
+              }
+              onAction={workflowPlanPreview ? onApplyWorkflowPlan : undefined}
+            />
           )}
 
           {focusedPlanGroup && !editTarget && (
@@ -9994,7 +10008,19 @@ function AgentPlanBoard({
   );
 }
 
-function AgentPlanDiffCard({ diff }: { diff: AgentPlanDiff }) {
+function AgentPlanDiffCard({
+  diff,
+  actionLabel,
+  actionDisabled = false,
+  actionHelpText,
+  onAction,
+}: {
+  diff: AgentPlanDiff;
+  actionLabel?: string;
+  actionDisabled?: boolean;
+  actionHelpText?: string;
+  onAction?: () => void;
+}) {
   const sections = [
     { label: "新增", values: diff.additions },
     { label: "删除", values: diff.removals },
@@ -10024,6 +10050,22 @@ function AgentPlanDiffCard({ diff }: { diff: AgentPlanDiff }) {
               <span className="min-w-0 flex-1 text-warm-ink">{section.values.join("；")}</span>
             </div>
           ))}
+        </div>
+      )}
+      {onAction && actionLabel && (
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-warm-primary/15 bg-warm-paper/75 px-2 py-1.5">
+          <span className="min-w-0 text-warm-muted">
+            {actionHelpText || "确认无误后执行这份计划。"}
+          </span>
+          <button
+            type="button"
+            disabled={actionDisabled}
+            onClick={onAction}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-warm-primary px-2 text-[10px] font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Save className="h-3 w-3" />
+            {actionLabel}
+          </button>
         </div>
       )}
     </div>
