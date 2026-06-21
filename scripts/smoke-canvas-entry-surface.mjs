@@ -63,6 +63,36 @@ assert.match(
 );
 assert.match(
   source,
+  /interface PendingAgentSamplePlan[\s\S]*preview: WorkflowPlanPreview[\s\S]*generationRequest: string/,
+  "Agent sample generation should keep a pending plan object before creating jobs"
+);
+assert.match(
+  source,
+  /const \[pendingAgentSamplePlan, setPendingAgentSamplePlan\]/,
+  "Agent sample plan state should be explicit instead of overloading generated jobs"
+);
+assert.match(
+  source,
+  /canGenerateSample[\s\S]*\? `规划 \$\{sampleOutputCount\} 张样张`/,
+  "product-ready Agent sample action should preview a plan before generation"
+);
+assert.match(
+  source,
+  /workflowPlanActionLabel=\{pendingAgentSamplePlan \? "确认生成样张" : undefined\}/,
+  "pending sample plan should turn the plan-board action into an explicit generation confirmation"
+);
+assert.match(
+  source,
+  /if \(!confirmedPlan\) \{[\s\S]*buildAgentSampleWorkflowPlanPreview[\s\S]*setPendingAgentSamplePlan[\s\S]*setWorkflowPlanPreview\(preview\)[\s\S]*确认后才会创建生成任务/,
+  "first Agent sample click should create a visible plan preview, not enqueue provider jobs"
+);
+assert.match(
+  source,
+  /if \(pendingAgentSamplePlan\) \{[\s\S]*handleGenerateAgentSample\(pendingAgentSamplePlan\)/,
+  "plan-board confirmation should be the only path that turns a pending sample plan into jobs"
+);
+assert.match(
+  source,
   /data-testid="agent-gap-checklist"[\s\S]*关键缺口/,
   "Agent panel should expose a visible critical-gap checklist instead of burying missing assets in long chat text"
 );

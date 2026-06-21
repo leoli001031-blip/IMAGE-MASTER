@@ -1104,6 +1104,14 @@ interface AgentPlanEnrichmentResult {
   fallbackReason?: string;
 }
 
+interface PendingAgentSamplePlan {
+  preview: WorkflowPlanPreview;
+  generationRequest: string;
+  userBrief: string;
+  structuredProjectStarterPrompt?: string;
+  outputType: string;
+}
+
 interface AgentProgressStep {
   id: string;
   label: string;
@@ -1223,6 +1231,7 @@ export function VisualWorkbench() {
   const [composeMessage, setComposeMessage] = useState("");
   const [workflowPlanPreview, setWorkflowPlanPreview] = useState<WorkflowPlanPreview | null>(null);
   const [appliedWorkflowPlanPreview, setAppliedWorkflowPlanPreview] = useState<WorkflowPlanPreview | null>(null);
+  const [pendingAgentSamplePlan, setPendingAgentSamplePlan] = useState<PendingAgentSamplePlan | null>(null);
   const [agentPlanDiff, setAgentPlanDiff] = useState<AgentPlanDiff | null>(null);
   const [pendingWorkflowDraft, setPendingWorkflowDraft] = useState<WorkflowComposeDraft | null>(null);
   const [productImportText, setProductImportText] = useState("");
@@ -2420,6 +2429,7 @@ export function VisualWorkbench() {
       if (options.productMessage) setProductImportMessage(options.productMessage);
       setWorkflowPlanPreview(null);
       setAppliedWorkflowPlanPreview(null);
+      setPendingAgentSamplePlan(null);
       setPendingWorkflowDraft(null);
     },
     [pushHistorySnapshot, requestCanvasFocus]
@@ -2434,6 +2444,7 @@ export function VisualWorkbench() {
     setComposingWorkflow(true);
     setAgentLastUserBrief(userDisplayBrief.trim());
     setAgentPlanDiff(null);
+    setPendingAgentSamplePlan(null);
     setComposeMessage("正在生成工作流草案...");
     if (source === "product-import") setProductImportMessage("正在按导入商品生成工作流...");
 
@@ -2530,6 +2541,11 @@ export function VisualWorkbench() {
   };
 
   const handleApplyWorkflowPlan = useCallback(() => {
+    if (pendingAgentSamplePlan) {
+      void handleGenerateAgentSample(pendingAgentSamplePlan);
+      return;
+    }
+
     if (!pendingWorkflowDraft) {
       setComposeMessage("暂无可应用的计划预览");
       return;
@@ -2565,11 +2581,12 @@ export function VisualWorkbench() {
     });
     setAppliedWorkflowPlanPreview(appliedPlan);
     setComposeBrief("");
-  }, [applyWorkflowDraftToCanvas, canvasNodes, pendingWorkflowDraft, workflowPlanPreview]);
+  }, [applyWorkflowDraftToCanvas, canvasNodes, pendingAgentSamplePlan, pendingWorkflowDraft, workflowPlanPreview]);
 
   const handleDismissWorkflowPlan = useCallback(() => {
     setWorkflowPlanPreview(null);
     setAppliedWorkflowPlanPreview(null);
+    setPendingAgentSamplePlan(null);
     setPendingWorkflowDraft(null);
     setAgentPlanDiff(null);
     setComposeMessage("已关闭计划预览");
@@ -2890,11 +2907,19 @@ export function VisualWorkbench() {
       if (planEdit.changed) {
         setWorkflowPlanPreview(planEdit.preview);
         if (planEdit.draft) setPendingWorkflowDraft(planEdit.draft);
+        setPendingAgentSamplePlan((plan) =>
+          plan ? { ...plan, preview: planEdit.preview } : plan
+        );
         setAgentPlanDiff(planEdit.diff ?? null);
         setAgentLastUserBrief(brief);
         setComposeBrief("");
         setComposeMessage(planEdit.message);
         setWorkflowMessage("已按你的话调整计划");
+        return;
+      }
+
+      if (pendingAgentSamplePlan) {
+        setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、横版不要字、加商场场景。");
         return;
       }
 
@@ -2955,11 +2980,19 @@ export function VisualWorkbench() {
     if (effectivePlanEdit.changed) {
       setWorkflowPlanPreview(effectivePlanEdit.preview);
       if (effectivePlanEdit.draft) setPendingWorkflowDraft(effectivePlanEdit.draft);
+      setPendingAgentSamplePlan((plan) =>
+        plan ? { ...plan, preview: effectivePlanEdit.preview } : plan
+      );
       setAgentPlanDiff(effectivePlanEdit.diff ?? null);
       setAgentLastUserBrief(brief);
       setComposeBrief("");
       setComposeMessage(effectivePlanEdit.message);
       setWorkflowMessage("已按你的话调整计划");
+      return;
+    }
+
+    if (pendingAgentSamplePlan) {
+      setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、横版不要字、加商场场景。");
       return;
     }
 
@@ -3271,7 +3304,7 @@ export function VisualWorkbench() {
     }
   };
 
-  const handleGenerateAgentSample = async () => {
+  async function handleGenerateAgentSample(confirmedPlan?: PendingAgentSamplePlan) {
     const productNode = findCanvasProductReferenceNode(canvasNodes);
     if (!productNode) {
       setComposeMessage("先导入一张商品图，我再生成样张");
@@ -3285,22 +3318,22 @@ export function VisualWorkbench() {
       return;
     }
 
-    const userBrief = composeBrief.trim();
-    const structuredProjectStarterPrompt = userBrief ? undefined : activeProjectStarterPrompt || undefined;
+    const userBrief = confirmedPlan?.userBrief ?? composeBrief.trim();
+    const structuredProjectStarterPrompt =
+      confirmedPlan?.structuredProjectStarterPrompt ??
+      (userBrief ? undefined : activeProjectStarterPrompt || undefined);
     const cleanBrief = userBrief || structuredProjectStarterPrompt || "";
     const explicitSampleBurnIn = hasExplicitCopyBurnInRequest(cleanBrief);
-    const sampleOutputCount = resolveAgentSampleOutputCount(
-      composeBrief,
-      workflowPlanPreview ?? appliedWorkflowPlanPreview
-    );
-    const agentSampleOutputType = "custom_template";
+    const sampleOutputCount = confirmedPlan?.preview.estimatedCount ??
+      resolveAgentSampleOutputCount(composeBrief, workflowPlanPreview ?? appliedWorkflowPlanPreview);
+    const agentSampleOutputType = confirmedPlan?.outputType ?? "custom_template";
     const sampleGuidance = explicitSampleBurnIn
       ? `先生成 ${sampleOutputCount} 张样张用于确认方向。用户已明确要求文案进图，短文案必须烧进画面安全区。`
       : `先生成 ${sampleOutputCount} 张样张用于确认方向。文案默认作为可编辑图层，除非明确要求，不直接烧进图片。`;
-    const generationRequest = [
-      cleanBrief || "给当前商品生成一组淘宝商品样张，包含主图海报、卖点图、细节图和生活场景图。",
-      sampleGuidance,
-    ].join("\n");
+    const generationRequest = confirmedPlan?.generationRequest ?? [
+        cleanBrief || "给当前商品生成一组淘宝商品样张，包含主图海报、卖点图、细节图和生活场景图。",
+        sampleGuidance,
+      ].join("\n");
     const framePosition = findAvailableGenerationFramePosition(canvasNodes, {
       anchorNode: productNode,
       preferredPosition: {
@@ -3356,6 +3389,72 @@ export function VisualWorkbench() {
     const nextNodes = [...canvasNodes, frameNode];
     const nextEdges = [...canvasEdges, ...frameEdges];
 
+    if (!confirmedPlan) {
+      setGeneratingAgentSample(true);
+      setComposeMessage(`正在规划 ${sampleOutputCount} 张样张...`);
+      setJobMessage("");
+
+      try {
+        const referenceContext = buildCanvasGenerationReferenceContext({
+          targetNode: frameNode,
+          nodes: nextNodes,
+          edges: nextEdges,
+          components,
+          assets: allAssets,
+          productAsset: undefined,
+        });
+        const runDecision = resolveGenerationFrameRunRule({
+          outputType: agentSampleOutputType,
+          frame: generationFrame,
+          userRequest: generationRequest,
+        });
+        if (!runDecision.canRun) {
+          setComposeMessage(runDecision.message ?? "任务缺少运行输入");
+          return;
+        }
+
+        const sampleCopyRenderMode = inferAgentCopyRenderMode(
+          cleanBrief || generationRequest,
+          explicitSampleBurnIn
+        );
+        const planPrompt = buildJobPromptFromNode(frameNode, undefined, referenceContext);
+        const planItems = applyAgentSampleCopyPlan({
+          items: buildGenerationFramePlanItems(frameNode, planPrompt).slice(0, sampleOutputCount),
+          sampleCopyRenderMode,
+          referenceContext,
+          request: cleanBrief || generationRequest,
+        });
+        const preview = buildAgentSampleWorkflowPlanPreview({
+          planItems,
+          generationRequest,
+          sampleOutputCount: planItems.length,
+          referenceContext,
+        });
+
+        setPendingAgentSamplePlan({
+          preview,
+          generationRequest,
+          userBrief,
+          structuredProjectStarterPrompt,
+          outputType: agentSampleOutputType,
+        });
+        setWorkflowPlanPreview(preview);
+        setAppliedWorkflowPlanPreview(null);
+        setPendingWorkflowDraft(null);
+        setAgentPlanDiff(null);
+        setAgentLastUserBrief(userBrief || cleanBrief || generationRequest);
+        setComposeBrief("");
+        setWorkflowMessage("已生成样张计划，确认后再生成");
+        setComposeMessage(`已拆成 ${preview.estimatedCount} 张样张计划；确认后才会创建生成任务。`);
+      } catch (error) {
+        console.error("Failed to preview agent sample plan:", error);
+        setComposeMessage("样张计划生成失败，请稍后重试");
+      } finally {
+        setGeneratingAgentSample(false);
+      }
+      return;
+    }
+
     pushHistorySnapshot();
     setCanvasNodes(nextNodes);
     setCanvasEdges(nextEdges);
@@ -3401,32 +3500,18 @@ export function VisualWorkbench() {
       const requestCopyRenderMode = sampleCopyRenderMode === "burn_in"
         ? "metadata_only"
         : sampleCopyRenderMode;
-      const referenceCopyText = sampleCopyRenderMode === "burn_in"
-        ? getPreferredBurnInCopyTextFromReferenceContext(referenceContext)
-        : undefined;
-      const sampleCopyText = sampleCopyRenderMode === "burn_in"
-        ? extractAgentBurnInCopyText(cleanBrief || generationRequest)
-        : undefined;
       const planPrompt = buildJobPromptFromNode(frameNode, undefined, referenceContext);
-      const allowGlobalSampleBurnIn = sampleCopyRenderMode === "burn_in";
-      const planItems = buildGenerationFramePlanItems(frameNode, planPrompt)
-        .slice(0, sampleOutputCount)
-        .map((item) => {
-          const itemWantsBurnIn =
-            item.copyRenderMode === "burn_in" ||
-            (allowGlobalSampleBurnIn && item.textAllowed);
-          const itemCopyText = itemWantsBurnIn
-            ? referenceCopyText ?? item.copyText ?? (item.textAllowed ? sampleCopyText : undefined)
-            : undefined;
-          return {
-            ...item,
-            textAllowed: itemWantsBurnIn ? item.textAllowed || Boolean(itemCopyText) : false,
-            copyText: itemCopyText,
-            copyRenderMode: itemWantsBurnIn && itemCopyText
-              ? "burn_in"
-              : item.copyRenderMode ?? sampleCopyRenderMode,
-          };
-        });
+      const fallbackPlanItems = applyAgentSampleCopyPlan({
+        items: buildGenerationFramePlanItems(frameNode, planPrompt).slice(0, sampleOutputCount),
+        sampleCopyRenderMode,
+        referenceContext,
+        request: cleanBrief || generationRequest,
+      });
+      const planItems = buildAgentSampleRunItemsFromPreview({
+        preview: confirmedPlan.preview,
+        fallbackItems: fallbackPlanItems,
+        basePrompt: planPrompt,
+      });
       const batchId = `agent_sample_${frameNode.id}_${Date.now()}`;
       const baseMetadata = {
         ...buildBaseJobMetadata(frameNode, undefined, referenceContext),
@@ -3497,6 +3582,9 @@ export function VisualWorkbench() {
         ? `已创建 ${createdJobs.length} 张样张任务 · ${agentPlanText}`
         : `已创建 ${createdJobs.length} 张样张任务`);
       setComposeMessage("样张任务已创建，生成结果会回填到画布");
+      setWorkflowPlanPreview(null);
+      setPendingAgentSamplePlan(null);
+      setAppliedWorkflowPlanPreview(confirmedPlan.preview);
       void refreshQueue();
       void refreshProjects();
     } catch (error) {
@@ -3505,7 +3593,7 @@ export function VisualWorkbench() {
     } finally {
       setGeneratingAgentSample(false);
     }
-  };
+  }
 
   useEffect(() => {
     const handleGenerationFrameRun = (event: Event) => {
@@ -5356,6 +5444,8 @@ export function VisualWorkbench() {
       setCanvasNodes((nodes) => [...nodes, node]);
       setSelectedNodeId(node.id);
       requestCanvasFocus([node.id]);
+      setActiveBottomPanel(null);
+      setAgentPanelCollapsed(false);
       setWorkflowMessage("素材已放到画布，可作为 Agent 参考");
     },
     [allAssets, canvasNodes, pushHistorySnapshot, requestCanvasFocus, selectedNode]
@@ -5375,6 +5465,8 @@ export function VisualWorkbench() {
         setActiveProductComponentId(component.id);
       }
       requestCanvasFocus([node.id]);
+      setActiveBottomPanel(null);
+      setAgentPanelCollapsed(false);
       setWorkflowMessage("组件已放到画布，可作为 Agent 参考");
     },
     [
@@ -5770,6 +5862,7 @@ export function VisualWorkbench() {
         jobMessage={jobMessage}
         workflowPlanPreview={workflowPlanPreview}
         planDiff={agentPlanDiff}
+        workflowPlanActionLabel={pendingAgentSamplePlan ? "确认生成样张" : undefined}
         collapsed={agentPanelCollapsed}
         onComposeBriefChange={setComposeBrief}
         onComposeWorkflow={handleComposeWorkflow}
@@ -5779,7 +5872,7 @@ export function VisualWorkbench() {
         onDismissWorkflowPlan={handleDismissWorkflowPlan}
         onClearEditTarget={handleClearAgentImageEditTarget}
         onImportProduct={() => agentProductInputRef.current?.click()}
-        onGenerateSample={handleGenerateAgentSample}
+        onGenerateSample={() => void handleGenerateAgentSample()}
         onCollapsedChange={setAgentPanelCollapsed}
       />
       <input
@@ -8245,6 +8338,7 @@ function CanvasAgentPanel({
   jobMessage,
   workflowPlanPreview,
   planDiff,
+  workflowPlanActionLabel,
   collapsed,
   onComposeBriefChange,
   onComposeWorkflow,
@@ -8276,6 +8370,7 @@ function CanvasAgentPanel({
   jobMessage: string;
   workflowPlanPreview: WorkflowPlanPreview | null;
   planDiff: AgentPlanDiff | null;
+  workflowPlanActionLabel?: string;
   collapsed: boolean;
   onComposeBriefChange: (brief: string) => void;
   onComposeWorkflow: () => void;
@@ -8339,7 +8434,7 @@ function CanvasAgentPanel({
       : needsProduct
       ? "计划已经放好，先导入商品图。"
       : canGenerateSample
-        ? `商品图已接入，可以先生成 ${sampleOutputCount} 张样张。`
+        ? `商品图已接入，可以先规划 ${sampleOutputCount} 张样张，确认后再生成。`
       : willCreateGenerationFrame
         ? "说需求，我会判断用途、比例、参考图和文案策略。"
         : "说需求，我会判断要做哪些图、怎么调用素材。";
@@ -8382,7 +8477,7 @@ function CanvasAgentPanel({
       : needsProduct
         ? "导入商品图"
       : canGenerateSample
-        ? `生成 ${sampleOutputCount} 张样张`
+        ? `规划 ${sampleOutputCount} 张样张`
       : workflowPlanPreview && hasComposeBrief
         ? "按这句话调整计划"
       : primaryMode === "generate_frame"
@@ -9124,7 +9219,7 @@ function CanvasAgentPanel({
                   className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-warm-primary px-3 py-2 text-xs font-medium text-warm-paper transition hover:bg-warm-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  {hasActiveGenerationFrame ? "应用到当前任务" : "应用到画布"}
+                  {workflowPlanActionLabel || (hasActiveGenerationFrame ? "应用到当前任务" : "应用到画布")}
                 </button>
                 <button
                   type="button"
@@ -9780,8 +9875,8 @@ function getAgentGroupPriorityLabel(group: AgentPlanGroup): string {
   if (group.status === "blocked") return "先补素材";
   const text = `${group.title} ${group.summary ?? ""}`.toLowerCase();
   if (/主图|main|hero/.test(text)) return "先做";
-  if (/详情|细节|材质|特写|工艺|场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle|detail|macro|material/.test(text)) return "验证";
   if (/海报|卖点|封面|收尾|poster|feature|cover/.test(text)) return "转化";
+  if (/详情|细节|材质|特写|工艺|场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle|detail|macro|material/.test(text)) return "验证";
   return "后续";
 }
 
@@ -9990,12 +10085,12 @@ function buildAgentGroupReason(group: AgentPlanGroup): string {
   const text = `${group.title} ${group.summary ?? ""}`.toLowerCase();
   const titleText = group.title.toLowerCase();
   if (/主图|main|hero/.test(text)) return "先交代商品正面价值，保证平台首图能快速识别。";
-  if (/详情|细节|材质|特写|工艺|detail|macro|material/.test(text)) return "补足材质、结构和做工证据，降低用户下单疑虑。";
   if (/海报|卖点|封面|收尾|poster|feature|cover/.test(text)) {
     return group.copyModes.includes("burn_in")
       ? "承担转化信息，短文案会直接进图，需要留安全区。"
       : "承担营销主视觉，文案默认作为后期图层更方便修改。";
   }
+  if (/详情|细节|材质|特写|工艺|detail|macro|material/.test(text)) return "补足材质、结构和做工证据，降低用户下单疑虑。";
   if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(titleText)) return "把商品放进具体环境，验证空间、光影和使用氛围。";
   if (/模特|真人|人物|上身|穿搭|model/.test(text)) return "展示尺度、上身状态和情绪，让商品进入真实使用关系。";
   if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(text)) return "把商品放进具体环境，验证空间、光影和使用氛围。";
@@ -10091,8 +10186,8 @@ function getAgentPlanGroupBusinessPurpose(group: AgentPlanGroup): string {
   const text = `${group.title} ${group.summary ?? ""}`.toLowerCase();
   const titleText = group.title.toLowerCase();
   if (/主图|main|hero/.test(text)) return "第一眼识别和点击";
-  if (/详情|细节|材质|特写|工艺|detail|macro|material/.test(text)) return "材质、结构和信任证据";
   if (/海报|卖点|封面|收尾|poster|feature|cover/.test(text)) return "转化信息和活动表达";
+  if (/详情|细节|材质|特写|工艺|detail|macro|material/.test(text)) return "材质、结构和信任证据";
   if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(titleText)) return "使用氛围、空间和光影";
   if (/模特|真人|人物|上身|穿搭|model/.test(text)) return "上身比例、姿态和情绪";
   if (/场景|生活|使用|室内|户外|商场|咖啡|scene|lifestyle/.test(text)) return "使用氛围、空间和光影";
@@ -14360,6 +14455,295 @@ function updateGenerationFrameOutputMetrics(
   ).length;
   const suffix = failed > 0 ? ` · ${failed} 失败` : "";
   return [...base.slice(0, 3), `图组 ${done}/${outputs.length}${suffix}`];
+}
+
+function applyAgentSampleCopyPlan({
+  items,
+  sampleCopyRenderMode,
+  referenceContext,
+  request,
+}: {
+  items: ReturnType<typeof buildGenerationFramePlanItems>;
+  sampleCopyRenderMode: "layout_layer" | "burn_in" | "metadata_only";
+  referenceContext: GenerationReferenceContext;
+  request: string;
+}): ReturnType<typeof buildGenerationFramePlanItems> {
+  const referenceCopyText = sampleCopyRenderMode === "burn_in"
+    ? getPreferredBurnInCopyTextFromReferenceContext(referenceContext)
+    : undefined;
+  const sampleCopyText = sampleCopyRenderMode === "burn_in"
+    ? extractAgentBurnInCopyText(request)
+    : undefined;
+  const allowGlobalSampleBurnIn = sampleCopyRenderMode === "burn_in";
+
+  return items.map((item) => {
+    const itemWantsBurnIn =
+      item.copyRenderMode === "burn_in" ||
+      (allowGlobalSampleBurnIn && item.textAllowed);
+    const itemCopyText = itemWantsBurnIn
+      ? referenceCopyText ?? item.copyText ?? (item.textAllowed ? sampleCopyText : undefined)
+      : undefined;
+    return {
+      ...item,
+      textAllowed: itemWantsBurnIn ? item.textAllowed || Boolean(itemCopyText) : false,
+      copyText: itemCopyText,
+      copyRenderMode: itemWantsBurnIn && itemCopyText
+        ? "burn_in"
+        : item.copyRenderMode ?? sampleCopyRenderMode,
+    };
+  });
+}
+
+function buildAgentSampleWorkflowPlanPreview({
+  planItems,
+  generationRequest,
+  sampleOutputCount,
+  referenceContext,
+}: {
+  planItems: ReturnType<typeof buildGenerationFramePlanItems>;
+  generationRequest: string;
+  sampleOutputCount: number;
+  referenceContext: GenerationReferenceContext;
+}): WorkflowPlanPreview {
+  const previewItems = planItems.map((item, index): WorkflowPlanPreviewItem => ({
+    id: item.itemId || `agent_sample_${index + 1}`,
+    title: item.title || `样张 ${index + 1}`,
+    purpose: getAgentSampleItemPurpose(item),
+    slot: item.type || item.exportSpecId || `sample_${index + 1}`,
+    ratio: item.ratio || "auto",
+    size: item.size,
+    copyMode: item.copyRenderMode || (item.textAllowed ? "layout_layer" : "metadata_only"),
+    componentRefs: [],
+    qualityChecks: item.qualityRules ?? [],
+  }));
+  const assetGroups = buildAgentSampleAssetGroups(referenceContext);
+  const assetGroupIdsByRole = new Map(assetGroups.map((group) => [group.role, group.id]));
+  const availableProviderRoles = new Set(
+    referenceContext.images
+      .filter((image) => image.providerUsable)
+      .map((image) => image.role)
+  );
+  const generationMatrix = planItems.map((item, index): WorkflowPlanPreviewAgentMatrixItem => {
+    const itemId = previewItems[index]?.id || item.itemId || `agent_sample_${index + 1}`;
+    const referenceRoles = normalizeAgentSampleReferenceRoles(item.referenceRoles);
+    const providerReferenceRoles = normalizeAgentSampleReferenceRoles(item.providerReferenceRoles)
+      .filter((role) => availableProviderRoles.has(role));
+    return {
+      id: `agent_sample_matrix_${itemId}`,
+      itemId,
+      title: item.title || `样张 ${index + 1}`,
+      type: item.type || item.exportSpecId || itemId,
+      ratio: item.ratio,
+      size: item.size,
+      skillId: "agent_sample_plan.v1",
+      outputSlotId: itemId,
+      referenceRoles,
+      providerReferenceRoles,
+      assetGroupIds: referenceRoles
+        .map((role) => assetGroupIdsByRole.get(role))
+        .filter((id): id is string => Boolean(id)),
+      copyMode: item.copyRenderMode || "layout_layer",
+      missingInputIds: [],
+      status: "ready",
+      summary: getAgentSampleItemPurpose(item),
+    };
+  });
+
+  return {
+    title: "Agent 样张计划",
+    summary: "先确认图组结构，再创建真实生成任务。",
+    items: previewItems,
+    images: previewItems,
+    componentRefs: [],
+    qualityChecks: [],
+    estimatedCount: sampleOutputCount,
+    editableParameters: [],
+    agentPlan: {
+      skillId: "agent_sample_plan.v1",
+      title: "Agent 样张计划",
+      shortLabel: "样张计划",
+      compositionMode: "custom_matrix",
+      summary: {
+        mode: "agent_sample_preview",
+        text: "先预览计划，确认后再生成。",
+        itemCount: sampleOutputCount,
+        readyItemCount: sampleOutputCount,
+        blockedItemCount: 0,
+      },
+      sampleCount: sampleOutputCount,
+      fullCount: sampleOutputCount,
+      requiredAssetRoles: ["product"],
+      optionalAssetRoles: agentUniqueStrings(
+        generationMatrix.flatMap((item) => item.referenceRoles).filter((role) => role !== "product")
+      ),
+      copyPolicy: {
+        defaultMode: "layout_layer",
+        requestedMode: generationMatrix.some((item) => item.copyMode === "burn_in") ? "burn_in" : "layout_layer",
+        allowBurnIn: generationMatrix.some((item) => item.copyMode === "burn_in"),
+        note: "逐张判断文案是否进图；确认计划后再创建任务。",
+      },
+      phases: [
+        {
+          id: "preview",
+          label: "计划",
+          description: "先让用户确认图组、比例、参考图和文案策略。",
+        },
+        {
+          id: "generate",
+          label: "生成",
+          description: "确认后创建真实生成任务。",
+        },
+      ],
+      outputSlots: previewItems.map((item) => ({
+        id: item.id,
+        label: item.title,
+        purpose: item.purpose,
+        ratio: item.ratio,
+        samplePhase: true,
+      })),
+      assetGroups,
+      generationMatrix,
+      missingInputs: [],
+    },
+  };
+}
+
+function buildAgentSampleRunItemsFromPreview({
+  preview,
+  fallbackItems,
+  basePrompt,
+}: {
+  preview: WorkflowPlanPreview;
+  fallbackItems: ReturnType<typeof buildGenerationFramePlanItems>;
+  basePrompt: string;
+}): ReturnType<typeof buildGenerationFramePlanItems> {
+  const matrixByItemId = new Map(
+    (preview.agentPlan?.generationMatrix ?? []).map((item) => [item.itemId, item])
+  );
+  const fallbackById = new Map(fallbackItems.map((item) => [item.itemId, item]));
+  const setContextPrompt = buildGenerationFrameSetContextPrompt(basePrompt);
+
+  return preview.items.map((item, index) => {
+    const fallback = fallbackById.get(item.id) ?? fallbackItems[index] ?? fallbackItems[0];
+    const matrix = matrixByItemId.get(item.id);
+    const referenceRoles = normalizeAgentSampleReferenceRoles(
+      matrix?.referenceRoles ?? fallback?.referenceRoles ?? ["product"]
+    );
+    const providerReferenceRoles = normalizeAgentSampleReferenceRoles(
+      matrix?.providerReferenceRoles ?? fallback?.providerReferenceRoles ?? ["product"]
+    );
+    const copyRenderMode = normalizeAgentSampleCopyMode(
+      matrix?.copyMode || item.copyMode || fallback?.copyRenderMode
+    );
+    const purpose = item.purpose || matrix?.summary || fallback?.prompt || "";
+    return {
+      ...(fallback ?? {}),
+      itemId: item.id || fallback?.itemId || `agent_sample_${index + 1}`,
+      title: item.title || fallback?.title || `样张 ${index + 1}`,
+      type: item.slot || fallback?.type || item.id || `sample_${index + 1}`,
+      copyRenderMode,
+      copyText: copyRenderMode === "burn_in"
+        ? fallback?.copyText || extractAgentBurnInCopyText(`${item.title} ${purpose}`) || ""
+        : "",
+      textAllowed: copyRenderMode === "burn_in",
+      prompt: [
+        setContextPrompt,
+        "Single-image execution rule: render exactly one finished image for this item only. Do not create a collage, multi-panel board, contact sheet, grid, storyboard, tiled layout, comparison sheet, moodboard, or one image containing multiple deliverables. The requested set count means multiple separate jobs, not multiple panels inside this image.",
+        `Confirmed Agent plan item ${index + 1}/${preview.items.length}: ${item.title}.`,
+        purpose,
+        copyRenderMode === "burn_in"
+          ? "This item must place only the requested short copy inside a clean visual safe area. Do not modify product packaging labels."
+          : "Do not burn marketing copy into the image unless explicitly requested for this item.",
+        "This image must feel like part of the same commercial image set as the other planned outputs.",
+      ].filter(Boolean).join("\n"),
+      exportSpecId: item.id || fallback?.exportSpecId || `agent_sample_${index + 1}`,
+      naming: `${item.id || fallback?.naming || `agent_sample_${index + 1}`}_${index + 1}`,
+      size: item.size || fallback?.size || "1024x1024",
+      ratio: item.ratio || fallback?.ratio || "1:1",
+      whiteBackground: fallback?.whiteBackground ?? false,
+      modelRequired: fallback?.modelRequired ?? referenceRoles.includes("model"),
+      referenceRoles,
+      providerReferenceRoles,
+      qualityRules: fallback?.qualityRules ?? [
+        "Keep product identity stable.",
+        "Avoid malformed hands, distorted logos, and inconsistent material.",
+        "Keep the visual language consistent across the set.",
+      ],
+      metadata: {
+        ...(fallback?.metadata ?? {}),
+        frameOutputRole: item.id || fallback?.exportSpecId,
+        frameOutputIndex: index + 1,
+        plannedFrameOutput: true,
+        copyRenderMode,
+        agentSamplePlanConfirmed: true,
+        shotIntentText: [item.title, item.slot, purpose].filter(Boolean).join(" "),
+      },
+    };
+  });
+}
+
+function getAgentSampleItemPurpose(
+  item: ReturnType<typeof buildGenerationFramePlanItems>[number]
+): string {
+  const text = `${item.title} ${item.type}`.toLowerCase();
+  if (/主图|main|hero/.test(text)) return "交代商品主视觉，用于首屏识别和点击。";
+  if (/细节|材质|特写|detail|macro|material/.test(text)) return "展示材质、结构或局部特征，补足信任证据。";
+  if (/详情|卖点|海报|poster|feature|taobao|淘宝/.test(text)) {
+    return item.copyRenderMode === "burn_in"
+      ? "承载短标题或核心卖点，文案放画面安全区，不改商品包装标签。"
+      : "作为营销视觉使用，文案默认保留为后期图层。";
+  }
+  if (/banner|横版|活动/.test(text)) return "用于横版活动入口或投放版位，保持画面干净可延展。";
+  if (/场景|客厅|露营|室内|户外|scene|lifestyle/.test(text)) return "把商品放入具体环境，验证空间、光影和使用氛围。";
+  if (/模特|真人|人物|上身|穿搭|model/.test(text)) return "展示人物关系、尺度和使用情绪。";
+  return item.copyRenderMode === "burn_in"
+    ? "这张需要直接承载画面短文案，重点检查安全区。"
+    : "补齐整套商业图组，方便后续挑图和单张重做。";
+}
+
+function buildAgentSampleAssetGroups(
+  referenceContext: GenerationReferenceContext
+): WorkflowPlanPreviewAgentAssetGroup[] {
+  return generationFrameRoles
+    .map((role): WorkflowPlanPreviewAgentAssetGroup | undefined => {
+      const images = referenceContext.images.filter((image) => image.role === role);
+      const roleContext = referenceContext.roles[role];
+      if (images.length === 0 && !roleContext) return undefined;
+      return {
+        id: `sample_asset_${role}`,
+        role,
+        title: roleContext?.title || getGenerationReferenceRoleLabel(role),
+        required: role === "product",
+        available: images.length > 0 || Boolean(roleContext),
+        providerUsable: images.some((image) => image.providerUsable),
+        usage: role === "product" ? "锁定商品身份" : "作为计划参考",
+        imageCount: images.length,
+        assetIds: agentUniqueStrings([
+          ...images.map((image) => image.assetId || ""),
+          ...(roleContext?.assetIds ?? []),
+        ]),
+        sourceNodeIds: agentUniqueStrings([
+          ...images.map((image) => image.nodeId || ""),
+          ...(roleContext?.sourceNodeIds ?? []),
+        ]),
+        componentIds: agentUniqueStrings([
+          ...images.map((image) => image.componentId || ""),
+          ...(roleContext?.componentIds ?? []),
+        ]),
+      };
+    })
+    .filter((group): group is WorkflowPlanPreviewAgentAssetGroup => Boolean(group));
+}
+
+function normalizeAgentSampleReferenceRoles(values: readonly string[] | undefined): GenerationReferenceRole[] {
+  const allowed = new Set<GenerationReferenceRole>(["product", "model", "style", "scene", "copy"]);
+  return agentUniqueStrings([...(values ?? [])])
+    .filter((value): value is GenerationReferenceRole => allowed.has(value as GenerationReferenceRole));
+}
+
+function normalizeAgentSampleCopyMode(value: unknown): "layout_layer" | "burn_in" | "metadata_only" {
+  if (value === "burn_in" || value === "metadata_only" || value === "layout_layer") return value;
+  return "layout_layer";
 }
 
 function buildGenerationFramePlanItems(
