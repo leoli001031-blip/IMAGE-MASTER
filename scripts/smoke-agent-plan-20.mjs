@@ -93,11 +93,26 @@ try {
   }
   process.exitCode = 1;
 } finally {
-  if (server) server.kill("SIGTERM");
+  if (server) await stopSmokeServer(server);
   if (shouldSpawnServer && process.env.AGENT_PLAN_20_SMOKE_KEEP_DIST !== "1") {
-    fs.rmSync(distDir, { recursive: true, force: true });
+    fs.rmSync(distDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
   }
   restoreSourceFiles(sourceFileSnapshots);
+}
+
+function stopSmokeServer(child) {
+  if (!child || child.exitCode !== null) return Promise.resolve();
+  child.kill("SIGTERM");
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (child.exitCode === null) child.kill("SIGKILL");
+      resolve();
+    }, 5000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 function snapshotSourceFiles(files) {
