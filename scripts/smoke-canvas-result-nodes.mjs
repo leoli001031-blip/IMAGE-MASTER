@@ -626,6 +626,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /const emptyHint = value !== "all" && activeCount === 0[\s\S]*data-testid="result-review-empty-filter"[\s\S]*当前筛选没有命中[\s\S]*function getResultReviewEmptyFilterHint[\s\S]*needs_redo[\s\S]*让 Agent 只改这张[\s\S]*qa_risk[\s\S]*文案安全区/,
+  "empty result-review filters should explain what to do next instead of leaving a blank result wall"
+);
+assert.match(
+  workbenchSource,
   /type ResultReviewFilter = "all" \| "approved" \| "pending" \| "needs_redo" \| "rejected" \| "failed" \| "qa_risk"[\s\S]*只看待检查[\s\S]*只看已淘汰[\s\S]*只看 QA 风险/,
   "result review filter should expose every pick-state plus a QA-risk view for large result sets"
 );

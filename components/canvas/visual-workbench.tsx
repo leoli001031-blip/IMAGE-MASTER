@@ -7541,6 +7541,9 @@ function ResultReviewFilterBar({
   const activeOption = resultReviewFilterOptions.find((option) => option.id === value) ?? resultReviewFilterOptions[0];
   const activeCount = counts[value] ?? 0;
   const isActiveFilterHighlighted = highlightedValue === value && value !== "all";
+  const emptyHint = value !== "all" && activeCount === 0
+    ? getResultReviewEmptyFilterHint(value)
+    : "";
 
   return (
     <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-wrap gap-1.5 lg:right-[350px]">
@@ -7591,8 +7594,27 @@ function ResultReviewFilterBar({
           </button>
         </div>
       )}
+      {emptyHint && (
+        <div
+          className="pointer-events-auto max-w-[360px] rounded-xl border border-warm-line/55 bg-warm-paper/92 px-3 py-2 text-[11px] leading-4 text-warm-muted shadow-sm backdrop-blur"
+          data-testid="result-review-empty-filter"
+        >
+          <span className="font-medium text-warm-ink">当前筛选没有命中。</span>
+          <span className="ml-1">{emptyHint}</span>
+        </div>
+      )}
     </div>
   );
+}
+
+function getResultReviewEmptyFilterHint(filter: ResultReviewFilter): string {
+  if (filter === "approved") return "可以先点开主图/海报检查，确认可用后点“保留”。";
+  if (filter === "pending") return "当前没有待检查图；可以显示全部复查已保留、待重做或失败结果。";
+  if (filter === "needs_redo") return "还没有标待重做；点问题图的“标记重做”或让 Agent 只改这张。";
+  if (filter === "rejected") return "还没有淘汰图；不满意的结果可以点“淘汰”，保留可用候选。";
+  if (filter === "failed") return "当前没有失败图；可以继续挑图，或显示全部查看生成结果。";
+  if (filter === "qa_risk") return "当前没有 QA 风险命中；可以显示全部，重点人工复查商品、模特和文案安全区。";
+  return "可以显示全部查看完整结果墙。";
 }
 
 function buildResultReviewFilterCounts(
