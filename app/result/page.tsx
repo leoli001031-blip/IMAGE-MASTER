@@ -49,15 +49,17 @@ export default function ResultPage() {
     setRecentLoading(true);
     fetch("/api/jobs?status=done&limit=40&summary=0", { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : []))
-      .then((jobs) => {
+      .then(async (jobs) => {
         if (!Array.isArray(jobs)) return;
         const displayableJobs = jobs.filter(isDisplayableRecentJob);
         const latestRunKey = getRecentJobRunKey(displayableJobs[0]);
-        const recent = displayableJobs
+        const recentJobs = displayableJobs
           .filter((job) => getRecentJobRunKey(job) === latestRunKey)
-          .slice(0, 30)
+          .slice(0, 30);
+        const artifactByJobId = await fetchRecentJobArtifacts(recentJobs, controller.signal);
+        const recent = recentJobs
           .reverse()
-          .map(mapJobToGeneratedImage);
+          .map((job) => mapJobToGeneratedImage(job, artifactByJobId.get(job.id)));
         setRecentGeneratedImages(recent);
       })
       .catch((error) => {
@@ -648,8 +650,63 @@ function isDisplayableRecentJob(job: unknown): job is RecentJob {
   );
 }
 
-function mapJobToGeneratedImage(job: RecentJob): GeneratedImage {
-  const metadata = isRecord(job.metadata) ? job.metadata : {};
+async function fetchRecentJobArtifacts(
+  jobs: RecentJob[],
+  signal?: AbortSignal
+): Promise<Map<string, GeneratedArtifact>> {
+  const artifactByJobId = new Map<string, GeneratedArtifact>();
+  if (jobs.length === 0) return artifactByJobId;
+
+  const planId = getCommonRecentJobMetadataString(jobs, "planId");
+  const batchId = getCommonRecentJobMetadataString(jobs, "batchId");
+  const scopedQuery = planId
+    ? `planId=${encodeURIComponent(planId)}`
+    : batchId
+      ? `batchId=${encodeURIComponent(batchId)}`
+      : "";
+
+  const artifacts = scopedQuery
+    ? await fetchRecentArtifacts(`/api/artifacts?${scopedQuery}&limit=200`, signal)
+    : (
+        await Promise.all(
+          jobs.map((job) =>
+            fetchRecentArtifacts(`/api/artifacts?jobId=${encodeURIComponent(job.id)}&limit=1`, signal)
+          )
+        )
+      ).flat();
+
+  for (const artifact of artifacts) {
+    if (artifact.jobId) artifactByJobId.set(artifact.jobId, artifact);
+  }
+  return artifactByJobId;
+}
+
+async function fetchRecentArtifacts(url: string, signal?: AbortSignal): Promise<GeneratedArtifact[]> {
+  const response = await fetch(url, { signal });
+  if (!response.ok) return [];
+  const payload: unknown = await response.json().catch(() => []);
+  if (!Array.isArray(payload)) return [];
+  return payload.filter(isGeneratedArtifactSummary);
+}
+
+function isGeneratedArtifactSummary(value: unknown): value is GeneratedArtifact {
+  return isRecord(value) && typeof value.id === "string";
+}
+
+function getCommonRecentJobMetadataString(jobs: RecentJob[], key: string): string | undefined {
+  const values = new Set(
+    jobs
+      .map((job) => getMetadataString(isRecord(job.metadata) ? job.metadata : {}, key))
+      .filter((value): value is string => Boolean(value))
+  );
+  return values.size === 1 ? [...values][0] : undefined;
+}
+
+function mapJobToGeneratedImage(job: RecentJob, artifact?: GeneratedArtifact): GeneratedImage {
+  const metadata = {
+    ...(isRecord(job.metadata) ? job.metadata : {}),
+    ...(isRecord(artifact?.metadata) ? artifact.metadata : {}),
+  };
   const rawType =
     getMetadataString(metadata, "planItemType") ||
     getMetadataString(metadata, "imageType") ||
@@ -658,9 +715,10 @@ function mapJobToGeneratedImage(job: RecentJob): GeneratedImage {
 
   return {
     id: job.id,
-    url: job.resultUrl,
+    url: artifact?.url || job.resultUrl,
     type: normalizeResultType(rawType),
     title:
+      artifact?.title ||
       getMetadataString(metadata, "planItemTitle") ||
       getMetadataString(metadata, "exportItemTitle") ||
       rawType,
@@ -670,10 +728,11 @@ function mapJobToGeneratedImage(job: RecentJob): GeneratedImage {
       getMetadataString(metadata, "platform") ||
       getMetadataString(metadata, "ratio") ||
       "",
-    prompt: job.prompt,
+    prompt: artifact?.prompt || job.prompt,
     error: job.error || undefined,
     metadata: {
       ...metadata,
+      ...(artifact?.id ? { artifactId: artifact.id } : {}),
       jobId: job.id,
       style:
         getMetadataString(metadata, "style") ||

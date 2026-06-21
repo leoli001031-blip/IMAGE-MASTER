@@ -154,6 +154,21 @@ assert.match(
 );
 assert.match(
   resultPageSource,
+  /fetchRecentJobArtifacts\(recentJobs, controller\.signal\)[\s\S]*map\(\(job\) => mapJobToGeneratedImage\(job, artifactByJobId\.get\(job\.id\)\)\)/,
+  "result page should enrich restored recent jobs with artifact metadata before showing review state"
+);
+assert.match(
+  resultPageSource,
+  /async function fetchRecentJobArtifacts[\s\S]*planId=\$\{encodeURIComponent\(planId\)\}[\s\S]*batchId=\$\{encodeURIComponent\(batchId\)\}[\s\S]*\/api\/artifacts\?jobId=\$\{encodeURIComponent\(job\.id\)\}&limit=1/,
+  "result page recent fallback should look up artifacts by scoped plan, batch, or job id"
+);
+assert.match(
+  resultPageSource,
+  /function mapJobToGeneratedImage\(job: RecentJob, artifact\?: GeneratedArtifact\)[\s\S]*\.\.\.\(isRecord\(artifact\?\.metadata\) \? artifact\.metadata : \{\}\)[\s\S]*artifactId: artifact\.id/,
+  "result page restored images should carry artifact review metadata and artifact id after reload"
+);
+assert.match(
+  resultPageSource,
   /handleSetResultGroupReviewStatus[\s\S]*result-page-group-review[\s\S]*onSetGroupReviewStatus=\{handleSetResultGroupReviewStatus\}/,
   "result page groups should batch mark keep, redo, and reject review states"
 );
