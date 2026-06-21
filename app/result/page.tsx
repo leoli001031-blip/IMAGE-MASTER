@@ -19,7 +19,11 @@ import {
 import { JobCard } from "@/components/ui/job-card";
 import { StatusBean } from "@/components/ui/status-bean";
 import { resolveGenerationOutputAssetTarget } from "@/lib/canvas/generation-output-asset-target";
-import { writePendingResultEditTarget } from "@/lib/canvas/result-edit-target-storage";
+import {
+  type PendingResultGroupEditTarget,
+  writePendingResultEditTarget,
+  writePendingResultGroupEditTarget,
+} from "@/lib/canvas/result-edit-target-storage";
 import type { GeneratedImage } from "@/lib/types";
 
 export default function ResultPage() {
@@ -455,6 +459,16 @@ export default function ResultPage() {
     showToast(`已将 ${updates.length} 张标记为${RESULT_REVIEW_STATUS_LABELS[status]}${suffix}`);
   };
 
+  const handleEditResultGroupInCanvas = (groupTitle: string, images: GeneratedImage[]) => {
+    const stored = writePendingResultGroupEditTarget(buildResultGroupEditTarget(groupTitle, images));
+    if (!stored) {
+      showToast("无法带入这组，请回到画布后重新选择");
+      return;
+    }
+    showToast(`已带入「${groupTitle}」，正在打开画布 Agent`);
+    router.push("/canvas?restore=1&editResult=1&editGroup=1");
+  };
+
   const handleBackToGenerate = () => {
     useGenerateStore.getState().reset();
     router.push("/canvas");
@@ -543,6 +557,7 @@ export default function ResultPage() {
               onRegenerate={handleRegenerate}
               onOpenFolder={handleOpenFolder}
               onPreview={setSelectedImage}
+              onEditGroup={(images) => handleEditResultGroupInCanvas(group.title, images)}
               onSetGroupReviewStatus={handleSetResultGroupReviewStatus}
               getReviewLabel={getResultReviewLabel}
               getCopyModeLabel={getCopyModeLabel}
@@ -827,6 +842,74 @@ function getImageArtifactId(image: GeneratedImage): string | undefined {
     getMetadataString(metadata, "generatedArtifactId");
   if (artifactId) return artifactId;
   return image.id.startsWith("artifact_") ? image.id : undefined;
+}
+
+function buildResultGroupEditTarget(groupTitle: string, images: GeneratedImage[]): PendingResultGroupEditTarget {
+  const usableImages = images.filter((image) => image.url && !image.error);
+  const sourceImages = usableImages.length > 0 ? usableImages : images;
+  return {
+    group: groupTitle,
+    count: sourceImages.length || 1,
+    ratios: uniqueResultStrings(sourceImages.flatMap(getResultImageRatio)),
+    artifactIds: uniqueResultStrings(sourceImages.flatMap((image) => getImageArtifactId(image) || [])),
+    artifactTitles: uniqueResultStrings(sourceImages.map((image) => image.title || image.copyText || image.type)),
+    providerRoles: uniqueResultStrings(sourceImages.flatMap(getResultImageProviderRoles)),
+    promptOnlyRoles: uniqueResultStrings(sourceImages.flatMap(getResultImagePromptOnlyRoles)),
+    copyModes: uniqueResultStrings(sourceImages.flatMap(getResultImageCopyMode)),
+    summary: `来自结果页「${groupTitle}」的 ${sourceImages.length || images.length} 张成片`,
+  };
+}
+
+function getResultImageRatio(image: GeneratedImage): string[] {
+  const metadata = getImageMetadata(image);
+  const ratio =
+    getMetadataString(metadata, "ratio") ||
+    getMetadataString(metadata, "exportSpecRatio") ||
+    getMetadataString(metadata, "aspectRatioLabel") ||
+    getMetadataString(metadata, "outputRatio");
+  if (ratio) return [ratio];
+  const size = getMetadataString(metadata, "size") || getMetadataString(metadata, "outputSize");
+  const match = size.match(/^(\d+)x(\d+)$/i);
+  return match ? [`${match[1]}:${match[2]}`] : [];
+}
+
+function getResultImageProviderRoles(image: GeneratedImage): string[] {
+  const invocation = getAssetInvocation(getImageMetadata(image));
+  const roles = [
+    ...(invocation?.providerReferenceRoles ?? []),
+    ...getResultReferences(image)
+      .filter((reference) => reference.providerUsable)
+      .map((reference) => reference.role),
+  ];
+  return uniqueResultStrings(roles);
+}
+
+function getResultImagePromptOnlyRoles(image: GeneratedImage): string[] {
+  const invocation = getAssetInvocation(getImageMetadata(image));
+  const roles = [
+    ...(invocation?.promptOnlyRoles ?? []),
+    ...getResultReferences(image)
+      .filter((reference) => !reference.providerUsable)
+      .map((reference) => reference.role),
+  ];
+  return uniqueResultStrings(roles);
+}
+
+function getResultImageCopyMode(image: GeneratedImage): string[] {
+  const mode = getCopyRenderPolicy(getImageMetadata(image))?.mode;
+  return mode ? [mode] : [];
+}
+
+function uniqueResultStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const text = value?.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
 }
 
 function getImageReviewStatus(image: GeneratedImage): ResultArtifactReviewStatus {

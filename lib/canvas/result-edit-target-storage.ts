@@ -10,7 +10,20 @@ export interface PendingResultEditTarget {
   metadata?: Record<string, unknown>;
 }
 
+export interface PendingResultGroupEditTarget {
+  group: string;
+  count: number;
+  ratios?: string[];
+  artifactIds?: string[];
+  artifactTitles?: string[];
+  providerRoles?: string[];
+  promptOnlyRoles?: string[];
+  copyModes?: string[];
+  summary?: string;
+}
+
 const PENDING_RESULT_EDIT_TARGET_STORAGE_KEY = "image-master:pending-result-edit-target";
+const PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY = "image-master:pending-result-group-edit-target";
 const MAX_PENDING_METADATA_TEXT_LENGTH = 6000;
 const MAX_PENDING_INLINE_IMAGE_URL_LENGTH = 4096;
 
@@ -83,6 +96,33 @@ export function takePendingResultEditTarget(): PendingResultEditTarget | null {
   }
 }
 
+export function writePendingResultGroupEditTarget(target: PendingResultGroupEditTarget): boolean {
+  if (typeof window === "undefined") return false;
+  const normalized = normalizePendingResultGroupEditTarget(target);
+  if (!normalized) return false;
+  try {
+    window.sessionStorage?.setItem?.(
+      PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY,
+      JSON.stringify(normalized)
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function takePendingResultGroupEditTarget(): PendingResultGroupEditTarget | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage?.getItem?.(PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY);
+    window.sessionStorage?.removeItem?.(PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY);
+    if (!raw) return null;
+    return normalizePendingResultGroupEditTarget(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 function normalizePendingResultEditTarget(value: unknown): PendingResultEditTarget | null {
   if (!isRecord(value)) return null;
   const url = getStorageSafeImageUrl(value.url);
@@ -97,6 +137,24 @@ function normalizePendingResultEditTarget(value: unknown): PendingResultEditTarg
     status: getString(value.status),
     prompt: getString(value.prompt),
     metadata: compactPendingResultEditMetadata(value.metadata),
+  };
+}
+
+function normalizePendingResultGroupEditTarget(value: unknown): PendingResultGroupEditTarget | null {
+  if (!isRecord(value)) return null;
+  const group = getString(value.group);
+  if (!group) return null;
+  const count = getPositiveCount(value.count) || compactStringArray(value.artifactIds).length || 1;
+  return {
+    group,
+    count,
+    ratios: compactStringArray(value.ratios),
+    artifactIds: compactStringArray(value.artifactIds),
+    artifactTitles: compactStringArray(value.artifactTitles),
+    providerRoles: compactStringArray(value.providerRoles),
+    promptOnlyRoles: compactStringArray(value.promptOnlyRoles),
+    copyModes: compactStringArray(value.copyModes),
+    summary: getString(value.summary),
   };
 }
 
@@ -147,6 +205,25 @@ function getStorageSafeImageUrl(value: unknown): string | undefined {
   if (!url) return undefined;
   if (url.startsWith("data:image/") && url.length > MAX_PENDING_INLINE_IMAGE_URL_LENGTH) return undefined;
   return url;
+}
+
+function compactStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const item of value) {
+    const text = getString(item);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    items.push(text.slice(0, 160));
+    if (items.length >= 24) break;
+  }
+  return items;
+}
+
+function getPositiveCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.floor(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

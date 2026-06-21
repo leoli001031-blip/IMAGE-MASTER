@@ -1,4 +1,4 @@
-import { CheckCircle2, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, RefreshCw, Wand2, XCircle } from "lucide-react";
 import { ImageCard } from "./image-card";
 import type { GeneratedImage } from "@/lib/types";
 import type { ImageDetailReviewStatus } from "./image-detail-panel";
@@ -10,6 +10,7 @@ interface ImageGroupProps {
   onRegenerate: (image: GeneratedImage) => void;
   onOpenFolder?: (image: GeneratedImage) => void;
   onPreview?: (image: GeneratedImage) => void;
+  onEditGroup?: (images: GeneratedImage[]) => void;
   onSetGroupReviewStatus?: (
     images: GeneratedImage[],
     status: Exclude<ImageDetailReviewStatus, "failed">
@@ -25,6 +26,7 @@ export function ImageGroup({
   onRegenerate,
   onOpenFolder,
   onPreview,
+  onEditGroup,
   onSetGroupReviewStatus,
   getReviewLabel,
   getCopyModeLabel,
@@ -45,6 +47,13 @@ export function ImageGroup({
             label="标待重做"
             onClick={() => onSetGroupReviewStatus(images, "needs_redo")}
           />
+          {onEditGroup && (
+            <GroupActionButton
+              icon={Wand2}
+              label="调整这组"
+              onClick={() => onEditGroup(images)}
+            />
+          )}
           <GroupActionButton
             icon={XCircle}
             label="淘汰这组"

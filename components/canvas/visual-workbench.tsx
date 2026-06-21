@@ -139,7 +139,10 @@ import {
 } from "@/lib/canvas/generation-frame";
 import { resolveGenerationFrameRunRule } from "@/lib/canvas/generation-frame-action-registry";
 import { resolveGenerationOutputAssetTarget } from "@/lib/canvas/generation-output-asset-target";
-import { takePendingResultEditTarget } from "@/lib/canvas/result-edit-target-storage";
+import {
+  takePendingResultEditTarget,
+  takePendingResultGroupEditTarget,
+} from "@/lib/canvas/result-edit-target-storage";
 import { buildStructuredCopyBrief, normalizeStructuredCopyBrief } from "@/lib/canvas/copy-brief";
 import { WorkflowNode } from "@/components/canvas/workflow-node";
 import type { CanvasFlowNode } from "@/components/canvas/workflow-node";
@@ -8962,6 +8965,30 @@ function CanvasAgentPanel({
     setShowAgentPlanAdvanced(false);
     setFocusedPlanGroup(null);
   }, [workflowPlanPreview?.title, workflowPlanPreview?.estimatedCount]);
+
+  useEffect(() => {
+    const target = takePendingResultGroupEditTarget();
+    if (!target) return;
+    const title = target.group || "结果分组";
+    setFocusedPlanGroup({
+      id: `artifact-group:${title}`,
+      title,
+      count: target.count,
+      ratios: target.ratios?.length ? target.ratios : ["auto"],
+      copyModes: target.copyModes ?? [],
+      providerRoles: target.providerRoles ?? [],
+      promptOnlyRoles: target.promptOnlyRoles ?? [],
+      assetTitles: target.artifactTitles ?? [],
+      artifactIds: target.artifactIds ?? [],
+      status: "ready",
+      summary: target.summary || "已从结果页带入，后续修改只影响这一组。",
+      reason: "这是结果页中的一个成片分组，适合批量换姿势、换场景或调整文案策略。",
+      missingHints: [],
+    });
+    onHighlightArtifactGroup(title);
+    if (!composeBrief.trim()) onComposeBriefChange(`调整「${title}」：`);
+    onCollapsedChange(false);
+  }, []);
 
   useEffect(() => {
     const handleArtifactGroupEdit = (event: Event) => {

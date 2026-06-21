@@ -153,9 +153,19 @@ assert.match(
   "result page groups should batch mark keep, redo, and reject review states"
 );
 assert.match(
+  resultPageSource,
+  /writePendingResultGroupEditTarget\(buildResultGroupEditTarget\(groupTitle, images\)\)[\s\S]*router\.push\("\/canvas\?restore=1&editResult=1&editGroup=1"\)/,
+  "result page group edits should hand off scoped group context to the canvas Agent"
+);
+assert.match(
   workbenchSource,
   /takePendingResultEditTarget\(\)[\s\S]*setAgentImageEditTarget\(target\)[\s\S]*已从结果页带入/,
   "canvas Agent should restore a pending result-page edit target"
+);
+assert.match(
+  workbenchSource,
+  /takePendingResultGroupEditTarget\(\)[\s\S]*setFocusedPlanGroup\(\{[\s\S]*artifactIds: target\.artifactIds \?\? \[\][\s\S]*已从结果页带入/,
+  "canvas Agent should restore a pending result-page group edit target"
 );
 assert.match(
   resultEditTargetStorageSource,
@@ -171,6 +181,11 @@ assert.match(
   resultEditTargetStorageSource,
   /const url = getStorageSafeImageUrl\(value\.url\)[\s\S]*function getStorageSafeImageUrl[\s\S]*data:image\/[\s\S]*MAX_PENDING_INLINE_IMAGE_URL_LENGTH/,
   "result-page Agent edit handoff should reject oversized inline result image URLs before sessionStorage"
+);
+assert.match(
+  resultEditTargetStorageSource,
+  /PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY[\s\S]*writePendingResultGroupEditTarget[\s\S]*takePendingResultGroupEditTarget[\s\S]*normalizePendingResultGroupEditTarget/,
+  "result-page group edit handoff should store compact scoped group context"
 );
 
 assert.match(
@@ -192,7 +207,7 @@ assert.match(
 );
 assert.match(
   imageGroupSource,
-  /onSetGroupReviewStatus[\s\S]*保留这组[\s\S]*标待重做[\s\S]*淘汰这组/,
+  /onSetGroupReviewStatus[\s\S]*保留这组[\s\S]*标待重做[\s\S]*调整这组[\s\S]*淘汰这组/,
   "result groups should expose lightweight group-level picking actions"
 );
 
