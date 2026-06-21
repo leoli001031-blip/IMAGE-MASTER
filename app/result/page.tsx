@@ -596,7 +596,11 @@ export default function ResultPage() {
           open={!!selectedImage}
           onClose={() => setSelectedImage(null)}
           onNavigate={(target) => {
-            const next = displayImages.find((image) => image.id === target.id);
+            const next = displayImages.find((image) =>
+              image.id === target.id ||
+              getImageJobId(image) === target.id ||
+              getImageArtifactId(image) === target.id
+            );
             if (next) setSelectedImage(next);
           }}
           onDownload={(item) => {

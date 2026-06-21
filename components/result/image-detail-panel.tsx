@@ -173,6 +173,12 @@ export function ImageDetailPanel({
   const [showPrompt, setShowPrompt] = useState(false);
 
   if (!open || !item) return null;
+  const sourceVersionTarget = item.sourceVersion && (item.sourceVersion.jobId || item.sourceVersion.artifactId)
+    ? {
+        id: item.sourceVersion.jobId || item.sourceVersion.artifactId || "",
+        title: item.sourceVersion.title || "上一版成片",
+      }
+    : null;
   const providerReferenceRoles = item.assetInvocation?.providerReferenceRoles?.length
     ? item.assetInvocation.providerReferenceRoles
     : Array.from(new Set((item.assetInvocation?.decisions ?? [])
@@ -355,7 +361,19 @@ export function ImageDetailPanel({
             )}
 
             {item.sourceVersion && (
-              <Section icon={RefreshCw} title="上一版来源">
+              <Section
+                icon={RefreshCw}
+                title="上一版来源"
+                action={sourceVersionTarget && onNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate(sourceVersionTarget)}
+                    className="rounded-md border border-warm-line bg-warm-bg px-2 py-1 text-[11px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                  >
+                    打开上一版
+                  </button>
+                ) : undefined}
+              >
                 <div className="flex gap-2 rounded-lg border border-warm-line bg-warm-bg p-2">
                   {item.sourceVersion.url && (
                     <ReferenceThumb

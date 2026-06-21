@@ -288,8 +288,13 @@ assert.match(
 );
 assert.match(
   imageDetailPanelSource,
-  /sourceVersion\?: \{[\s\S]*title\?: string[\s\S]*url\?: string[\s\S]*上一版来源[\s\S]*ReferenceThumb[\s\S]*role: "previous"/,
-  "image detail panel should show the previous version source for rerun images"
+  /sourceVersion\?: \{[\s\S]*title\?: string[\s\S]*url\?: string[\s\S]*sourceVersionTarget[\s\S]*上一版来源[\s\S]*打开上一版[\s\S]*ReferenceThumb[\s\S]*role: "previous"/,
+  "image detail panel should show and open the previous version source for rerun or Agent revision images"
+);
+assert.match(
+  resultPageSource,
+  /onNavigate=\{\(target\) => \{[\s\S]*image\.id === target\.id[\s\S]*getImageJobId\(image\) === target\.id[\s\S]*getImageArtifactId\(image\) === target\.id/,
+  "result detail previous-version navigation should resolve both source job ids and artifact ids"
 );
 assert.match(
   outputPreviewModalSource,
