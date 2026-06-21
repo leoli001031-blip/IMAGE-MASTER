@@ -27,6 +27,11 @@ assert.match(
 );
 assert.match(
   source,
+  /const fallbackRetryToImageEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*没有可直接重跑的任务，已切到让 Agent 改这张[\s\S]*这张图暂时不能直接重做，已切到让 Agent 改这张/,
+  "single-image retry should fall back to Agent edit mode when a direct retry is unavailable"
+);
+assert.match(
+  source,
   /const handleClearAgentImageEditTarget = useCallback\(\(\) => \{[\s\S]*setAgentImageEditTarget\(null\);[\s\S]*setComposeBrief\(""\);[\s\S]*setComposeMessage\(""\);[\s\S]*onClearEditTarget=\{handleClearAgentImageEditTarget\}/,
   "cancelling single-image edit mode should clear stale selected-image status text"
 );

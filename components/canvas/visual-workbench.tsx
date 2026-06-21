@@ -4528,15 +4528,44 @@ export function VisualWorkbench() {
       return fetchedJob;
     };
 
+    const fallbackRetryToImageEdit = (
+      detail: GenerationFrameOutputActionDetail | undefined,
+      message: string
+    ): boolean => {
+      if (!detail) return false;
+      const artifact =
+        (detail.artifactId ? artifacts.find((item) => item.id === detail.artifactId) : undefined) ??
+        (detail.jobId ? artifacts.find((item) => item.jobId === detail.jobId) : undefined);
+      const url = artifact?.url || detail.url;
+      if (!url) return false;
+      setJobMessage(message);
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-edit", {
+          detail: {
+            ...detail,
+            artifactId: artifact?.id ?? detail.artifactId,
+            jobId: artifact?.jobId ?? detail.jobId,
+            nodeId: artifact?.nodeId ?? detail.nodeId,
+            title: detail.title || artifact?.title,
+            status: detail.status || artifact?.status,
+            url,
+          },
+        })
+      );
+      return true;
+    };
+
     const handleRetry = (event: Event) => {
       const detail = readDetail(event);
       if (!detail?.jobId) {
+        if (fallbackRetryToImageEdit(detail, "这张图没有可直接重跑的任务，已切到让 Agent 改这张")) return;
         setJobMessage("这张图还没有可重做的任务");
         return;
       }
       void (async () => {
         const job = await resolveRetryJob(detail.jobId as string);
         if (!job) {
+          if (fallbackRetryToImageEdit(detail, "没有找到这张图的任务，已切到让 Agent 改这张")) return;
           setJobMessage("没有找到这张图的任务");
           return;
         }
@@ -4552,6 +4581,7 @@ export function VisualWorkbench() {
           void handleRetryJob(job);
           return;
         }
+        if (fallbackRetryToImageEdit(detail, "这张图暂时不能直接重做，已切到让 Agent 改这张")) return;
         setJobMessage("这张图暂时不能重做");
       })();
     };
