@@ -11892,7 +11892,7 @@ function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | 
   if (/(恢复|改回|设为|标为|标记?)(待检查|待检)|(?:回到|恢复成|改成|改为)(待检查|待检)|(?:这张|这组|这些|这一批|这批|当前这些)(?:重新|再)?检查|(?:这张|这组|这些|这一批|这批|当前这些)(?:待检查|待检)|取消标记|取消状态/.test(actionText)) return "pending";
   if (/(淘汰|不要这组|这组不要|不要这一组|这一组不要|不要这张|这张不要|这些不要|这一批不要|这批不要|全都不要|全部不要|所有都不要|一张都不要|不用这组|不留这组|弃用|废掉|拒绝|打掉)/.test(actionText)) return "rejected";
   if (/(保留|留下|留着|可用|通过|要这组|这组可以|这张可以了|这组可以了|这些可以了|这一批可以了|这批可以了|这张能用了|这组能用了|这些能用了|就用这张|就用这组|就这张|就这组|这张收了|这组收了|这些收了|这批收了|收了|先留|先收|选中)/i.test(actionText)) return "approved";
-  if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(actionText)) return "needs_redo";
+  if (/(标记?重做|标待重做|待重做|建议重做|建议重来|需要重做|需要重来|该重做|该重来|得重做|得重来|标成重做)/.test(actionText)) return "needs_redo";
   return null;
 }
 

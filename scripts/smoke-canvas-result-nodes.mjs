@@ -527,6 +527,9 @@ assert.ok(
     resultReviewStatusIntentSource.includes("这张可以了") &&
     resultReviewStatusIntentSource.includes("就用这张") &&
     resultReviewStatusIntentSource.includes("这组收了") &&
+    resultReviewStatusIntentSource.includes("需要重做") &&
+    resultReviewStatusIntentSource.includes("该重来") &&
+    resultReviewStatusIntentSource.includes("建议重来") &&
     resultReviewStatusIntentSource.indexOf("return \"rejected\"") < resultReviewStatusIntentSource.indexOf("return \"approved\"") &&
     resultReviewStatusIntentSource.indexOf("return \"approved\"") < resultReviewStatusIntentSource.indexOf("return \"needs_redo\""),
   "result review status parsing should strip target-scope words before detecting actions like 已淘汰都保留 or 待重做都淘汰"
