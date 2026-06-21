@@ -658,6 +658,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasVisualQaIntent = hasAgentGlobalResultReviewVisualQaIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*qaArtifacts = targets\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*正在用 Agent 审核 \$\{qaArtifacts\.length\} 张\$\{scopeLabel\}[\s\S]*for \(const artifact of qaArtifacts\)[\s\S]*await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*已完成 \$\{qaArtifacts\.length\} 张\$\{scopeLabel\}的视觉 QA[\s\S]*return true[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)/,
+  "global result review commands should run visual QA for scoped result-wall targets before open-folder, save, retry, or status commands"
+);
+assert.match(
+  workbenchSource,
   /handleApplyGlobalResultReviewCommand[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*urls = targets[\s\S]*image-master:generation-frame-output-open-folder[\s\S]*urls,[\s\S]*artifactIds: targets\.map[\s\S]*正在打开 \$\{urls\.length\} 张\$\{scopeLabel\}所在文件夹[\s\S]*return true[\s\S]*hasSaveAsAssetIntent = hasAgentGlobalResultReviewSaveAsAssetIntent\(brief\)/,
   "global result review commands should open scoped result-wall folders before save, retry, or status commands"
 );
@@ -723,6 +728,11 @@ assert.match(
   workbenchSource,
   /function hasAgentGlobalResultReviewSaveAsAssetIntent[\s\S]*hasAgentGlobalResultReviewScopeIntent\(text\)[\s\S]*保存为资产[\s\S]*素材库\|资产库/,
   "global save-as-asset intent should require explicit result scope and asset-library wording"
+);
+assert.match(
+  workbenchSource,
+  /function hasAgentGlobalResultReviewVisualQaIntent[\s\S]*hasAgentGlobalResultReviewScopeIntent\(text\)[\s\S]*标记\|标为\|标成[\s\S]*return false[\s\S]*qa\|质检\|审核[\s\S]*当前筛选/,
+  "global visual QA intent should require explicit result scope and QA wording while excluding status-marking language"
 );
 assert.match(
   workbenchSource,

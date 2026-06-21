@@ -3352,6 +3352,30 @@ export function VisualWorkbench() {
       );
       return true;
     }
+    const hasVisualQaIntent = hasAgentGlobalResultReviewVisualQaIntent(brief);
+    if (hasVisualQaIntent) {
+      const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
+      const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter);
+      const qaArtifacts = targets.filter(
+        (artifact) => artifact.id && artifact.url && !isAgentArtifactFailed(artifact)
+      );
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (targets.length === 0) {
+        setComposeMessage(`当前结果墙里没有找到可执行视觉 QA 的${scopeLabel}。`);
+        return true;
+      }
+      if (qaArtifacts.length === 0) {
+        setComposeMessage(`${targets.length} 张${scopeLabel}里没有可执行视觉 QA 的成片。`);
+        return true;
+      }
+      setComposeMessage(`正在用 Agent 审核 ${qaArtifacts.length} 张${scopeLabel}...`);
+      for (const artifact of qaArtifacts) {
+        await handleRunArtifactVisualQa(artifact.id);
+      }
+      setComposeMessage(`已完成 ${qaArtifacts.length} 张${scopeLabel}的视觉 QA。`);
+      return true;
+    }
     const hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent(brief);
     if (hasOpenFolderIntent) {
       const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
@@ -12427,6 +12451,13 @@ function hasAgentGlobalResultReviewSaveAsAssetIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText || !hasAgentGlobalResultReviewScopeIntent(text)) return false;
   return /(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库)|保存.*(素材库|资产库)|存.*(素材库|资产库)|加入.*(素材库|资产库)|添加.*(素材库|资产库)|收进.*(素材库|资产库)|放进.*(素材库|资产库)|放到.*(素材库|资产库))/.test(compactText);
+}
+
+function hasAgentGlobalResultReviewVisualQaIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText || !hasAgentGlobalResultReviewScopeIntent(text)) return false;
+  if (/(标记|标为|标成|设为|改成|改为|回到|恢复)/.test(compactText)) return false;
+  return /(?:(跑|做|执行|开始|重新|再|帮我)?(视觉)?(qa|质检|审核))(这些|当前|当前筛选|筛选结果|这批|这一批|全部|全都|所有|整套|这一套|这套|结果墙|所有结果|全部结果|待重做|建议重做|待检查|已保留|已淘汰|失败|不可用)?(图|图片|结果)?|(?:检查)(这些|当前|当前筛选|筛选结果|这批|这一批|全部|全都|所有|整套|这一套|这套|结果墙|所有结果|全部结果|待重做|建议重做|待检查|已保留|已淘汰|失败|不可用)(图|图片|结果)?|(?:这些|当前|当前筛选|筛选结果|这批|这一批|全部|全都|所有|整套|这一套|这套|结果墙|所有结果|全部结果|待重做|建议重做|待检查|已保留|已淘汰|失败|不可用)(图|图片|结果)?(检查|质检|审核)|(?:商品|模特|光影|文案)(一致性|安全区)?(检查|质检|审核)/i.test(compactText);
 }
 
 function hasAgentGlobalResultReviewOpenFolderIntent(text: string): boolean {
