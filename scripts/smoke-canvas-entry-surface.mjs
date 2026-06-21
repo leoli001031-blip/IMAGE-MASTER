@@ -348,6 +348,11 @@ assert.match(
 );
 assert.match(
   source,
+  /function buildAgentResultReviewFilterInputContext[\s\S]*待重做图[\s\S]*QA 风险建议点单张修改或标待重做[\s\S]*resultReviewFilterInputContext = canShowResultReviewAssistant[\s\S]*buildAgentResultReviewFilterInputContext\(resultReviewFilter, resultReviewFilterCount\)[\s\S]*planInputPlaceholder[\s\S]*resultReviewFilterInputContext\.placeholder[\s\S]*agentInputHelperText[\s\S]*resultReviewFilterInputContext\.helper/,
+  "Agent input should reflect the active result-review filter before falling back to generic result-wall commands"
+);
+assert.match(
+  source,
   /id: "agent-completion-summary"[\s\S]*title: "生成总结"[\s\S]*completionSummary/,
   "post-generation summary should also be part of the Agent message flow"
 );

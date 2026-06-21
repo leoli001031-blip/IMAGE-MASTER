@@ -6245,6 +6245,8 @@ export function VisualWorkbench() {
         sampleOutputCount={agentSampleOutputCount}
         visibleOutputCount={visibleOutputCount}
         visibleArtifacts={visibleArtifacts}
+        resultReviewFilter={resultReviewFilter}
+        resultReviewFilterCount={resultReviewFilterCounts[resultReviewFilter] ?? 0}
         activeJobCount={activeVisibleJobCount}
         jobMessage={jobMessage}
         workflowPlanPreview={workflowPlanPreview}
@@ -7617,6 +7619,54 @@ function getResultReviewEmptyFilterHint(filter: ResultReviewFilter): string {
   return "可以显示全部查看完整结果墙。";
 }
 
+function buildAgentResultReviewFilterInputContext(
+  filter: ResultReviewFilter,
+  count: number
+): { placeholder: string; helper: string } | null {
+  if (filter === "all") return null;
+  const label = getResultReviewFilterLabel(filter);
+  if (count <= 0) {
+    return {
+      placeholder: `当前「${label}」没有结果；可以换筛选或显示全部继续挑图。`,
+      helper: `当前正在查看「${label}」，但没有命中结果；Agent 不会自动改全局。`,
+    };
+  }
+  if (filter === "pending") {
+    return {
+      placeholder: "比如：把待检查图都标为可用；把未检查图标待重做。",
+      helper: `当前正在查看「${label}」${count} 张；可用“待检查图/未检查图”来批量挑图。`,
+    };
+  }
+  if (filter === "needs_redo") {
+    return {
+      placeholder: "比如：把待重做图都淘汰；把建议重做图恢复待检查。",
+      helper: `当前正在查看「${label}」${count} 张；可用“待重做图/建议重做图”来批量处理。`,
+    };
+  }
+  if (filter === "failed") {
+    return {
+      placeholder: "比如：把失败图淘汰；把失败结果标待重做。",
+      helper: `当前正在查看「${label}」${count} 张；失败图可以批量淘汰或标待重做。`,
+    };
+  }
+  if (filter === "approved") {
+    return {
+      placeholder: "比如：把已保留结果恢复待检查；把可用图都淘汰。",
+      helper: `当前正在查看「${label}」${count} 张；可用“已保留结果/可用图”来恢复或改状态。`,
+    };
+  }
+  if (filter === "rejected") {
+    return {
+      placeholder: "比如：把已淘汰图恢复待检查；把淘汰图都保留。",
+      helper: `当前正在查看「${label}」${count} 张；可用“已淘汰图/淘汰图”来恢复或改状态。`,
+    };
+  }
+  return {
+    placeholder: "比如：点开风险图检查；这张只改文案安全区；把问题图标待重做。",
+    helper: `当前正在查看「${label}」${count} 张；QA 风险建议点单张修改或标待重做。`,
+  };
+}
+
 function buildResultReviewFilterCounts(
   artifacts: PersistedGeneratedArtifact[]
 ): Record<ResultReviewFilter, number> {
@@ -8831,6 +8881,8 @@ function CanvasAgentPanel({
   sampleOutputCount,
   visibleOutputCount,
   visibleArtifacts,
+  resultReviewFilter,
+  resultReviewFilterCount,
   activeJobCount,
   jobMessage,
   workflowPlanPreview,
@@ -8866,6 +8918,8 @@ function CanvasAgentPanel({
   sampleOutputCount: number;
   visibleOutputCount: number;
   visibleArtifacts: PersistedGeneratedArtifact[];
+  resultReviewFilter: ResultReviewFilter;
+  resultReviewFilterCount: number;
   activeJobCount: number;
   jobMessage: string;
   workflowPlanPreview: WorkflowPlanPreview | null;
@@ -9117,6 +9171,9 @@ function CanvasAgentPanel({
     visibleOutputCount,
   });
   const canShowResultReviewAssistant = canApplyResultReviewCommand && !workflowPlanPreview;
+  const resultReviewFilterInputContext = canShowResultReviewAssistant
+    ? buildAgentResultReviewFilterInputContext(resultReviewFilter, resultReviewFilterCount)
+    : null;
   const completionSummary = buildAgentCompletionSummary({
     visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
     visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
@@ -9186,6 +9243,8 @@ function CanvasAgentPanel({
       ? "比如：这组只留 2 张；动作太重复，换一批姿势；这组改成商场场景。"
       : workflowPlanPreview
         ? "比如：不要小红书封面；加两张商场场景；海报标题改成暖意随身。"
+        : resultReviewFilterInputContext
+          ? resultReviewFilterInputContext.placeholder
         : "说你要做什么，比如：羽绒服，淘宝详情页，雪山场景，带模特。";
   const agentInputHelperText = editTarget
     ? "当前只修改这张图；原参考图、比例、用途和文案策略会带回。"
@@ -9193,6 +9252,8 @@ function CanvasAgentPanel({
       ? "当前只调整这组；可以说只留几张、换动作、换场景、改烧字策略。"
       : workflowPlanPreview
         ? "可以直接删组、加组、改数量、改比例或改画面文字；未提到的图组保持不变。"
+        : resultReviewFilterInputContext
+          ? resultReviewFilterInputContext.helper
         : visibleOutputCount > 0
           ? "生成后可以说保留、淘汰、标待重做，也可以点一张图继续改。"
           : "素材从素材库进入；需求在这里说，Agent 会先出计划再执行。";
@@ -9660,6 +9721,8 @@ function CanvasAgentPanel({
               focusedGroup={null}
               focusedGroupScopeText=""
               visibleOutputCount={visibleOutputCount}
+              resultReviewFilter={resultReviewFilter}
+              resultReviewFilterCount={resultReviewFilterCount}
               activeJobCount={activeJobCount}
               hasPlan={false}
               onClearEditTarget={onClearEditTarget}
@@ -9745,6 +9808,8 @@ function CanvasAgentPanel({
             focusedGroup={focusedPlanGroup}
             focusedGroupScopeText={focusedGroupScopeText}
             visibleOutputCount={visibleOutputCount}
+            resultReviewFilter={resultReviewFilter}
+            resultReviewFilterCount={resultReviewFilterCount}
             activeJobCount={activeJobCount}
             hasPlan={Boolean(workflowPlanPreview)}
             onClearEditTarget={onClearEditTarget}
@@ -10019,6 +10084,8 @@ function AgentScopeContextCard({
   focusedGroup,
   focusedGroupScopeText,
   visibleOutputCount,
+  resultReviewFilter,
+  resultReviewFilterCount,
   activeJobCount,
   hasPlan,
   onClearEditTarget,
@@ -10028,6 +10095,8 @@ function AgentScopeContextCard({
   focusedGroup: AgentPlanGroup | null;
   focusedGroupScopeText: string;
   visibleOutputCount: number;
+  resultReviewFilter: ResultReviewFilter;
+  resultReviewFilterCount: number;
   activeJobCount: number;
   hasPlan: boolean;
   onClearEditTarget: () => void;
@@ -10039,6 +10108,8 @@ function AgentScopeContextCard({
       focusedGroup: null,
       focusedGroupScopeText: "",
       visibleOutputCount,
+      resultReviewFilter,
+      resultReviewFilterCount,
     });
     return (
       <div
@@ -10070,6 +10141,8 @@ function AgentScopeContextCard({
       focusedGroup,
       focusedGroupScopeText,
       visibleOutputCount,
+      resultReviewFilter,
+      resultReviewFilterCount,
     });
     return (
       <div
@@ -10094,6 +10167,8 @@ function AgentScopeContextCard({
       focusedGroup: null,
       focusedGroupScopeText: "",
       visibleOutputCount,
+      resultReviewFilter,
+      resultReviewFilterCount,
     });
     return (
       <div
@@ -10103,7 +10178,9 @@ function AgentScopeContextCard({
         <AgentScopeHeader
           icon={ListChecks}
           label="当前作用域"
-          title={`结果墙：${visibleOutputCount} 张`}
+          title={resultReviewFilter !== "all"
+            ? `结果墙：${getResultReviewFilterLabel(resultReviewFilter)}`
+            : `结果墙：${visibleOutputCount} 张`}
         />
         <AgentScopeConfirmationRows items={scopeItems} className="mt-1.5" />
       </div>
@@ -10137,11 +10214,15 @@ function getAgentScopeConfirmationItems({
   focusedGroup,
   focusedGroupScopeText,
   visibleOutputCount,
+  resultReviewFilter,
+  resultReviewFilterCount,
 }: {
   editTarget: AgentImageEditTarget | null;
   focusedGroup: AgentPlanGroup | null;
   focusedGroupScopeText: string;
   visibleOutputCount: number;
+  resultReviewFilter: ResultReviewFilter;
+  resultReviewFilterCount: number;
 }): Array<{ label: string; text: string }> {
   if (editTarget?.url) {
     return [
@@ -10160,6 +10241,18 @@ function getAgentScopeConfirmationItems({
   }
 
   if (visibleOutputCount > 0) {
+    if (resultReviewFilter !== "all") {
+      return [
+        { label: "范围", text: `当前筛选「${getResultReviewFilterLabel(resultReviewFilter)}」${resultReviewFilterCount} 张。` },
+        {
+          label: "操作",
+          text: resultReviewFilterCount > 0
+            ? "可以对这类结果保留、淘汰、标待重做，或点单张继续改。"
+            : "当前没有命中，先显示全部或换筛选。"
+        },
+        { label: "不影响", text: "没有点名的结果保持不变。" },
+      ];
+    }
     return [
       { label: "范围", text: `当前结果墙 ${visibleOutputCount} 张。` },
       { label: "操作", text: "可保留、淘汰、标待重做，或点单张继续改。" },

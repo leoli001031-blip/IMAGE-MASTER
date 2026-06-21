@@ -611,6 +611,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /<CanvasAgentPanel[\s\S]*resultReviewFilter=\{resultReviewFilter\}[\s\S]*resultReviewFilterCount=\{resultReviewFilterCounts\[resultReviewFilter\] \?\? 0\}[\s\S]*function AgentScopeContextCard[\s\S]*resultReviewFilter[\s\S]*resultReviewFilterCount[\s\S]*当前筛选「\$\{getResultReviewFilterLabel\(resultReviewFilter\)\}」\$\{resultReviewFilterCount\} 张/,
+  "Agent scope card should mirror the active result-review filter context"
+);
+assert.match(
+  workbenchSource,
   /highlightedResultReviewFilter[\s\S]*getResultReviewFilterForArtifactReviewStatus\(status\)[\s\S]*ResultReviewFilterBar[\s\S]*highlightedValue=\{highlightedResultReviewFilter\}/,
   "review status changes should visually highlight the matching result-review filter"
 );
