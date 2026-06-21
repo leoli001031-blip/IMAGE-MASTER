@@ -149,6 +149,11 @@ assert.match(
 );
 assert.match(
   resultPageSource,
+  /async function resolveImageArtifactId[\s\S]*getImageArtifactId\(image\)[\s\S]*getImageJobId\(image\)[\s\S]*\/api\/artifacts\?jobId=\$\{encodeURIComponent\(jobId\)\}&limit=1/,
+  "result page should resolve restored recent job images back to artifacts before persisting review state"
+);
+assert.match(
+  resultPageSource,
   /handleSetResultGroupReviewStatus[\s\S]*result-page-group-review[\s\S]*onSetGroupReviewStatus=\{handleSetResultGroupReviewStatus\}/,
   "result page groups should batch mark keep, redo, and reject review states"
 );

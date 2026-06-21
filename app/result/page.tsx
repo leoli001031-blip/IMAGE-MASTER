@@ -24,7 +24,7 @@ import {
   writePendingResultEditTarget,
   writePendingResultGroupEditTarget,
 } from "@/lib/canvas/result-edit-target-storage";
-import type { GeneratedImage } from "@/lib/types";
+import type { GeneratedArtifact, GeneratedImage } from "@/lib/types";
 
 export default function ResultPage() {
   const router = useRouter();
@@ -376,7 +376,7 @@ export default function ResultPage() {
     status: Exclude<ImageDetailReviewStatus, "failed">,
     source: string
   ): Promise<{ update: ResultReviewStateUpdate; persisted: boolean }> => {
-    const artifactId = getImageArtifactId(sourceImage);
+    const artifactId = await resolveImageArtifactId(sourceImage);
     const reviewState = buildResultReviewState(status, source);
     if (!artifactId) {
       return {
@@ -842,6 +842,24 @@ function getImageArtifactId(image: GeneratedImage): string | undefined {
     getMetadataString(metadata, "generatedArtifactId");
   if (artifactId) return artifactId;
   return image.id.startsWith("artifact_") ? image.id : undefined;
+}
+
+async function resolveImageArtifactId(image: GeneratedImage): Promise<string | undefined> {
+  const directArtifactId = getImageArtifactId(image);
+  if (directArtifactId) return directArtifactId;
+
+  const jobId = getImageJobId(image);
+  if (!jobId) return undefined;
+
+  const response = await fetch(`/api/artifacts?jobId=${encodeURIComponent(jobId)}&limit=1`);
+  const payload: unknown = await response.json().catch(() => []);
+  if (!response.ok) throw new Error("产物记录读取失败");
+  if (!Array.isArray(payload)) return undefined;
+
+  const artifact = payload.find((item): item is GeneratedArtifact => {
+    return isRecord(item) && typeof item.id === "string" && item.jobId === jobId;
+  });
+  return artifact?.id;
 }
 
 function buildResultGroupEditTarget(groupTitle: string, images: GeneratedImage[]): PendingResultGroupEditTarget {
