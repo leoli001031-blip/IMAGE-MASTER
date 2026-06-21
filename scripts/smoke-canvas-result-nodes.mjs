@@ -467,6 +467,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /action === "edit" \|\| action === "copy"[\s\S]*这张文案短一点[\s\S]*只改这张的画面文案[\s\S]*function getAgentReviewSuggestionActionLabel\(action: AgentReviewSuggestionAction\)[\s\S]*if \(action === "copy"\) return "改文案";/,
+  "Agent review copy suggestions should become scoped copy-edit actions with clear feedback"
+);
+assert.match(
+  workbenchSource,
   /action === "redo"[\s\S]*已按原参考图、比例和图组用途重做[\s\S]*getRemainingReviewText\(\)[\s\S]*artifact\?\.url[\s\S]*image-master:generation-frame-output-edit[\s\S]*没有可直接重跑的任务，已切到让 Agent 改这张[\s\S]*接下来只修改这张/,
   "Agent single-image redo suggestions should report remaining review work and select scoped edit when no direct retry job exists"
 );

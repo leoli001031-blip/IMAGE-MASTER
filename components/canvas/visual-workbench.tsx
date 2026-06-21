@@ -10076,7 +10076,11 @@ function CanvasAgentPanel({
         ? "这张文案短一点，放在画面安全区，不要改商品包装标签；保留原商品、比例和图组用途。"
         : suggestion.editBrief || `修改这张图：${suggestion.body}；保留原参考图、比例和图组用途。`;
       window.setTimeout(() => onComposeBriefChange(brief), 0);
-      recordAction(`已选中「${artifact.title}」；接下来只修改这张，保留原参考图、比例和用途。`);
+      recordAction(
+        action === "copy"
+          ? `已选中「${artifact.title}」；接下来只改这张的画面文案，保留原参考图、比例和用途。`
+          : `已选中「${artifact.title}」；接下来只修改这张，保留原参考图、比例和用途。`
+      );
       return;
     }
 
@@ -11450,7 +11454,7 @@ function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction
   if (action === "open") return "看详情";
   if (action === "redo") return "执行重做";
   if (action === "edit") return "让 Agent 改";
-  if (action === "copy") return "修改文案";
+  if (action === "copy") return "改文案";
   if (action === "group_edit") return "调整这组";
   return "重做这组";
 }
