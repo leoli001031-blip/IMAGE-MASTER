@@ -1108,6 +1108,7 @@ interface AgentExecutableReviewSuggestion {
 interface AgentReviewSuggestionExecutionState {
   action: AgentReviewSuggestionAction;
   label: string;
+  scopeText?: string;
   text: string;
 }
 
@@ -9357,6 +9358,7 @@ function CanvasAgentPanel({
       const execution = {
         action,
         label: getAgentReviewSuggestionActionLabel(action),
+        scopeText: getAgentReviewSuggestionExecutionScopeText(suggestion),
         text,
       };
       setExecutedReviewSuggestionActions((items) => ({
@@ -9762,6 +9764,12 @@ function CanvasAgentPanel({
               data-testid="agent-review-action-feedback"
             >
               <div className="font-medium">最近执行：{lastReviewSuggestionExecution.label}</div>
+              {lastReviewSuggestionExecution.scopeText && (
+                <div className="mt-1 flex gap-1.5 text-[10px] leading-4 text-emerald-700">
+                  <span className="w-8 shrink-0 text-emerald-600/80">影响</span>
+                  <span className="min-w-0 flex-1">{lastReviewSuggestionExecution.scopeText}</span>
+                </div>
+              )}
               <div className="mt-0.5 text-emerald-700">{lastReviewSuggestionExecution.text}</div>
             </div>
           )}
@@ -10722,6 +10730,19 @@ function getAgentReviewSuggestionImpactItems(
     { label: "目标", text: "只处理这条建议点名的结果。" },
     { label: "不动", text: "未点名结果保持不变。" },
   ];
+}
+
+function getAgentReviewSuggestionExecutionScopeText(suggestion: AgentExecutableReviewSuggestion): string {
+  if (suggestion.artifactId) {
+    return `只影响「${suggestion.title}」这张结果图。`;
+  }
+  if (suggestion.groupTitle) {
+    const count = suggestion.artifactIds?.length ?? 0;
+    return count > 0
+      ? `只影响「${suggestion.groupTitle}」${count} 张待处理图。`
+      : `只影响「${suggestion.groupTitle}」这一组。`;
+  }
+  return "只处理这条建议点名的结果，未点名结果保持不变。";
 }
 
 function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction): string {

@@ -412,8 +412,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /lastReviewSuggestionExecution[\s\S]*setLastReviewSuggestionExecution\(execution\)[\s\S]*agent-review-action-feedback[\s\S]*最近执行：\{lastReviewSuggestionExecution\.label\}/,
-  "Agent review suggestion actions should keep a visible recent-action confirmation even if suggestions recalculate"
+  /lastReviewSuggestionExecution[\s\S]*setLastReviewSuggestionExecution\(execution\)[\s\S]*agent-review-action-feedback[\s\S]*最近执行：\{lastReviewSuggestionExecution\.label\}[\s\S]*lastReviewSuggestionExecution\.scopeText[\s\S]*影响[\s\S]*lastReviewSuggestionExecution\.scopeText/,
+  "Agent review suggestion actions should keep visible recent-action confirmation and affected scope even if suggestions recalculate"
+);
+assert.match(
+  workbenchSource,
+  /interface AgentReviewSuggestionExecutionState[\s\S]*scopeText\?: string;[\s\S]*recordAction[\s\S]*scopeText: getAgentReviewSuggestionExecutionScopeText\(suggestion\)[\s\S]*function getAgentReviewSuggestionExecutionScopeText[\s\S]*只影响「\$\{suggestion\.title\}」这张结果图[\s\S]*只影响「\$\{suggestion\.groupTitle\}」\$\{count\} 张待处理图/,
+  "Agent review suggestion execution state should persist the affected target for post-click traceability"
 );
 assert.match(
   workbenchSource,
