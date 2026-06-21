@@ -1066,6 +1066,7 @@ interface AgentPlanDiff {
   scopeSummary?: string;
   preservedSummary?: string;
   nextAction?: string;
+  affectedGroupTitles?: string[];
   additions: string[];
   removals: string[];
   countChanges: string[];
@@ -9566,6 +9567,7 @@ function CanvasAgentPanel({
                 groups={planGroups}
                 totalCount={estimatedCallCount || workflowPlanPreview.estimatedCount}
                 blockedCount={hasBlockedAgentPlanItems ? blockedMatrixItemCount || missingInputHints.length : 0}
+                planDiff={planDiff}
                 onFocusGroup={(group) => {
                   setFocusedPlanGroup(group);
                   onComposeBriefChange(`调整「${group.title}」：`);
@@ -9888,11 +9890,13 @@ function AgentPlanBoard({
   groups,
   totalCount,
   blockedCount,
+  planDiff,
   onFocusGroup,
 }: {
   groups: AgentPlanGroup[];
   totalCount: number;
   blockedCount: number;
+  planDiff?: AgentPlanDiff | null;
   onFocusGroup: (group: AgentPlanGroup) => void;
 }) {
   const visibleGroups = groups.slice(0, 6);
@@ -9911,54 +9915,58 @@ function AgentPlanBoard({
         <ListChecks className="h-4 w-4 text-warm-primary" />
       </div>
       <div className="mt-2 space-y-1.5">
-        {visibleGroups.map((group) => (
-          <div
-            key={group.id}
-            className={cn(
-              "rounded-md border bg-warm-bg px-2.5 py-2",
-              group.status === "blocked" ? "border-amber-200/80" : "border-warm-line/50"
-            )}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate text-xs font-medium text-warm-ink">
-                  {group.title}
-                </div>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  <AgentPlanTinyBadge tone={getAgentGroupPriorityTone(group)}>
-                    {getAgentGroupPriorityLabel(group)}
-                  </AgentPlanTinyBadge>
-                  <AgentPlanTinyBadge>{group.count} 张</AgentPlanTinyBadge>
-                  {group.ratios.slice(0, 2).map((ratio) => (
-                    <AgentPlanTinyBadge key={ratio}>{ratio}</AgentPlanTinyBadge>
-                  ))}
-                  {group.copyModes.slice(0, 2).map((mode) => (
-                    <AgentPlanTinyBadge key={mode}>{getCopyModeLabel(mode)}</AgentPlanTinyBadge>
-                  ))}
-                  {group.status === "blocked" && <AgentPlanTinyBadge tone="warn">缺素材</AgentPlanTinyBadge>}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => onFocusGroup(group)}
-                className="shrink-0 rounded-md border border-warm-line/55 bg-warm-paper px-2 py-1 text-[10px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
-              >
-                改这组
-              </button>
-            </div>
-            <div className="mt-1.5 space-y-0.5 text-[11px] leading-4 text-warm-muted">
-              <div className="truncate">
-                强参考：{group.providerRoles.length ? group.providerRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
-              </div>
-              <div className="truncate">
-                文字/约束：{group.promptOnlyRoles.length ? group.promptOnlyRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
-              </div>
-              <div className="truncate">
-                文案：{formatAgentPlanCopyModes(group.copyModes)}
-              </div>
-              {group.assetTitles.length > 0 && (
-                <div className="truncate">素材：{group.assetTitles.slice(0, 3).join("、")}</div>
+        {visibleGroups.map((group) => {
+          const changed = isAgentPlanGroupAffectedByDiff(group, planDiff);
+          return (
+            <div
+              key={group.id}
+              className={cn(
+                "rounded-md border bg-warm-bg px-2.5 py-2",
+                group.status === "blocked" ? "border-amber-200/80" : "border-warm-line/50",
+                changed && "border-warm-primary/45 bg-warm-primary-soft/35"
               )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-warm-ink">
+                    {group.title}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {changed && <AgentPlanTinyBadge tone="priority">已调整</AgentPlanTinyBadge>}
+                    <AgentPlanTinyBadge tone={getAgentGroupPriorityTone(group)}>
+                      {getAgentGroupPriorityLabel(group)}
+                    </AgentPlanTinyBadge>
+                    <AgentPlanTinyBadge>{group.count} 张</AgentPlanTinyBadge>
+                    {group.ratios.slice(0, 2).map((ratio) => (
+                      <AgentPlanTinyBadge key={ratio}>{ratio}</AgentPlanTinyBadge>
+                    ))}
+                    {group.copyModes.slice(0, 2).map((mode) => (
+                      <AgentPlanTinyBadge key={mode}>{getCopyModeLabel(mode)}</AgentPlanTinyBadge>
+                    ))}
+                    {group.status === "blocked" && <AgentPlanTinyBadge tone="warn">缺素材</AgentPlanTinyBadge>}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onFocusGroup(group)}
+                  className="shrink-0 rounded-md border border-warm-line/55 bg-warm-paper px-2 py-1 text-[10px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                >
+                  改这组
+                </button>
+              </div>
+              <div className="mt-1.5 space-y-0.5 text-[11px] leading-4 text-warm-muted">
+                <div className="truncate">
+                  强参考：{group.providerRoles.length ? group.providerRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
+                </div>
+                <div className="truncate">
+                  文字/约束：{group.promptOnlyRoles.length ? group.promptOnlyRoles.map(getAgentPlanRoleLabel).join("、") : "无"}
+                </div>
+                <div className="truncate">
+                  文案：{formatAgentPlanCopyModes(group.copyModes)}
+                </div>
+                {group.assetTitles.length > 0 && (
+                  <div className="truncate">素材：{group.assetTitles.slice(0, 3).join("、")}</div>
+                )}
                 {group.summary && <div className="line-clamp-2">用途：{group.summary}</div>}
                 <div className="truncate">
                   状态：{group.status === "blocked" ? "缺关键素材，暂不建议执行" : "可执行，可继续微调"}
@@ -9971,7 +9979,8 @@ function AgentPlanBoard({
                 )}
               </div>
             </div>
-          ))}
+          );
+        })}
         {hiddenCount > 0 && (
           <div className="rounded-md bg-warm-bg px-2.5 py-2 text-[11px] text-warm-muted">
             还有 {hiddenCount} 组，应用后会按用途回到画布结果墙。
@@ -10019,6 +10028,38 @@ function AgentPlanDiffCard({ diff }: { diff: AgentPlanDiff }) {
       )}
     </div>
   );
+}
+
+function isAgentPlanGroupAffectedByDiff(group: AgentPlanGroup, diff?: AgentPlanDiff | null): boolean {
+  if (!diff) return false;
+  const groupKeys = [group.id, group.title]
+    .map(normalizeAgentPlanScopeKey)
+    .filter(Boolean);
+  if (groupKeys.length === 0) return false;
+
+  const explicitKeys = (diff.affectedGroupTitles ?? [])
+    .map(normalizeAgentPlanScopeKey)
+    .filter(Boolean);
+  if (explicitKeys.some((key) => groupKeys.some((groupKey) => groupKey === key || groupKey.includes(key) || key.includes(groupKey)))) {
+    return true;
+  }
+
+  const changeText = normalizeAgentPlanScopeKey([
+    diff.scopeSummary,
+    diff.summary,
+    ...getAgentPlanDiffChangeLines(diff),
+  ].filter(Boolean).join(" "));
+  return groupKeys.some((key) => key.length > 1 && changeText.includes(key));
+}
+
+function getAgentPlanDiffChangeLines(diff: AgentPlanDiff): string[] {
+  return [
+    ...diff.additions,
+    ...diff.removals,
+    ...diff.countChanges,
+    ...diff.copyChanges,
+    ...diff.otherChanges,
+  ];
 }
 
 function AgentGapChecklist({ items }: { items: AgentGapHintItem[] }) {
@@ -11038,6 +11079,7 @@ function buildAgentResultGroupRevisionDiff(
     nextAction: targetCount > 0
       ? "下一步先看本组重做结果，再决定是否继续扩大修改范围。"
       : "下一步可以换一个有成片的图组继续改。",
+    affectedGroupTitles: [group.title],
     additions: [],
     removals: [],
     countChanges,
@@ -17964,12 +18006,28 @@ function buildAgentPlanDiff(
       ? "其他图组、比例和参考图角色保持不变。"
       : "未提到的图组、比例和参考图角色保持不变。",
     nextAction: buildAgentPlanDiffNextAction({ additions, removals, countChanges, copyChanges, otherChanges }),
+    affectedGroupTitles: getAgentPlanDiffAffectedGroupTitles(changes, scopeGroup),
     additions,
     removals,
     countChanges,
     copyChanges,
     otherChanges,
   };
+}
+
+function getAgentPlanDiffAffectedGroupTitles(
+  changes: string[],
+  scopeGroup?: AgentPlanGroup | null
+): string[] {
+  const titles = new Set<string>();
+  if (scopeGroup?.title) titles.add(scopeGroup.title);
+  for (const change of changes) {
+    const quotedMatches = change.matchAll(/「([^」]+)」/g);
+    for (const match of quotedMatches) {
+      if (match[1]) titles.add(match[1]);
+    }
+  }
+  return Array.from(titles);
 }
 
 function buildAgentPlanDiffScopeSummary({

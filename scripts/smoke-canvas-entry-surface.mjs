@@ -283,7 +283,7 @@ assert.match(
 );
 assert.match(
   source,
-  /interface AgentPlanDiff[\s\S]*scopeSummary\?: string;[\s\S]*preservedSummary\?: string;[\s\S]*nextAction\?: string;/,
+  /interface AgentPlanDiff[\s\S]*scopeSummary\?: string;[\s\S]*preservedSummary\?: string;[\s\S]*nextAction\?: string;[\s\S]*affectedGroupTitles\?: string\[\];/,
   "plan diffs should carry scope, preserved-context, and next-action guidance"
 );
 assert.match(
@@ -305,6 +305,16 @@ assert.match(
   source,
   /function AgentPlanDiffCard[\s\S]*diff\.scopeSummary[\s\S]*diff\.preservedSummary[\s\S]*diff\.nextAction/,
   "plan diff card should show the same reviewable impact notes as the conversation"
+);
+assert.match(
+  source,
+  /<AgentPlanBoard[\s\S]*planDiff=\{planDiff\}[\s\S]*function AgentPlanBoard[\s\S]*isAgentPlanGroupAffectedByDiff\(group, planDiff\)[\s\S]*已调整/,
+  "plan board should mark groups affected by the latest natural-language plan edit"
+);
+assert.match(
+  source,
+  /affectedGroupTitles: getAgentPlanDiffAffectedGroupTitles\(changes, scopeGroup\)[\s\S]*function getAgentPlanDiffAffectedGroupTitles[\s\S]*matchAll\(\/「\(\[\^」\]\+\)」\/g\)/,
+  "plan diffs should extract quoted scoped group titles for visible plan-board highlighting"
 );
 assert.match(
   source,
