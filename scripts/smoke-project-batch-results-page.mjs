@@ -122,6 +122,16 @@ try {
         ratio: "1:1",
         size: "10x10",
         naming: "project_batch_result_01",
+        reviewState: {
+          status: "approved",
+          label: "可用",
+          source: "smoke-stale-review",
+        },
+        visualQa: {
+          status: "fail",
+          label: "建议重做",
+          issues: [{ label: "旧 QA", summary: "This stale QA state must not carry into reruns." }],
+        },
       },
     }),
   }, 201);
@@ -227,6 +237,12 @@ try {
     throw new Error(
       `Expected rerunSourceOutputSlotId main, got ${rerunPayload?.job?.metadata?.rerunSourceOutputSlotId}`
     );
+  }
+  if (rerunPayload?.job?.metadata?.reviewState) {
+    throw new Error(`Rerun job should not inherit reviewState, got ${JSON.stringify(rerunPayload.job.metadata.reviewState)}`);
+  }
+  if (rerunPayload?.job?.metadata?.visualQa) {
+    throw new Error(`Rerun job should not inherit visualQa, got ${JSON.stringify(rerunPayload.job.metadata.visualQa)}`);
   }
 
   const rerunHtml = await requestText(

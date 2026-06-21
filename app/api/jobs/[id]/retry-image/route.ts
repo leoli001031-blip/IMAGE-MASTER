@@ -265,6 +265,7 @@ export async function POST(
       providerCallBudgetId,
       lastBudgetEvent ?? reserveEvent
     );
+    const cleanMetadataWithAttempts = stripResultReviewAuditMetadata(metadataWithAttempts);
     const retryMeta = {
       retryImage: true,
       retriedImageAt: now,
@@ -298,7 +299,7 @@ export async function POST(
         defaultMimeType: "image/png",
       });
       const baseMetadata = {
-        ...metadataWithAttempts,
+        ...cleanMetadataWithAttempts,
         source: "batch-image-api-retry",
         jobId: job.id,
         retryOfJobId: job.id,
@@ -404,7 +405,7 @@ export async function POST(
       status: "failed",
       error: failure.message,
       metadata: {
-        ...metadataWithAttempts,
+        ...cleanMetadataWithAttempts,
         ...retryMeta,
         errorCode: failure.code,
         providerDiagnostics: failure.diagnostics,
@@ -511,6 +512,13 @@ function buildRetryGuardrails() {
     emptyResultRetryLimit: EMPTY_RESULT_RETRY_LIMIT,
     transientProviderRetryLimit: TRANSIENT_PROVIDER_RETRY_LIMIT,
   };
+}
+
+function stripResultReviewAuditMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...metadata };
+  delete result.reviewState;
+  delete result.visualQa;
+  return result;
 }
 
 function isTransientProviderErrorCode(code: string | undefined): boolean {

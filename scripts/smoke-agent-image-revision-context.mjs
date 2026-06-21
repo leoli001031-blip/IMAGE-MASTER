@@ -8,6 +8,7 @@ const root = process.cwd();
 const workbenchPath = path.join(root, "components/canvas/visual-workbench.tsx");
 const source = fs.readFileSync(workbenchPath, "utf8");
 const rerunRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/[id]/rerun/route.ts"), "utf8");
+const retryImageRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/[id]/retry-image/route.ts"), "utf8");
 const jobsRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/route.ts"), "utf8");
 const artifactsRouteSource = fs.readFileSync(path.join(root, "app/api/artifacts/route.ts"), "utf8");
 const jobRunnerSource = fs.readFileSync(path.join(root, "lib/store/job-runner.ts"), "utf8");
@@ -205,6 +206,16 @@ assert.match(
   rerunRouteSource,
   /groupTitle\?: unknown[\s\S]*groupTitle: getString\(body\.groupTitle\)[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId/,
   "rerun API should persist source group and original slot metadata"
+);
+assert.match(
+  rerunRouteSource,
+  /stripGeneratedResultMetadata[\s\S]*"reviewState"[\s\S]*"visualQa"/,
+  "completed-image reruns should not inherit old review or visual QA status"
+);
+assert.match(
+  retryImageRouteSource,
+  /const cleanMetadataWithAttempts = stripResultReviewAuditMetadata\(metadataWithAttempts\)[\s\S]*\.\.\.cleanMetadataWithAttempts[\s\S]*function stripResultReviewAuditMetadata[\s\S]*delete result\.reviewState;[\s\S]*delete result\.visualQa;/,
+  "single-image retry should clear old review and visual QA state before writing the regenerated image"
 );
 assert.match(
   jobRunnerSource,

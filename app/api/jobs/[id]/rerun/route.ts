@@ -207,8 +207,10 @@ function stripGeneratedResultMetadata(metadata: Record<string, unknown>): Record
     "providerCallBudgetId",
     "providerDiagnostics",
     "queuedAt",
+    "reviewState",
     "resultStorage",
     "startedAt",
+    "visualQa",
   ]) {
     delete result[key];
   }
