@@ -10127,7 +10127,7 @@ function AgentReviewSuggestionCards({
                     key={`${suggestion.id}-${action}`}
                     type="button"
                     className={cn(
-                      "inline-flex h-7 items-center gap-1 rounded-md border bg-white/75 px-2 text-[10px] font-medium transition hover:bg-white",
+                      "inline-flex h-7 items-center gap-1 rounded-md border bg-white/75 px-2 text-[10px] font-medium transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-55",
                       action === "approve"
                         ? "border-emerald-200 text-emerald-700 hover:border-emerald-300"
                         : action === "reject"
@@ -10137,6 +10137,8 @@ function AgentReviewSuggestionCards({
                             : "border-warm-line/60 text-warm-ink hover:border-warm-primary/40 hover:text-warm-primary",
                       executed && "border-emerald-300 bg-emerald-50 text-emerald-700"
                     )}
+                    disabled={executed}
+                    title={executed ? "这个建议动作已执行" : getAgentReviewSuggestionActionLabel(action)}
                     onClick={() => onAction(suggestion, action)}
                   >
                     <ActionIcon className="h-3 w-3" />
