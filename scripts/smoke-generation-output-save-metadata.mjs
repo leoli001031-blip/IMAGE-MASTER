@@ -12,6 +12,7 @@ const resultPageSource = fs.readFileSync(path.join(root, "app/result/page.tsx"),
 const imageDetailPanelSource = fs.readFileSync(path.join(root, "components/result/image-detail-panel.tsx"), "utf8");
 const imageCardSource = fs.readFileSync(path.join(root, "components/result/image-card.tsx"), "utf8");
 const imageGroupSource = fs.readFileSync(path.join(root, "components/result/image-group.tsx"), "utf8");
+const resultEditTargetStorageSource = fs.readFileSync(path.join(root, "lib/canvas/result-edit-target-storage.ts"), "utf8");
 
 assert.match(
   workbenchSource,
@@ -140,6 +141,16 @@ assert.match(
   workbenchSource,
   /takePendingResultEditTarget\(\)[\s\S]*setAgentImageEditTarget\(target\)[\s\S]*已从结果页带入/,
   "canvas Agent should restore a pending result-page edit target"
+);
+assert.match(
+  resultEditTargetStorageSource,
+  /PENDING_RESULT_EDIT_METADATA_KEYS[\s\S]*referenceContext[\s\S]*copyRenderPolicy[\s\S]*visualQa/,
+  "result-page Agent edit handoff should keep only metadata needed for scoped image revision"
+);
+assert.match(
+  resultEditTargetStorageSource,
+  /MAX_PENDING_METADATA_TEXT_LENGTH[\s\S]*compactPendingResultEditMetadata[\s\S]*data:image\/[\s\S]*text\.length > 4096/,
+  "result-page Agent edit handoff should avoid storing oversized inline reference images"
 );
 
 assert.match(
