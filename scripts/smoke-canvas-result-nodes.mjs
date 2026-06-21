@@ -178,6 +178,11 @@ assert.match(
   "image detail preview should expose an explicit Agent-edit callback in the detail sidebar"
 );
 assert.match(
+  outputPreviewModalSource,
+  /canRetryOrEdit[\s\S]*item\.jobId \|\| item\.url[\s\S]*没有直接重跑任务时让 Agent 改这张[\s\S]*disabled=\{!canRetryOrEdit\}/,
+  "image detail retry should stay clickable when a URL can fall back to Agent single-image edit"
+);
+assert.match(
   workflowNodeSource,
   /让 Agent 修改[\s\S]*dispatchArtifactEdit\(data, id\)[\s\S]*改图/,
   "artifact result cards should expose a direct single-image Agent edit action"

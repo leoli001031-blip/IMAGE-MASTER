@@ -134,6 +134,12 @@ export function OutputPreviewModal({
 }: OutputPreviewModalProps) {
   const outputPurposeLabel = getOutputPreviewPurposeLabel(item);
   const outputRatioLabel = getOutputPreviewRatioLabel(item.metadata ?? {});
+  const canRetryOrEdit = Boolean(item.jobId || item.url);
+  const retryTitle = item.jobId
+    ? "重做当前图"
+    : item.url
+      ? "没有直接重跑任务时让 Agent 改这张"
+      : "当前图没有可重做任务";
 
   return (
     <div
@@ -247,9 +253,9 @@ export function OutputPreviewModal({
                 <button
                   type="button"
                   className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-warm-line/60 bg-warm-paper px-2 text-xs font-medium text-warm-ink transition hover:border-warm-primary/40 hover:text-warm-primary disabled:cursor-not-allowed disabled:opacity-45"
-                  disabled={!item.jobId}
+                  disabled={!canRetryOrEdit}
                   onClick={onRetry}
-                  title={item.jobId ? "重做当前图" : "当前图没有可重做任务"}
+                  title={retryTitle}
                 >
                   <RefreshCw className="h-3 w-3" />
                   重做
