@@ -995,6 +995,8 @@ interface GenerationFrameOutputActionDetail {
   artifactIds?: string[];
   group?: string;
   note?: string;
+  prompt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface GenerationOutputPreview {
@@ -4563,7 +4565,10 @@ export function VisualWorkbench() {
         setComposeMessage("这张图还没有可修改的大图");
         return;
       }
-      const metadata = mergeGenerationOutputPreviewMetadata({ artifact, job });
+      const metadata = {
+        ...getRecordValue(detail.metadata),
+        ...mergeGenerationOutputPreviewMetadata({ artifact, job }),
+      };
       const target: AgentImageEditTarget = {
         url,
         title: detail.title || artifact?.title || "生成图片",
@@ -4572,7 +4577,7 @@ export function VisualWorkbench() {
         jobId: artifact?.jobId ?? detail.jobId,
         nodeId: artifact?.nodeId ?? detail.nodeId,
         status: detail.status || artifact?.status,
-        prompt: getGenerationOutputPreviewPrompt({ artifact, job, metadata }),
+        prompt: detail.prompt || getGenerationOutputPreviewPrompt({ artifact, job, metadata }),
         metadata,
       };
       setOutputPreview(null);
@@ -5907,6 +5912,8 @@ export function VisualWorkbench() {
           url: item.url,
           title: item.title,
           status: item.status,
+          prompt: item.prompt,
+          metadata: item.metadata,
         },
       })
     );

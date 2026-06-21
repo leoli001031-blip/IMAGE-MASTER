@@ -16,8 +16,8 @@ assert.match(
 
 assert.match(
   source,
-  /const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\);[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\),[\s\S]*metadata,/,
-  "clicking a result for revision should capture the artifact/job metadata and original prompt"
+  /const metadata = \{[\s\S]*\.\.\.getRecordValue\(detail\.metadata\),[\s\S]*\.\.\.mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\),[\s\S]*prompt: detail\.prompt \|\| getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\),[\s\S]*metadata,/,
+  "clicking a result for revision should capture event, artifact, and job metadata plus the original prompt"
 );
 
 assert.match(
@@ -51,6 +51,12 @@ assert.match(
   source,
   /function buildAgentEditContextHint[\s\S]*上一版成片参考[\s\S]*只改这张，不改其它图组，也不重写整套计划[\s\S]*图组用途沿用[\s\S]*强参考会带回[\s\S]*文字约束继续继承[\s\S]*原 prompt 会作为必要约束继承/,
   "image revision mode should explain that the previous image, provider references, and prompt-only constraints stay in context"
+);
+
+assert.match(
+  source,
+  /dispatchPreviewOutputAction[\s\S]*prompt: item\.prompt,[\s\S]*metadata: item\.metadata,/,
+  "canvas preview detail actions should pass prompt and metadata into Agent image edit handoff"
 );
 
 assert.match(
