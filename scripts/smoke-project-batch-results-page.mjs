@@ -111,6 +111,8 @@ try {
         batchIndex: 1,
         batchTotal: 1,
         batchJobTitle: "项目批次结果页测试图",
+        planItemTitle: "主图",
+        outputSlotId: "main",
         exportPackId: batchId,
         exportPackTitle: "项目批次结果页测试图组",
         exportSpecId: "smoke-result",
@@ -201,6 +203,7 @@ try {
     body: JSON.stringify({
       title: "项目批次结果页测试图 再做一版",
       note: "Smoke duplicate completed result without provider call.",
+      groupTitle: "主图",
     }),
   }, 201);
   if (!["pending", "queued"].includes(rerunPayload?.job?.status)) {
@@ -211,6 +214,19 @@ try {
   }
   if (rerunPayload?.batchState?.state !== "in_review") {
     throw new Error(`Expected rerun to reopen batch to in_review, got ${rerunPayload?.batchState?.state}`);
+  }
+  if (rerunPayload?.job?.metadata?.resultGroupTitle !== "主图") {
+    throw new Error(`Expected rerun resultGroupTitle 主图, got ${rerunPayload?.job?.metadata?.resultGroupTitle}`);
+  }
+  if (rerunPayload?.job?.metadata?.rerunSourcePlanItemTitle !== "主图") {
+    throw new Error(
+      `Expected rerunSourcePlanItemTitle 主图, got ${rerunPayload?.job?.metadata?.rerunSourcePlanItemTitle}`
+    );
+  }
+  if (rerunPayload?.job?.metadata?.rerunSourceOutputSlotId !== "main") {
+    throw new Error(
+      `Expected rerunSourceOutputSlotId main, got ${rerunPayload?.job?.metadata?.rerunSourceOutputSlotId}`
+    );
   }
 
   const rerunHtml = await requestText(

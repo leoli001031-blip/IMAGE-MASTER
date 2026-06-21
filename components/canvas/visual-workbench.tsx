@@ -3840,7 +3840,10 @@ export function VisualWorkbench() {
     }
   };
 
-  const handleRerunImageJob = async (job: PersistedGenerationJob) => {
+  const handleRerunImageJob = async (
+    job: PersistedGenerationJob,
+    options: { groupTitle?: string } = {}
+  ) => {
     setRunningJobId(job.id);
     setJobMessage("正在带原参考图再做一版...");
 
@@ -3851,6 +3854,7 @@ export function VisualWorkbench() {
         body: JSON.stringify({
           title: `${getJobNodeLabel(job)} 再做一版`,
           note: "Created from canvas image detail with original references",
+          groupTitle: options.groupTitle,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -4669,7 +4673,7 @@ export function VisualWorkbench() {
           return;
         }
         if (canRerunImageJob(job)) {
-          void handleRerunImageJob(job);
+          void handleRerunImageJob(job, { groupTitle: getStringValue(detail.group) });
           return;
         }
         if (canRetryJob(job)) {
@@ -4701,7 +4705,7 @@ export function VisualWorkbench() {
           if (canRetryImageJob(job)) {
             await handleRetryImageJob(job);
           } else if (canRerunImageJob(job)) {
-            await handleRerunImageJob(job);
+            await handleRerunImageJob(job, { groupTitle: getStringValue(detail?.group) });
           } else {
             await handleRetryJob(job);
           }
@@ -11888,6 +11892,12 @@ function getAgentActionableGroupSuggestionArtifacts(
 }
 
 function getAgentArtifactResultGroupLabel(artifact: PersistedGeneratedArtifact): string {
+  const metadata = artifact.metadata ?? {};
+  const explicitGroup =
+    getStringValue(metadata.resultGroupTitle) ||
+    getStringValue(metadata.rerunGroupTitle);
+  if (explicitGroup) return explicitGroup;
+
   const text = getAgentArtifactSearchText(artifact).toLowerCase();
   if (/main|hero|主图|主视觉/.test(text)) return "主图";
   if (/poster|campaign|海报|封面/.test(text)) return "海报";
@@ -11941,6 +11951,8 @@ function getAgentArtifactSearchText(artifact: PersistedGeneratedArtifact): strin
   return [
     artifact.title,
     artifact.type,
+    getStringValue(metadata.resultGroupTitle),
+    getStringValue(metadata.rerunGroupTitle),
     getStringValue(metadata.planItemTitle),
     getStringValue(metadata.batchJobTitle),
     getStringValue(metadata.outputSlotId),

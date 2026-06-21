@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 interface RerunBody {
   title?: unknown;
   note?: unknown;
+  groupTitle?: unknown;
 }
 
 export async function POST(
@@ -61,6 +62,7 @@ export async function POST(
       nextTotal,
       now,
       note: getString(body.note),
+      groupTitle: getString(body.groupTitle),
     });
 
     const rerunJob = await jobDB.add({
@@ -148,6 +150,7 @@ function buildRerunMetadata({
   nextTotal,
   now,
   note,
+  groupTitle,
 }: {
   sourceJob: GenerationJob;
   title: string;
@@ -155,8 +158,10 @@ function buildRerunMetadata({
   nextTotal: number;
   now: string;
   note?: string;
+  groupTitle?: string;
 }): Record<string, unknown> {
   const base = stripGeneratedResultMetadata(sourceJob.metadata);
+  const resultGroupTitle = groupTitle || getString(base.resultGroupTitle) || getString(base.rerunGroupTitle);
   return {
     ...base,
     batchIndex: nextIndex,
@@ -169,6 +174,10 @@ function buildRerunMetadata({
     rerunOfJobId: sourceJob.id,
     rerunCreatedAt: now,
     rerunNote: note,
+    ...(resultGroupTitle ? { resultGroupTitle, rerunGroupTitle: resultGroupTitle } : {}),
+    rerunSourcePlanItemTitle: getString(base.planItemTitle),
+    rerunSourceOutputSlotId: getString(base.outputSlotId),
+    rerunSourceExportSpecTitle: getString(base.exportSpecTitle),
     rerunSourceStatus: sourceJob.status,
     rerunSourceResultUrl: sourceJob.resultUrl,
     source: getString(base.source) || "project-batch-result-rerun",

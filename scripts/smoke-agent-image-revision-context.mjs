@@ -7,6 +7,10 @@ import path from "node:path";
 const root = process.cwd();
 const workbenchPath = path.join(root, "components/canvas/visual-workbench.tsx");
 const source = fs.readFileSync(workbenchPath, "utf8");
+const rerunRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/[id]/rerun/route.ts"), "utf8");
+const jobsRouteSource = fs.readFileSync(path.join(root, "app/api/jobs/route.ts"), "utf8");
+const artifactsRouteSource = fs.readFileSync(path.join(root, "app/api/artifacts/route.ts"), "utf8");
+const jobRunnerSource = fs.readFileSync(path.join(root, "lib/store/job-runner.ts"), "utf8");
 
 assert.match(
   source,
@@ -177,19 +181,50 @@ assert.match(
 
 assert.match(
   source,
-  /if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job\)[\s\S]*if \(canRetryJob\(job\)\) \{[\s\S]*handleRetryJob\(job\)/,
+  /if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job,[\s\S]*if \(canRetryJob\(job\)\) \{[\s\S]*handleRetryJob\(job\)/,
   "result detail retry should prefer image regenerate, then completed-image rerun, before generic failed-job retry"
 );
 
 assert.match(
   source,
-  /const handleRetryAll = \(event: Event\) => \{[\s\S]*canRetryImageJob\(job\) \|\| canRerunImageJob\(job\) \|\| canRetryJob\(job\)[\s\S]*if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*else if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job\)[\s\S]*else \{[\s\S]*handleRetryJob\(job\)/,
+  /const handleRetryAll = \(event: Event\) => \{[\s\S]*canRetryImageJob\(job\) \|\| canRerunImageJob\(job\) \|\| canRetryJob\(job\)[\s\S]*if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*else if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job,[\s\S]*else \{[\s\S]*handleRetryJob\(job\)/,
   "group retry should support completed-image rerun in addition to retry-image and failed-job retry"
 );
 
 assert.match(
   source,
-  /const handleRerunImageJob = async \(job: PersistedGenerationJob\) => \{[\s\S]*\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/rerun[\s\S]*Created from canvas image detail with original references[\s\S]*已带原参考图加入队列/,
+  /const handleRerunImageJob = async \([\s\S]*options: \{ groupTitle\?: string \} = \{\}[\s\S]*groupTitle: options\.groupTitle/,
+  "rerun requests should accept the source group title so regenerated results can return to their group"
+);
+assert.match(
+  source,
+  /handleRerunImageJob\(job, \{ groupTitle: getStringValue\(detail\.group\) \}\)[\s\S]*handleRerunImageJob\(job, \{ groupTitle: getStringValue\(detail\?\.group\) \}\)/,
+  "single and grouped rerun paths should pass through the source group title"
+);
+assert.match(
+  rerunRouteSource,
+  /groupTitle\?: unknown[\s\S]*groupTitle: getString\(body\.groupTitle\)[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId/,
+  "rerun API should persist source group and original slot metadata"
+);
+assert.match(
+  jobRunnerSource,
+  /generationResultTraceMetadataKeys[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId[\s\S]*rerunSourceExportSpecTitle/,
+  "job runner should carry rerun group trace metadata onto generated artifacts"
+);
+assert.match(
+  artifactsRouteSource,
+  /resultGroupTitle: getString\(metadata\.resultGroupTitle\)[\s\S]*rerunGroupTitle: getString\(metadata\.rerunGroupTitle\)[\s\S]*rerunSourcePlanItemTitle/,
+  "artifact list summaries should expose rerun group trace metadata to the canvas"
+);
+assert.match(
+  jobsRouteSource,
+  /resultGroupTitle: getString\(metadata\.resultGroupTitle\)[\s\S]*rerunGroupTitle: getString\(metadata\.rerunGroupTitle\)[\s\S]*rerunSourcePlanItemTitle/,
+  "job list summaries should expose rerun group trace metadata while reruns are queued"
+);
+
+assert.match(
+  source,
+  /const handleRerunImageJob = async \([\s\S]*job: PersistedGenerationJob[\s\S]*\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/rerun[\s\S]*Created from canvas image detail with original references[\s\S]*已带原参考图加入队列/,
   "canvas image detail should create a new version for completed Agent images through the rerun API"
 );
 

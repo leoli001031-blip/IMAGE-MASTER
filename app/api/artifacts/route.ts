@@ -282,6 +282,11 @@ function summarizeArtifactMetadataForList(metadata: Record<string, unknown>): Re
     itemProviderReferenceRoles: pickStringArray(metadata.itemProviderReferenceRoles),
     productReferenceFocus: getString(metadata.productReferenceFocus),
     productReferenceFocusInstruction: getString(metadata.productReferenceFocusInstruction),
+    resultGroupTitle: getString(metadata.resultGroupTitle),
+    rerunGroupTitle: getString(metadata.rerunGroupTitle),
+    rerunSourcePlanItemTitle: getString(metadata.rerunSourcePlanItemTitle),
+    rerunSourceOutputSlotId: getString(metadata.rerunSourceOutputSlotId),
+    rerunSourceExportSpecTitle: getString(metadata.rerunSourceExportSpecTitle),
     assetInvocationPlan: summarizeAssetInvocationPlan(metadata.assetInvocationPlan),
     assetInvocationPlanner: isPlainObject(metadata.assetInvocationPlanner)
       ? {
