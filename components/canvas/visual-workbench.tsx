@@ -4584,6 +4584,11 @@ export function VisualWorkbench() {
         ...getRecordValue(detail.metadata),
         ...mergeGenerationOutputPreviewMetadata({ artifact, job }),
       };
+      const inferredGroup = artifact ? getAgentArtifactResultGroupLabel(artifact) : "";
+      const detailGroup = getStringValue(detail.group) || (inferredGroup !== "成片" ? inferredGroup : "");
+      if (detailGroup && !getStringValue(metadata.resultGroupTitle) && !getStringValue(metadata.rerunGroupTitle)) {
+        metadata.resultGroupTitle = detailGroup;
+      }
       const target: AgentImageEditTarget = {
         url,
         title: detail.title || artifact?.title || "生成图片",

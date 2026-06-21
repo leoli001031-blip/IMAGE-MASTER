@@ -775,6 +775,7 @@ function dispatchArtifactEdit(data: CanvasNodeData, nodeId: string): void {
         url: getStringParameter(data.referenceUrl) || getStringParameter(data.previewUrl),
         title: getArtifactNodeFullTitle(data),
         status: getStringParameter(data.artifactStatus),
+        group: getArtifactGroupEditDetail(data)?.group,
       },
     })
   );

@@ -189,8 +189,8 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /function dispatchArtifactEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
-  "artifact result cards should dispatch the same single-image edit context as the detail preview"
+  /function dispatchArtifactEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle[\s\S]*group: getArtifactGroupEditDetail\(data\)\?\.group/,
+  "artifact result cards should dispatch the same single-image edit context and group as the detail preview"
 );
 assert.match(
   workflowNodeSource,
@@ -379,6 +379,11 @@ assert.match(
   workbenchSource,
   /action === "redo"[\s\S]*artifact\?\.url[\s\S]*image-master:generation-frame-output-edit[\s\S]*没有可直接重跑的任务，已切到让 Agent 改这张[\s\S]*接下来只修改这张/,
   "Agent single-image redo suggestions should select the image for scoped edit when no direct retry job exists"
+);
+assert.match(
+  workbenchSource,
+  /handleEdit[\s\S]*const inferredGroup = artifact \? getAgentArtifactResultGroupLabel\(artifact\) : ""[\s\S]*const detailGroup = getStringValue\(detail\.group\)[\s\S]*metadata\.resultGroupTitle = detailGroup/,
+  "single-image Agent edit targets should preserve or infer the source result group"
 );
 assert.match(
   workbenchSource,
