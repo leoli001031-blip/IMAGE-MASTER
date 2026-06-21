@@ -10620,6 +10620,7 @@ function AgentReviewSuggestionCards({
       </div>
       {suggestions.slice(0, 4).map((suggestion) => {
         const execution = executedActions[suggestion.id];
+        const impactItems = getAgentReviewSuggestionImpactItems(suggestion);
         return (
           <div
             key={suggestion.id}
@@ -10641,6 +10642,16 @@ function AgentReviewSuggestionCards({
               )}
             </div>
             <div className="mt-0.5 text-warm-muted">{suggestion.body}</div>
+            {impactItems.length > 0 && (
+              <div className="mt-1.5 space-y-0.5 rounded-md bg-white/55 px-2 py-1 text-[10px] leading-4">
+                {impactItems.map((item) => (
+                  <div key={item.label} className="flex gap-1.5">
+                    <span className="w-8 shrink-0 text-warm-muted">{item.label}</span>
+                    <span className="min-w-0 flex-1 text-warm-ink">{item.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {execution && (
               <div className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[10px] leading-4 text-emerald-700">
                 {execution.text}
@@ -10680,6 +10691,37 @@ function AgentReviewSuggestionCards({
       })}
     </div>
   );
+}
+
+function getAgentReviewSuggestionImpactItems(
+  suggestion: AgentExecutableReviewSuggestion
+): Array<{ label: string; text: string }> {
+  if (suggestion.artifactId) {
+    return [
+      { label: "目标", text: "只影响这张结果图。" },
+      { label: "继承", text: "保留原参考图、比例和图组用途。" },
+      { label: "不动", text: "其他结果和整套计划不变。" },
+    ];
+  }
+
+  if (suggestion.groupTitle) {
+    const count = suggestion.artifactIds?.length ?? 0;
+    return [
+      {
+        label: "目标",
+        text: count > 0
+          ? `只影响「${suggestion.groupTitle}」${count} 张待处理图。`
+          : `只影响「${suggestion.groupTitle}」这一组。`,
+      },
+      { label: "继承", text: "沿用当前组参考角色、比例和文案策略。" },
+      { label: "不动", text: "已保留/已淘汰和其他图组不动。" },
+    ];
+  }
+
+  return [
+    { label: "目标", text: "只处理这条建议点名的结果。" },
+    { label: "不动", text: "未点名结果保持不变。" },
+  ];
 }
 
 function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction): string {

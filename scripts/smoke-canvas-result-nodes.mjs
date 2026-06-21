@@ -387,6 +387,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /AgentReviewSuggestionCards[\s\S]*getAgentReviewSuggestionImpactItems\(suggestion\)[\s\S]*\{item\.label\}[\s\S]*\{item\.text\}[\s\S]*function getAgentReviewSuggestionImpactItems[\s\S]*只影响这张结果图[\s\S]*只影响「\$\{suggestion\.groupTitle\}」\$\{count\} 张待处理图[\s\S]*已保留\/已淘汰和其他图组不动/,
+  "Agent review suggestion cards should show what each executable suggestion affects before the user clicks"
+);
+assert.match(
+  workbenchSource,
   /setExecutedReviewSuggestionActions[\s\S]*getAgentReviewSuggestionActionLabel\(action\)[\s\S]*text/,
   "Agent review suggestion actions should record visible per-card execution feedback"
 );
