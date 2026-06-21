@@ -462,8 +462,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-open[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
-  "Agent review suggestion cards should execute detail, single redo, single edit, and group redo actions"
+  /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-open[\s\S]*image-master:generation-frame-output-save[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
+  "Agent review suggestion cards should execute detail, save-as-asset, single redo, single edit, and group redo actions"
+);
+assert.match(
+  workbenchSource,
+  /action === "save"[\s\S]*mergeGenerationOutputPreviewMetadata\(\{ artifact \}\)[\s\S]*image-master:generation-frame-output-save[\s\S]*getGenerationOutputPreviewPrompt\(\{ artifact, metadata \}\)[\s\S]*保存成功后会自动标记为可用/,
+  "Agent review save suggestions should route through the existing output-save event with trace metadata"
 );
 assert.match(
   workbenchSource,
@@ -746,8 +751,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /视觉 QA 风险[\s\S]*\["open", "edit", "mark_needs_redo", "approve"\][\s\S]*检查烧字图[\s\S]*\["open", "copy", "mark_needs_redo", "approve"\][\s\S]*优先挑关键图[\s\S]*\["open", "edit", "approve", "reject"\]/,
-  "Agent review suggestions that ask users to inspect a result should expose a direct detail action"
+  /视觉 QA 风险[\s\S]*\["open", "edit", "mark_needs_redo", "approve"\][\s\S]*检查烧字图[\s\S]*\["open", "copy", "mark_needs_redo", "approve"\][\s\S]*优先挑关键图[\s\S]*直接存为资产[\s\S]*\["open", "edit", "save", "approve", "reject"\]/,
+  "Agent review suggestions that ask users to inspect a result should expose direct detail and save actions"
 );
 assert.match(
   workbenchSource,

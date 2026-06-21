@@ -1101,6 +1101,7 @@ type AgentReviewSuggestionAction =
   | "redo"
   | "edit"
   | "copy"
+  | "save"
   | "group_edit"
   | "group_redo";
 
@@ -10012,6 +10013,31 @@ function CanvasAgentPanel({
       return;
     }
 
+    if (action === "save") {
+      if (!artifact?.url) {
+        recordAction(`「${suggestion.title}」还没有可保存为资产的图片。`);
+        return;
+      }
+      const metadata = mergeGenerationOutputPreviewMetadata({ artifact });
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-save", {
+          detail: {
+            artifactId: artifact.id,
+            jobId: artifact.jobId,
+            nodeId: artifact.nodeId,
+            url: artifact.url,
+            title: artifact.title,
+            status: artifact.status,
+            prompt: getGenerationOutputPreviewPrompt({ artifact, metadata }),
+            metadata,
+            group: getAgentArtifactResultGroupLabel(artifact),
+          },
+        })
+      );
+      recordAction(`已提交保存「${artifact.title}」为资产；保存成功后会自动标记为可用。`);
+      return;
+    }
+
     if (action === "redo") {
       if (suggestion.jobId || artifact?.jobId) {
         window.dispatchEvent(
@@ -11455,18 +11481,20 @@ function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction
   if (action === "redo") return "执行重做";
   if (action === "edit") return "让 Agent 改";
   if (action === "copy") return "改文案";
+  if (action === "save") return "存资产";
   if (action === "group_edit") return "调整这组";
   return "重做这组";
 }
 
 function isAgentReviewSuggestionRepeatableAction(action: AgentReviewSuggestionAction): boolean {
-  return action === "open" || action === "edit" || action === "copy" || action === "group_edit";
+  return action === "open" || action === "edit" || action === "copy" || action === "save" || action === "group_edit";
 }
 
 function getAgentReviewSuggestionActionIcon(action: AgentReviewSuggestionAction) {
   if (action === "approve") return PackageCheck;
   if (action === "reject") return Trash2;
   if (action === "open") return Search;
+  if (action === "save") return Save;
   if (action === "redo" || action === "group_redo" || action === "mark_needs_redo") return RefreshCw;
   if (action === "copy") return Copy;
   return Wand2;
@@ -13555,8 +13583,8 @@ function buildAgentExecutableReviewSuggestions({
       commerceLead.index,
       "commerce-lead",
       "优先挑关键图",
-      "这张更影响首屏或转化，建议先点开看商品一致性、构图和文案。",
-      ["open", "edit", "approve", "reject"]
+      "这张更影响首屏或转化，建议先点开看商品一致性、构图和文案；确认可用后可以直接存为资产。",
+      ["open", "edit", "save", "approve", "reject"]
     ));
   }
 
