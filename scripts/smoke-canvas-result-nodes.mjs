@@ -367,6 +367,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /onShowResultReviewFilter=\{\(filter\) => \{[\s\S]*setResultReviewFilter\(filter\)[\s\S]*setHighlightedResultReviewFilter\(filter\)[\s\S]*showReviewFilterForStatus[\s\S]*getResultReviewFilterForArtifactReviewStatus\(status\)[\s\S]*onShowResultReviewFilter\?\.\(filter\)[\s\S]*已切到「\$\{filterLabel\}」/,
+  "Agent review suggestion status actions should switch the result wall to the affected review-state filter"
+);
+assert.match(
+  workbenchSource,
   /lastReviewSuggestionExecution[\s\S]*setLastReviewSuggestionExecution\(execution\)[\s\S]*agent-review-action-feedback[\s\S]*最近执行：\{lastReviewSuggestionExecution\.label\}/,
   "Agent review suggestion actions should keep a visible recent-action confirmation even if suggestions recalculate"
 );

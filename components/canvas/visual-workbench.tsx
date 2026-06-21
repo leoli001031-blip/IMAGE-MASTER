@@ -6088,6 +6088,10 @@ export function VisualWorkbench() {
         onGenerateSample={() => void handleGenerateAgentSample()}
         onCollapsedChange={setAgentPanelCollapsed}
         onHighlightArtifactGroup={setHighlightedArtifactGroupTitle}
+        onShowResultReviewFilter={(filter) => {
+          setResultReviewFilter(filter);
+          setHighlightedResultReviewFilter(filter);
+        }}
       />
       <input
         ref={agentProductInputRef}
@@ -8623,6 +8627,7 @@ function CanvasAgentPanel({
   onGenerateSample,
   onCollapsedChange,
   onHighlightArtifactGroup,
+  onShowResultReviewFilter,
 }: {
   productAsset?: CanvasAsset;
   activeProductComponentTitle: string;
@@ -8660,6 +8665,7 @@ function CanvasAgentPanel({
   onGenerateSample: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
   onHighlightArtifactGroup: (groupTitle: string) => void;
+  onShowResultReviewFilter?: (filter: ResultReviewFilter) => void;
 }) {
   const [agentEventHistory, setAgentEventHistory] = useState<AgentConversationMessage[]>([]);
   const [executedReviewSuggestionActions, setExecutedReviewSuggestionActions] = useState<Record<string, AgentReviewSuggestionExecutionState>>({});
@@ -9141,10 +9147,18 @@ function CanvasAgentPanel({
         tone: "success",
       });
     };
+    const showReviewFilterForStatus = (status: ArtifactReviewStatus): string => {
+      const filter = getResultReviewFilterForArtifactReviewStatus(status);
+      if (!filter) return "";
+      onShowResultReviewFilter?.(filter);
+      return getResultReviewFilterLabel(filter);
+    };
 
     if (action === "approve" || action === "mark_needs_redo" || action === "reject") {
       const status: ArtifactReviewStatus =
         action === "approve" ? "approved" : action === "reject" ? "rejected" : "needs_redo";
+      const filterLabel = showReviewFilterForStatus(status);
+      const filterText = filterLabel ? `，已切到「${filterLabel}」` : "";
       if (suggestion.artifactId) {
         window.dispatchEvent(
           new CustomEvent("image-master:artifact-review-state", {
@@ -9155,7 +9169,7 @@ function CanvasAgentPanel({
             },
           })
         );
-        recordAction(`已把「${suggestion.title}」标记为${getArtifactReviewStatusLabel(status)}。`);
+        recordAction(`已把「${suggestion.title}」标记为${getArtifactReviewStatusLabel(status)}${filterText}。`);
         return;
       }
       if (groupArtifactIds.length > 0) {
@@ -9169,7 +9183,7 @@ function CanvasAgentPanel({
             },
           })
         );
-        recordAction(`已把「${groupTitle}」这一组标记为${getArtifactReviewStatusLabel(status)}。`);
+        recordAction(`已把「${groupTitle}」这一组标记为${getArtifactReviewStatusLabel(status)}${filterText}。`);
       }
       return;
     }
@@ -9316,7 +9330,15 @@ function CanvasAgentPanel({
     if (action === "group_edit") {
       selectGroupForEdit(`已选中「${groupTitle}」这一组；接下来只调整这组。`);
     }
-  }, [onCollapsedChange, onComposeBriefChange, onHighlightArtifactGroup, planGroups, rememberAgentEvent, visibleArtifacts]);
+  }, [
+    onCollapsedChange,
+    onComposeBriefChange,
+    onHighlightArtifactGroup,
+    onShowResultReviewFilter,
+    planGroups,
+    rememberAgentEvent,
+    visibleArtifacts,
+  ]);
 
   useEffect(() => {
     if (!hasEditTarget || workflowPlanPreview || collapsed) return;
