@@ -2870,9 +2870,12 @@ export function VisualWorkbench() {
         ...Object.fromEntries(keepIds.map((artifactId) => [artifactId, "approved" as const])),
         ...Object.fromEntries(rejectIds.map((artifactId) => [artifactId, "rejected" as const])),
       }, "本组");
+      const rejectText = rejectIds.length > 0
+        ? `其余 ${rejectIds.length} 张标记为已淘汰`
+        : "没有淘汰其他图片";
       setAgentLastUserBrief(brief);
       setComposeMessage(
-        `已为「${group.title}」只保留 ${keepIds.length}/${sourceArtifacts.length} 张，其余标记为已淘汰；只影响这组，其他图组不变。${remainingText}`
+        `已为「${group.title}」只保留 ${keepIds.length}/${sourceArtifacts.length} 张，${rejectText}；只影响这组，其他图组不变。${remainingText}`
       );
       setComposeBrief("");
       return;

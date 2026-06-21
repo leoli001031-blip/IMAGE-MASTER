@@ -497,8 +497,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*其余淘汰[\s\S]*remainingText = formatAgentReviewRemainingSummary\(sourceArtifacts[\s\S]*"本组"[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
-  "focused result-group chat should execute only-keep-N picking and report scoped remaining review work before generic review-state or revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*remainingText = formatAgentReviewRemainingSummary\(sourceArtifacts[\s\S]*"本组"[\s\S]*const rejectText = rejectIds\.length > 0[\s\S]*没有淘汰其他图片[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
+  "focused result-group chat should execute only-keep-N picking, report actual rejected count, and summarize remaining scoped work"
 );
 assert.match(
   workbenchSource,
