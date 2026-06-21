@@ -1000,6 +1000,7 @@ interface GenerationFrameOutputActionDetail {
   note?: string;
   prompt?: string;
   metadata?: Record<string, unknown>;
+  compareWithSource?: boolean;
 }
 
 interface GenerationOutputPreview {
@@ -1022,6 +1023,7 @@ interface GenerationOutputPreviewItem {
   model?: string;
   error?: string;
   reviewStatus?: ArtifactReviewStatus;
+  compareWithSource?: boolean;
 }
 
 interface AgentImageEditTarget {
@@ -4785,6 +4787,11 @@ export function VisualWorkbench() {
             artifact: outputArtifact,
             job: outputJob,
           });
+          const isRequestedOutput =
+            (!!detail.outputId && output.id === detail.outputId) ||
+            (!!detail.artifactId && (output.artifactId === detail.artifactId || outputArtifact?.id === detail.artifactId)) ||
+            (!!detail.jobId && (output.jobId === detail.jobId || outputArtifact?.jobId === detail.jobId)) ||
+            outputUrl === url;
           return {
             url: outputUrl,
             title: output.title || `图 ${index + 1}`,
@@ -4800,6 +4807,7 @@ export function VisualWorkbench() {
             model: outputArtifact?.model || getStringValue(metadata.model),
             error: outputJob?.error || getStringValue(metadata.error) || getProviderDiagnosticSummary(metadata),
             reviewStatus: outputArtifact ? getArtifactReviewStatus(outputArtifact) : getOutputPreviewReviewStatus(metadata, output.status),
+            compareWithSource: Boolean(detail.compareWithSource && isRequestedOutput),
           };
         })
         .filter((item): item is GenerationOutputPreviewItem => Boolean(item));
@@ -4819,6 +4827,7 @@ export function VisualWorkbench() {
         model: artifact?.model || getStringValue(fallbackMetadata.model),
         error: job?.error || getStringValue(fallbackMetadata.error) || getProviderDiagnosticSummary(fallbackMetadata),
         reviewStatus: artifact ? getArtifactReviewStatus(artifact) : getOutputPreviewReviewStatus(fallbackMetadata, detail.status),
+        compareWithSource: Boolean(detail.compareWithSource),
       };
       const items = frameItems.length > 0 ? frameItems : [fallbackItem];
       const index = Math.max(
@@ -6616,6 +6625,7 @@ export function VisualWorkbench() {
           prompt: item.prompt,
           metadata: item.metadata,
           group: item.group,
+          compareWithSource: item.compareWithSource,
         },
       })
     );
@@ -10006,6 +10016,7 @@ function CanvasAgentPanel({
         recordAction(`没有找到「${suggestion.title}」对应的大图。`);
         return;
       }
+      const versionSourceLabel = getAgentArtifactVersionSourceLabel(artifact);
       window.dispatchEvent(
         new CustomEvent("image-master:generation-frame-output-open", {
           detail: {
@@ -10015,10 +10026,15 @@ function CanvasAgentPanel({
             title: artifact.title,
             url: artifact.url,
             status: artifact.status,
+            compareWithSource: Boolean(versionSourceLabel),
           },
         })
       );
-      recordAction(`已打开「${artifact.title}」详情，可以检查参考图、prompt 和 QA。`);
+      recordAction(
+        versionSourceLabel
+          ? `已打开「${artifact.title}」详情，并进入和上一版「${versionSourceLabel}」的对比视角。`
+          : `已打开「${artifact.title}」详情，可以检查参考图、prompt 和 QA。`
+      );
       return;
     }
 

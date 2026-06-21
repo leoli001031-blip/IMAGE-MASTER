@@ -32,6 +32,7 @@ export interface OutputPreviewModalItem {
   provider?: string;
   model?: string;
   error?: string;
+  compareWithSource?: boolean;
 }
 
 export type OutputPreviewReviewStatus = "approved" | "pending" | "needs_redo" | "rejected" | "failed";
@@ -137,7 +138,7 @@ export function OutputPreviewModal({
   const outputPurposeLabel = getOutputPreviewPurposeLabel(item);
   const outputRatioLabel = getOutputPreviewRatioLabel(item.metadata ?? {});
   const outputSourceVersion = getOutputPreviewSourceVersion(item.metadata ?? {});
-  const [compareWithSource, setCompareWithSource] = useState(false);
+  const [compareWithSource, setCompareWithSource] = useState(Boolean(item.compareWithSource));
   const canRetryOrEdit = Boolean(item.jobId || item.url);
   const retryTitle = item.jobId
     ? "立即重做当前图"
@@ -146,8 +147,8 @@ export function OutputPreviewModal({
       : "当前图没有可重做任务";
 
   useEffect(() => {
-    setCompareWithSource(false);
-  }, [item.artifactId, item.jobId, item.outputId, item.url]);
+    setCompareWithSource(Boolean(item.compareWithSource));
+  }, [item.artifactId, item.compareWithSource, item.jobId, item.outputId, item.url]);
 
   return (
     <div

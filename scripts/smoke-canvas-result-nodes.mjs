@@ -467,6 +467,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /action === "open"[\s\S]*versionSourceLabel = getAgentArtifactVersionSourceLabel\(artifact\)[\s\S]*compareWithSource: Boolean\(versionSourceLabel\)[\s\S]*进入和上一版/,
+  "Agent review detail action should open new-version results directly in compare mode"
+);
+assert.match(
+  workbenchSource,
   /action === "save"[\s\S]*mergeGenerationOutputPreviewMetadata\(\{ artifact \}\)[\s\S]*image-master:generation-frame-output-save[\s\S]*getGenerationOutputPreviewPrompt\(\{ artifact, metadata \}\)[\s\S]*保存成功后会自动标记为可用/,
   "Agent review save suggestions should route through the existing output-save event with trace metadata"
 );
