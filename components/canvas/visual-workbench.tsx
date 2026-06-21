@@ -4511,7 +4511,14 @@ export function VisualWorkbench() {
       if (target.nodeId) setSelectedNodeId(target.nodeId);
       setWorkflowPlanPreview(null);
       setPendingWorkflowDraft(null);
-      setComposeMessage(`已选中「${target.title}」，直接说要怎么改`);
+      const fallbackNote = typeof detail.note === "string" && detail.note.trim()
+        ? detail.note.trim()
+        : "";
+      setComposeMessage(
+        fallbackNote
+          ? `${fallbackNote}；已选中「${target.title}」，直接说要怎么改。`
+          : `已选中「${target.title}」，直接说要怎么改`
+      );
     };
 
     const resolveRetryJob = async (jobId: string): Promise<PersistedGenerationJob | null> => {
@@ -4548,6 +4555,7 @@ export function VisualWorkbench() {
             nodeId: artifact?.nodeId ?? detail.nodeId,
             title: detail.title || artifact?.title,
             status: detail.status || artifact?.status,
+            note: message,
             url,
           },
         })

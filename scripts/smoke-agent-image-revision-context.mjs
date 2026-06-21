@@ -32,6 +32,11 @@ assert.match(
 );
 assert.match(
   source,
+  /fallbackNote[\s\S]*detail\.note[\s\S]*\$\{fallbackNote\}；已选中「\$\{target\.title\}」，直接说要怎么改。[\s\S]*note: message/,
+  "single-image retry fallback should explain why it switched into Agent edit mode"
+);
+assert.match(
+  source,
   /const handleClearAgentImageEditTarget = useCallback\(\(\) => \{[\s\S]*setAgentImageEditTarget\(null\);[\s\S]*setComposeBrief\(""\);[\s\S]*setComposeMessage\(""\);[\s\S]*onClearEditTarget=\{handleClearAgentImageEditTarget\}/,
   "cancelling single-image edit mode should clear stale selected-image status text"
 );
