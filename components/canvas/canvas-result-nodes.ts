@@ -463,6 +463,7 @@ export function getStageArtifactSignature(artifact: PersistedGeneratedArtifact):
     getStringValue(artifact.metadata.rerunSourceArtifactTitle),
     getStringValue(artifact.metadata.rerunSourcePlanItemTitle),
     getStringValue(artifact.metadata.rerunSourceArtifactId),
+    JSON.stringify(getRecordValue(artifact.metadata.revisionSource) ?? null),
     JSON.stringify(artifact.metadata.reviewState ?? null),
     JSON.stringify(artifact.metadata.visualQa ?? null),
   ].join("~");
@@ -603,7 +604,7 @@ function createArtifactResultNodeData(
   const reviewLabel = getArtifactReviewStatusLabel(reviewStatus);
   const visualQa = getArtifactVisualQaSummary(artifact);
   const sourceVersionTitle = getArtifactRerunSourceTitle(artifact);
-  const sourceVersionArtifactId = getStringValue(artifact.metadata.rerunSourceArtifactId);
+  const sourceVersionArtifactId = getArtifactRerunSourceArtifactId(artifact);
   const nodeLabel = sourceNode && !isGenerationFrameNode(sourceNode)
     ? cleanArtifactDisplayText(sourceNode.data.label)
     : "";
@@ -684,11 +685,18 @@ function createArtifactResultNodeData(
 }
 
 function getArtifactRerunSourceTitle(artifact: PersistedGeneratedArtifact): string {
+  const revisionSource = getRecordValue(artifact.metadata.revisionSource);
   return cleanArtifactDisplayText(
     getStringValue(artifact.metadata.rerunSourceArtifactTitle) ||
     getStringValue(artifact.metadata.rerunSourcePlanItemTitle) ||
-    getStringValue(artifact.metadata.rerunSourceExportSpecTitle)
+    getStringValue(artifact.metadata.rerunSourceExportSpecTitle) ||
+    getStringValue(revisionSource?.title)
   );
+}
+
+function getArtifactRerunSourceArtifactId(artifact: PersistedGeneratedArtifact): string | undefined {
+  const revisionSource = getRecordValue(artifact.metadata.revisionSource);
+  return getStringValue(artifact.metadata.rerunSourceArtifactId) || getStringValue(revisionSource?.artifactId);
 }
 
 function createArtifactResultGroupNode(layout: ArtifactResultGroupLayout): CanvasWorkbenchNode {

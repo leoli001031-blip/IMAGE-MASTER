@@ -256,8 +256,8 @@ assert.match(
 );
 assert.match(
   resultNodesSource,
-  /const ARTIFACT_RESULT_LAYOUT_VERSION = 8[\s\S]*sourceVersionTitle = getArtifactRerunSourceTitle\(artifact\)[\s\S]*caption: sourceVersionTitle[\s\S]*新版，上一版：\$\{sourceVersionTitle\}[\s\S]*sourceVersionTitle[\s\S]*sourceVersionArtifactId/,
-  "artifact result nodes should show rerun source version context on the result wall"
+  /const ARTIFACT_RESULT_LAYOUT_VERSION = 8[\s\S]*sourceVersionTitle = getArtifactRerunSourceTitle\(artifact\)[\s\S]*sourceVersionArtifactId = getArtifactRerunSourceArtifactId\(artifact\)[\s\S]*caption: sourceVersionTitle[\s\S]*新版，上一版：\$\{sourceVersionTitle\}[\s\S]*sourceVersionTitle[\s\S]*sourceVersionArtifactId/,
+  "artifact result nodes should show rerun or Agent revision source version context on the result wall"
 );
 assert.match(
   workflowNodeSource,
@@ -292,8 +292,8 @@ assert.match(
 );
 assert.match(
   resultNodesSource,
-  /getStageArtifactSignature[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceArtifactId/,
-  "artifact result signatures should include rerun source metadata so version labels update"
+  /getStageArtifactSignature[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceArtifactId[\s\S]*revisionSource/,
+  "artifact result signatures should include rerun and Agent revision source metadata so version labels update"
 );
 assert.match(
   resultNodesSource,

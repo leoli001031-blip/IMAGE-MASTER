@@ -1166,15 +1166,18 @@ function getAssetInvocation(metadata: Record<string, unknown>): ImageDetailItem[
 }
 
 function getResultSourceVersion(metadata: Record<string, unknown>): ImageDetailItem["sourceVersion"] {
+  const revisionSource = isRecord(metadata.revisionSource) ? metadata.revisionSource : undefined;
   const title =
     getMetadataString(metadata, "rerunSourceArtifactTitle") ||
     getMetadataString(metadata, "rerunSourcePlanItemTitle") ||
-    getMetadataString(metadata, "rerunSourceExportSpecTitle");
+    getMetadataString(metadata, "rerunSourceExportSpecTitle") ||
+    getStringValue(revisionSource?.title);
   const url =
     getMetadataString(metadata, "rerunSourceArtifactUrl") ||
-    getMetadataString(metadata, "rerunSourceResultUrl");
-  const artifactId = getMetadataString(metadata, "rerunSourceArtifactId");
-  const jobId = getMetadataString(metadata, "rerunOfJobId");
+    getMetadataString(metadata, "rerunSourceResultUrl") ||
+    getStringValue(revisionSource?.url);
+  const artifactId = getMetadataString(metadata, "rerunSourceArtifactId") || getStringValue(revisionSource?.artifactId);
+  const jobId = getMetadataString(metadata, "rerunOfJobId") || getStringValue(revisionSource?.jobId);
 
   if (!title && !url && !artifactId && !jobId) return undefined;
 

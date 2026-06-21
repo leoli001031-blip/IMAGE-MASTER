@@ -595,12 +595,18 @@ function getOutputPreviewSourceVersion(metadata: Record<string, unknown>): {
   artifactId?: string;
   title: string;
 } | null {
+  const revisionSource = getOutputPreviewRecordValue(metadata.revisionSource);
   const title =
     getOutputPreviewMetadataString(metadata, "rerunSourceArtifactTitle") ||
     getOutputPreviewMetadataString(metadata, "rerunSourcePlanItemTitle") ||
-    getOutputPreviewMetadataString(metadata, "rerunSourceExportSpecTitle");
-  const artifactId = getOutputPreviewMetadataString(metadata, "rerunSourceArtifactId");
-  const jobId = getOutputPreviewMetadataString(metadata, "rerunOfJobId");
+    getOutputPreviewMetadataString(metadata, "rerunSourceExportSpecTitle") ||
+    getOutputPreviewMetadataString(revisionSource ?? {}, "title");
+  const artifactId =
+    getOutputPreviewMetadataString(metadata, "rerunSourceArtifactId") ||
+    getOutputPreviewMetadataString(revisionSource ?? {}, "artifactId");
+  const jobId =
+    getOutputPreviewMetadataString(metadata, "rerunOfJobId") ||
+    getOutputPreviewMetadataString(revisionSource ?? {}, "jobId");
 
   if (!title && !artifactId && !jobId) return null;
   return {
@@ -615,6 +621,12 @@ function getOutputPreviewMetadataString(
 ): string {
   const value = metadata[key];
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function getOutputPreviewRecordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function getOutputPreviewReviewStatusLabel(status: OutputPreviewReviewStatus): string {

@@ -283,8 +283,8 @@ assert.match(
 );
 assert.match(
   resultPageSource,
-  /sourceVersion: getResultSourceVersion\(metadata\)[\s\S]*function getResultSourceVersion[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl[\s\S]*rerunOfJobId/,
-  "result detail data should map rerun source metadata into a previous-version summary"
+  /sourceVersion: getResultSourceVersion\(metadata\)[\s\S]*function getResultSourceVersion[\s\S]*revisionSource[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourceArtifactUrl[\s\S]*revisionSource\?\.url[\s\S]*revisionSource\?\.artifactId[\s\S]*revisionSource\?\.jobId/,
+  "result detail data should map rerun or Agent revision source metadata into a previous-version summary"
 );
 assert.match(
   imageDetailPanelSource,
@@ -293,8 +293,8 @@ assert.match(
 );
 assert.match(
   outputPreviewModalSource,
-  /const outputSourceVersion = getOutputPreviewSourceVersion\(item\.metadata \?\? \{\}\)[\s\S]*上一版：\{outputSourceVersion\.title\}[\s\S]*function getOutputPreviewSourceVersion[\s\S]*rerunSourceArtifactTitle/,
-  "canvas image preview should show the previous version source for rerun images"
+  /const outputSourceVersion = getOutputPreviewSourceVersion\(item\.metadata \?\? \{\}\)[\s\S]*上一版：\{outputSourceVersion\.title\}[\s\S]*function getOutputPreviewSourceVersion[\s\S]*revisionSource[\s\S]*rerunSourceArtifactTitle[\s\S]*revisionSource \?\? \{\}, "title"/,
+  "canvas image preview should show the previous version source for rerun and Agent revision images"
 );
 
 assert.match(
