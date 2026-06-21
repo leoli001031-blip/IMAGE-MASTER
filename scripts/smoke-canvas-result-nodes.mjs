@@ -255,6 +255,16 @@ assert.match(
   "canvas should focus a coherent result wall row after artifact reconciliation"
 );
 assert.match(
+  resultNodesSource,
+  /const ARTIFACT_RESULT_LAYOUT_VERSION = 8[\s\S]*sourceVersionTitle = getArtifactRerunSourceTitle\(artifact\)[\s\S]*caption: sourceVersionTitle[\s\S]*新版，上一版：\$\{sourceVersionTitle\}[\s\S]*sourceVersionTitle[\s\S]*sourceVersionArtifactId/,
+  "artifact result nodes should show rerun source version context on the result wall"
+);
+assert.match(
+  workflowNodeSource,
+  /getArtifactNodeCaptionMeta[\s\S]*sourceVersionTitle[\s\S]*"新版"/,
+  "artifact result node caption metadata should mark rerun outputs as new versions"
+);
+assert.match(
   workbenchSource,
   /requestCanvasFocus\(getArtifactResultWallFocusNodeIds\(restoredNodes, 8\)\)/,
   "restored project canvases should also focus the result wall when results exist"
@@ -279,6 +289,11 @@ assert.match(
   resultNodesSource,
   /JSON\.stringify\(artifact\.metadata\.reviewState \?\? null\)/,
   "artifact result signatures should include review state so badges update after marking"
+);
+assert.match(
+  resultNodesSource,
+  /getStageArtifactSignature[\s\S]*rerunSourceArtifactTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceArtifactId/,
+  "artifact result signatures should include rerun source metadata so version labels update"
 );
 assert.match(
   resultNodesSource,

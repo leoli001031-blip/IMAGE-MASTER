@@ -11575,6 +11575,7 @@ function buildAgentCompletionSummary({
   const failedCount = getAgentArtifactFailureCount(visibleArtifacts);
   const reviewSummary = formatAgentArtifactReviewSummary(visibleArtifacts);
   const visualQaSummary = formatAgentVisualQaSummary(visibleArtifacts);
+  const versionLineageSummary = formatAgentVersionLineageSummary(visibleArtifacts);
   const markedRedoCount = visibleArtifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "needs_redo").length;
   const candidateGroups = planGroups
     .filter((group) => /主图|详情|细节|海报|模特|场景|卖点|封面/.test(group.title))
@@ -11616,6 +11617,7 @@ function buildAgentCompletionSummary({
     reviewSummary ? `挑图状态：${reviewSummary}。` : "",
     visualQaSummary ? `视觉 QA：${visualQaSummary}。` : "",
     resultEntryText,
+    versionLineageSummary,
     reviewActionText,
     keepText,
     riskText,
@@ -11781,6 +11783,7 @@ function buildAgentQaSummaryItems({
     artifactPromptOnlyRoles.includes("model");
   const visualQaItems = getAgentVisualQaSummaryItems(visibleArtifacts);
   const reviewSummary = formatAgentArtifactReviewSummary(visibleArtifacts);
+  const versionLineageSummary = formatAgentVersionLineageSummary(visibleArtifacts);
   const hasReviewRisk = visibleArtifacts.some((artifact) => {
     const status = getArtifactReviewStatus(artifact);
     return status === "needs_redo" || status === "failed";
@@ -11797,6 +11800,11 @@ function buildAgentQaSummaryItems({
         ? `${reviewSummary}。先处理建议重做和失败，再保留可用图；误标后可在详情里恢复待检查。`
         : `共 ${visibleOutputCount} 张结果待挑；先看主图、海报和详情图。`
     },
+    ...(versionLineageSummary ? [{
+      label: "版本",
+      tone: "default" as const,
+      text: `${versionLineageSummary} 对比时先确认只改了目标图，没有影响已保留结果。`,
+    }] : []),
     {
       label: "商品",
       tone: hasProductProvider ? "success" : "warn",
@@ -12060,16 +12068,19 @@ function buildAgentExecutableReviewSuggestions({
     actions: AgentReviewSuggestionAction[],
     tone: AgentExecutableReviewSuggestion["tone"] = "default",
     editBrief?: string
-  ): AgentExecutableReviewSuggestion => ({
-    id: `${kind}:${artifact.id}`,
-    title: `${titlePrefix}：${formatAgentArtifactPointer(artifact, index)}`,
-    body,
-    tone,
-    artifactId: artifact.id,
-    jobId: artifact.jobId,
-    editBrief,
-    actions,
-  });
+  ): AgentExecutableReviewSuggestion => {
+    const versionContext = getAgentArtifactVersionContextText(artifact);
+    return {
+      id: `${kind}:${artifact.id}`,
+      title: `${titlePrefix}：${formatAgentArtifactPointer(artifact, index)}`,
+      body: versionContext ? `${body} ${versionContext}` : body,
+      tone,
+      artifactId: artifact.id,
+      jobId: artifact.jobId,
+      editBrief,
+      actions,
+    };
+  };
 
   const manuallyMarked = indexedArtifacts.find(({ artifact }) => getArtifactReviewStatus(artifact) === "needs_redo");
   if (manuallyMarked) {
@@ -12269,6 +12280,35 @@ function formatAgentArtifactReviewSummary(artifacts: PersistedGeneratedArtifact[
       return count > 0 ? [`${getArtifactReviewStatusLabel(status)} ${count}`] : [];
     })
     .join(" / ");
+}
+
+function formatAgentVersionLineageSummary(artifacts: PersistedGeneratedArtifact[]): string {
+  const versions = artifacts
+    .map((artifact, index) => {
+      const source = getAgentArtifactVersionSourceLabel(artifact);
+      return source ? `${formatAgentArtifactPointer(artifact, index)} 来自「${source}」` : "";
+    })
+    .filter(Boolean);
+  if (versions.length === 0) return "";
+  const preview = versions.slice(0, 2).join("；");
+  const more = versions.length > 2 ? ` 等 ${versions.length} 张新版本` : "";
+  return `版本关系：${preview}${more}。`;
+}
+
+function getAgentArtifactVersionContextText(artifact: PersistedGeneratedArtifact): string {
+  const source = getAgentArtifactVersionSourceLabel(artifact);
+  return source ? `这是从「${source}」重做出的新版本。` : "";
+}
+
+function getAgentArtifactVersionSourceLabel(artifact: PersistedGeneratedArtifact): string {
+  const metadata = artifact.metadata ?? {};
+  return truncateRevisionText(
+    getStringValue(metadata.rerunSourceArtifactTitle) ||
+    getStringValue(metadata.rerunSourcePlanItemTitle) ||
+    getStringValue(metadata.rerunSourceExportSpecTitle) ||
+    getStringValue(metadata.rerunOfJobId),
+    28
+  );
 }
 
 function formatAgentReviewRemainingSummary(

@@ -77,7 +77,7 @@ interface ArtifactResultGroupLayout {
   position: { x: number; y: number };
 }
 
-const ARTIFACT_RESULT_LAYOUT_VERSION = 7;
+const ARTIFACT_RESULT_LAYOUT_VERSION = 8;
 const ARTIFACT_RESULT_BASE_POSITION = { x: 40, y: 40 };
 const ARTIFACT_RESULT_ROW_WIDTH = 2040;
 const ARTIFACT_RESULT_GAP_X = 44;
@@ -460,6 +460,9 @@ export function getStageArtifactSignature(artifact: PersistedGeneratedArtifact):
     getStringValue(artifact.metadata.batchJobTitle),
     getStringValue(artifact.metadata.exportSpecId),
     getStringValue(artifact.metadata.naming),
+    getStringValue(artifact.metadata.rerunSourceArtifactTitle),
+    getStringValue(artifact.metadata.rerunSourcePlanItemTitle),
+    getStringValue(artifact.metadata.rerunSourceArtifactId),
     JSON.stringify(artifact.metadata.reviewState ?? null),
     JSON.stringify(artifact.metadata.visualQa ?? null),
   ].join("~");
@@ -599,13 +602,17 @@ function createArtifactResultNodeData(
   const reviewStatus = getArtifactReviewStatus(artifact);
   const reviewLabel = getArtifactReviewStatusLabel(reviewStatus);
   const visualQa = getArtifactVisualQaSummary(artifact);
+  const sourceVersionTitle = getArtifactRerunSourceTitle(artifact);
+  const sourceVersionArtifactId = getStringValue(artifact.metadata.rerunSourceArtifactId);
   const nodeLabel = sourceNode && !isGenerationFrameNode(sourceNode)
     ? cleanArtifactDisplayText(sourceNode.data.label)
     : "";
 
   return {
     label: displayTitle,
-    caption: nodeLabel ? `由 ${nodeLabel} 生成的输出产物` : "生成结果，可点击查看参考图和 prompt",
+    caption: sourceVersionTitle
+      ? `新版，上一版：${sourceVersionTitle}`
+      : nodeLabel ? `由 ${nodeLabel} 生成的输出产物` : "生成结果，可点击查看参考图和 prompt",
     kind: "output",
     status: mapArtifactToNodeStatus(artifact.status),
     metrics: [
@@ -652,6 +659,8 @@ function createArtifactResultNodeData(
         ? `${layout.groupIndex}:${layout.row}:${layout.column}:${layout.width}x${layout.height}`
         : undefined,
       imageType: artifact.type,
+      sourceVersionTitle,
+      sourceVersionArtifactId,
       previewUrl: getArtifactPreviewUrl(artifact),
       originalUrl: artifact.url,
       thumbnailUrl: getArtifactThumbnailUrl(artifact),
@@ -672,6 +681,14 @@ function createArtifactResultNodeData(
       visualQaSummary: visualQa.issues.map((issue) => `${issue.label}：${issue.summary}`).slice(0, 4),
     },
   };
+}
+
+function getArtifactRerunSourceTitle(artifact: PersistedGeneratedArtifact): string {
+  return cleanArtifactDisplayText(
+    getStringValue(artifact.metadata.rerunSourceArtifactTitle) ||
+    getStringValue(artifact.metadata.rerunSourcePlanItemTitle) ||
+    getStringValue(artifact.metadata.rerunSourceExportSpecTitle)
+  );
 }
 
 function createArtifactResultGroupNode(layout: ArtifactResultGroupLayout): CanvasWorkbenchNode {

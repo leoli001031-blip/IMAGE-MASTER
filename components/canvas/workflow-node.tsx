@@ -686,6 +686,7 @@ function getArtifactNodeCaptionMeta(data: CanvasNodeData): string {
   return [
     typeof data.category === "string" ? data.category : "",
     getVisualNodeRatioLabel(data),
+    typeof getNodeParameters(data)?.sourceVersionTitle === "string" ? "新版" : "",
   ]
     .filter(Boolean)
     .join(" · ");

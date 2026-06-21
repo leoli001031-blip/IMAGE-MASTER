@@ -618,8 +618,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function buildAgentCompletionSummary[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*markedRedoCount[\s\S]*getArtifactReviewStatus\(artifact\) === "needs_redo"[\s\S]*结果入口：画布结果墙已按用途分组[\s\S]*点单张看大图、参考图和 prompt[\s\S]*已标待重做 \$\{markedRedoCount\} 张[\s\S]*已保留\/已淘汰不会被重做[\s\S]*有问题点单张说“这张重做”，或点一组说“换一批”/,
-  "Agent completion summary should use current plan groups, review-state counts, result-wall guidance, and single/group redo"
+  /function buildAgentCompletionSummary[\s\S]*versionLineageSummary = formatAgentVersionLineageSummary\(visibleArtifacts\)[\s\S]*结果入口：画布结果墙已按用途分组[\s\S]*已标待重做 \$\{markedRedoCount\} 张[\s\S]*已保留\/已淘汰不会被重做[\s\S]*versionLineageSummary,/,
+  "Agent completion summary should use current plan groups, review-state counts, version lineage, result-wall guidance, and single/group redo"
 );
 assert.match(
   source,
@@ -663,6 +663,11 @@ assert.match(
 );
 assert.match(
   source,
+  /function formatAgentVersionLineageSummary[\s\S]*getAgentArtifactVersionSourceLabel[\s\S]*版本关系：\$\{preview\}\$\{more\}。[\s\S]*function getAgentArtifactVersionContextText[\s\S]*这是从「\$\{source\}」重做出的新版本/,
+  "Agent completion and suggestion copy should explain rerun version lineage"
+);
+assert.match(
+  source,
   /function getAgentSuggestedRedoTarget[\s\S]*burnInPoster[\s\S]*先检查烧字位置和文案安全区/,
   "Agent completion summary should prioritize burn-in poster checks when choosing a redo target"
 );
@@ -673,8 +678,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function buildAgentQaSummaryItems[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*getAgentArtifactProviderReferenceRoles\(visibleArtifacts\)[\s\S]*formatAgentArtifactReviewSummary\(visibleArtifacts\)[\s\S]*label: "挑图"[\s\S]*商品[\s\S]*模特[\s\S]*文案[\s\S]*光影[\s\S]*重做/,
-  "Agent QA summary should read completed artifact metadata and cover picking progress, product, model, copy, lighting, and redo guidance"
+  /function buildAgentQaSummaryItems[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*getAgentArtifactProviderReferenceRoles\(visibleArtifacts\)[\s\S]*versionLineageSummary = formatAgentVersionLineageSummary\(visibleArtifacts\)[\s\S]*label: "挑图"[\s\S]*label: "版本"[\s\S]*商品[\s\S]*模特[\s\S]*文案[\s\S]*光影[\s\S]*重做/,
+  "Agent QA summary should read completed artifact metadata and cover picking progress, version lineage, product, model, copy, lighting, and redo guidance"
 );
 assert.match(
   source,
