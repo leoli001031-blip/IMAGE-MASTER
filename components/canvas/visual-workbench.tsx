@@ -2668,6 +2668,27 @@ export function VisualWorkbench() {
       setComposeMessage("说一下这张图要怎么改");
       return;
     }
+    if (getAgentImageSaveAsAssetIntent(brief)) {
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-save", {
+          detail: {
+            nodeId: target.nodeId,
+            outputId: target.outputId,
+            artifactId: target.artifactId,
+            jobId: target.jobId,
+            url: target.url,
+            title: target.title,
+            status: target.status,
+            prompt: target.prompt,
+            metadata: target.metadata,
+          },
+        })
+      );
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(`已提交保存「${target.title}」为资产；保存成功后会自动标记为可用。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (keepCountIntent === 1 && target.artifactId) {
@@ -11984,6 +12005,12 @@ function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | 
   if (/(保留|留下|留着|可用|通过|要这组|这组可以|这张可以了|这组可以了|这些可以了|这一批可以了|这批可以了|这张能用了|这组能用了|这些能用了|就用这张|就用这组|就这张|就这组|这张收了|这组收了|这些收了|这批收了|收了|先留|先收|选中)/i.test(actionText)) return "approved";
   if (/(标记?重做|标待重做|待重做|建议重做|建议重来|需要重做|需要重来|该重做|该重来|得重做|得重来|标成重做)/.test(actionText)) return "needs_redo";
   return null;
+}
+
+function getAgentImageSaveAsAssetIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库))/.test(compactText);
 }
 
 function getAgentGlobalResultReviewTargets(

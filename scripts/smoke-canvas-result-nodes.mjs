@@ -482,6 +482,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageSaveAsAssetIntent\(brief\)[\s\S]*image-master:generation-frame-output-save[\s\S]*已提交保存「\$\{target\.title\}」为资产[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused single-image chat should save the selected result as an asset before falling through to revision jobs"
+);
+assert.match(
+  workbenchSource,
   /handleRunAgentImageRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*Agent 自然语言只保留 1 张[\s\S]*remainingText = formatAgentReviewRemainingSummary\(visibleArtifacts[\s\S]*当前选中的是单张图；要只保留 \$\{keepCountIntent\} 张[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
   "focused single-image chat should handle only-keep-one and reject larger only-keep-N group commands without creating revision jobs"
 );
@@ -540,6 +545,11 @@ assert.match(
   workbenchSource,
   /function getAgentResultGroupKeepCountIntent[\s\S]*只保留[\s\S]*parseAgentPlanEditCount[\s\S]*function selectAgentResultGroupKeepArtifacts[\s\S]*getAgentResultGroupKeepRank[\s\S]*status === "approved"[\s\S]*isArtifactVisualQaRisk/,
   "only-keep-N group picking should prefer already kept and lower-risk images"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageSaveAsAssetIntent[\s\S]*保存为资产[\s\S]*素材库\|资产库[\s\S]*放到\(素材库\|资产库\)/,
+  "single-image save-as-asset intent should require explicit asset-library wording"
 );
 assert.match(
   workbenchSource,
