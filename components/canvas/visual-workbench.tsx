@@ -2869,7 +2869,7 @@ export function VisualWorkbench() {
       const remainingText = formatAgentReviewRemainingSummary(sourceArtifacts, {
         ...Object.fromEntries(keepIds.map((artifactId) => [artifactId, "approved" as const])),
         ...Object.fromEntries(rejectIds.map((artifactId) => [artifactId, "rejected" as const])),
-      });
+      }, "本组");
       setAgentLastUserBrief(brief);
       setComposeMessage(
         `已为「${group.title}」只保留 ${keepIds.length}/${sourceArtifacts.length} 张，其余标记为已淘汰；只影响这组，其他图组不变。${remainingText}`
@@ -2897,7 +2897,8 @@ export function VisualWorkbench() {
       );
       const remainingText = formatAgentReviewRemainingSummary(
         sourceArtifacts,
-        Object.fromEntries(artifactIds.map((artifactId) => [artifactId, reviewStatusIntent]))
+        Object.fromEntries(artifactIds.map((artifactId) => [artifactId, reviewStatusIntent])),
+        "本组"
       );
       setAgentLastUserBrief(brief);
       setComposeMessage(
@@ -13144,7 +13145,8 @@ function getAgentArtifactVersionSourceLabel(artifact: PersistedGeneratedArtifact
 
 function formatAgentReviewRemainingSummary(
   artifacts: PersistedGeneratedArtifact[],
-  statusOverrides: Record<string, ArtifactReviewStatus> = {}
+  statusOverrides: Record<string, ArtifactReviewStatus> = {},
+  scopeLabel = "当前"
 ): string {
   if (artifacts.length === 0) return "";
   const counts = new Map<ArtifactReviewStatus, number>();
@@ -13156,13 +13158,13 @@ function formatAgentReviewRemainingSummary(
   const redo = counts.get("needs_redo") ?? 0;
   const failed = counts.get("failed") ?? 0;
   const remaining = pending + redo + failed;
-  if (remaining <= 0) return "当前没有待处理结果。";
+  if (remaining <= 0) return `${scopeLabel}没有待处理结果。`;
   const parts = [
     pending > 0 ? `待检查 ${pending}` : "",
     redo > 0 ? `建议重做 ${redo}` : "",
     failed > 0 ? `生成失败 ${failed}` : "",
   ].filter(Boolean);
-  return `当前还剩 ${remaining} 张待处理（${parts.join(" / ")}）。`;
+  return `${scopeLabel}还剩 ${remaining} 张待处理（${parts.join(" / ")}）。`;
 }
 
 function buildAgentReviewProgressSummary({

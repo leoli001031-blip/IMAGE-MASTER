@@ -432,8 +432,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /function formatAgentReviewRemainingSummary[\s\S]*statusOverrides[\s\S]*待检查 \$\{pending\}[\s\S]*建议重做 \$\{redo\}[\s\S]*生成失败 \$\{failed\}[\s\S]*当前还剩 \$\{remaining\} 张待处理/,
-  "Agent review suggestion feedback should summarize remaining pending, redo, and failed results"
+  /function formatAgentReviewRemainingSummary[\s\S]*scopeLabel = "当前"[\s\S]*待检查 \$\{pending\}[\s\S]*建议重做 \$\{redo\}[\s\S]*生成失败 \$\{failed\}[\s\S]*\$\{scopeLabel\}还剩 \$\{remaining\} 张待处理/,
+  "Agent review suggestion feedback should summarize remaining pending, redo, and failed results for the active scope"
 );
 assert.match(
   workbenchSource,
@@ -492,13 +492,18 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*remainingText = formatAgentReviewRemainingSummary\([\s\S]*sourceArtifacts[\s\S]*只影响这组，其他图组不变。\$\{remainingText\}[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
-  "focused result-group chat should mark group review state and report remaining review work before creating revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*remainingText = formatAgentReviewRemainingSummary\([\s\S]*sourceArtifacts[\s\S]*"本组"[\s\S]*只影响这组，其他图组不变。\$\{remainingText\}[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
+  "focused result-group chat should mark group review state and report scoped remaining review work before creating revision jobs"
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*其余淘汰[\s\S]*remainingText = formatAgentReviewRemainingSummary\(sourceArtifacts[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
-  "focused result-group chat should execute only-keep-N picking and report remaining review work before generic review-state or revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*其余淘汰[\s\S]*remainingText = formatAgentReviewRemainingSummary\(sourceArtifacts[\s\S]*"本组"[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
+  "focused result-group chat should execute only-keep-N picking and report scoped remaining review work before generic review-state or revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /function formatAgentReviewRemainingSummary\([\s\S]*scopeLabel = "当前"[\s\S]*return `\$\{scopeLabel\}没有待处理结果。`[\s\S]*return `\$\{scopeLabel\}还剩 \$\{remaining\} 张待处理/,
+  "remaining review summaries should name the current scope instead of always implying the full result wall"
 );
 assert.match(
   workbenchSource,
