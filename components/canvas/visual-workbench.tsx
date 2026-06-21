@@ -1081,6 +1081,17 @@ interface AgentQaSummaryItem {
   tone?: "default" | "warn" | "success";
 }
 
+interface AgentReviewProgressSummary {
+  total: number;
+  picked: number;
+  remaining: number;
+  approved: number;
+  rejected: number;
+  risk: number;
+  percent: number;
+  helper: string;
+}
+
 type AgentReviewSuggestionAction =
   | "approve"
   | "mark_needs_redo"
@@ -9182,6 +9193,10 @@ function CanvasAgentPanel({
     planGroups,
     matrixItems,
   });
+  const reviewProgressSummary = buildAgentReviewProgressSummary({
+    visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
+    activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
+  });
   const qaSummaryItems = buildAgentQaSummaryItems({
     visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
     visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
@@ -9844,6 +9859,9 @@ function CanvasAgentPanel({
             <div className="space-y-2 rounded-lg border border-emerald-200/70 bg-emerald-50 px-3 py-2 text-[11px] leading-4 text-emerald-800">
               <div className="whitespace-pre-line">{completionSummary}</div>
             </div>
+          )}
+          {reviewProgressSummary && (
+            <AgentReviewProgress summary={reviewProgressSummary} />
           )}
           {lastReviewSuggestionExecution && (
             <div
@@ -10812,6 +10830,45 @@ function AgentReviewSuggestionCards({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function AgentReviewProgress({
+  summary,
+}: {
+  summary: AgentReviewProgressSummary;
+}) {
+  return (
+    <div
+      className="rounded-lg border border-warm-line/60 bg-warm-paper px-3 py-2 text-[11px] leading-4"
+      data-testid="agent-review-progress"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-warm-ink">
+            挑图进度 {summary.picked}/{summary.total}
+          </div>
+          <div className="mt-0.5 text-warm-muted">{summary.helper}</div>
+        </div>
+        <span className="shrink-0 rounded-full border border-warm-line/60 bg-warm-bg px-2 py-0.5 text-[10px] font-medium text-warm-muted">
+          {summary.percent}%
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-warm-bg">
+        <div
+          className="h-full rounded-full bg-warm-primary transition-all"
+          style={{ width: `${summary.percent}%` }}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+        <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">可用 {summary.approved}</span>
+        <span className="rounded bg-zinc-50 px-1.5 py-0.5 text-zinc-600">淘汰 {summary.rejected}</span>
+        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">待处理 {summary.remaining}</span>
+        {summary.risk > 0 && (
+          <span className="rounded bg-rose-50 px-1.5 py-0.5 text-rose-700">QA 风险 {summary.risk}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -13010,6 +13067,53 @@ function formatAgentReviewRemainingSummary(
     failed > 0 ? `生成失败 ${failed}` : "",
   ].filter(Boolean);
   return `当前还剩 ${remaining} 张待处理（${parts.join(" / ")}）。`;
+}
+
+function buildAgentReviewProgressSummary({
+  visibleArtifacts,
+  activeJobCount,
+}: {
+  visibleArtifacts: PersistedGeneratedArtifact[];
+  activeJobCount: number;
+}): AgentReviewProgressSummary | null {
+  if (activeJobCount > 0 || visibleArtifacts.length === 0) return null;
+  let approved = 0;
+  let rejected = 0;
+  let pending = 0;
+  let needsRedo = 0;
+  let failed = 0;
+  let risk = 0;
+
+  for (const artifact of visibleArtifacts) {
+    const status = getArtifactReviewStatus(artifact);
+    if (status === "approved") approved += 1;
+    if (status === "rejected") rejected += 1;
+    if (status === "pending") pending += 1;
+    if (status === "needs_redo") needsRedo += 1;
+    if (status === "failed") failed += 1;
+    if (status !== "approved" && status !== "rejected" && isArtifactVisualQaRisk(artifact)) risk += 1;
+  }
+
+  const total = visibleArtifacts.length;
+  const picked = approved + rejected;
+  const remaining = pending + needsRedo + failed;
+  const percent = total > 0 ? Math.round((picked / total) * 100) : 0;
+  const helper = remaining <= 0
+    ? "这套结果已经挑完，可以打开文件夹收图。"
+    : risk > 0
+      ? `还有 ${remaining} 张待处理，其中 ${risk} 张有 QA 风险，建议先点开检查。`
+      : `还有 ${remaining} 张待处理，先保留可用图，再重做问题图。`;
+
+  return {
+    total,
+    picked,
+    remaining,
+    approved,
+    rejected,
+    risk,
+    percent,
+    helper,
+  };
 }
 
 function isAgentArtifactFailed(artifact: PersistedGeneratedArtifact): boolean {

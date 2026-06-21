@@ -392,6 +392,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /reviewProgressSummary = buildAgentReviewProgressSummary[\s\S]*<AgentReviewProgress summary=\{reviewProgressSummary\} \/>[\s\S]*function AgentReviewProgress[\s\S]*data-testid="agent-review-progress"[\s\S]*挑图进度 \{summary\.picked\}\/\{summary\.total\}[\s\S]*QA 风险 \{summary\.risk\}[\s\S]*function buildAgentReviewProgressSummary[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*isArtifactVisualQaRisk\(artifact\)/,
+  "Agent review assistant should show a compact pick-progress strip before executable suggestions"
+);
+assert.match(
+  workbenchSource,
   /AgentReviewSuggestionCards[\s\S]*getAgentReviewSuggestionImpactItems\(suggestion\)[\s\S]*\{item\.label\}[\s\S]*\{item\.text\}[\s\S]*function getAgentReviewSuggestionImpactItems[\s\S]*只影响这张结果图[\s\S]*只影响「\$\{suggestion\.groupTitle\}」\$\{count\} 张待处理图[\s\S]*已保留\/已淘汰和其他图组不动/,
   "Agent review suggestion cards should show what each executable suggestion affects before the user clicks"
 );
