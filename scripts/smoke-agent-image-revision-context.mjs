@@ -124,8 +124,13 @@ assert.match(
 
 assert.match(
   source,
-  /const targets = groupArtifacts[\s\S]*const job = artifact\.jobId \? jobs\.find[\s\S]*const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\)[\s\S]*metadata,/,
+  /const sourceArtifacts = groupArtifacts\.length > 0[\s\S]*resolveAgentResultGroupArtifacts\(group, artifacts\)[\s\S]*const targets = sourceArtifacts[\s\S]*const job = artifact\.jobId \? jobs\.find[\s\S]*const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\)[\s\S]*metadata,/,
   "group image revision targets should merge artifact and job metadata before rebuilding prompts and references"
+);
+assert.match(
+  source,
+  /function resolveAgentResultGroupArtifacts[\s\S]*artifactIds[\s\S]*jobIds[\s\S]*artifactIds\.has\(artifact\.id\)[\s\S]*jobIds\.has\(artifact\.jobId\)/,
+  "cross-page result group edits should resolve artifacts by artifact id or job id when the visible result wall is not ready"
 );
 
 assert.match(

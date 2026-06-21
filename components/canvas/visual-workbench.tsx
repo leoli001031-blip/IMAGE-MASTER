@@ -2769,7 +2769,10 @@ export function VisualWorkbench() {
     groupArtifacts: PersistedGeneratedArtifact[]
   ) => {
     const brief = userBrief.trim();
-    const targets = groupArtifacts
+    const sourceArtifacts = groupArtifacts.length > 0
+      ? groupArtifacts
+      : resolveAgentResultGroupArtifacts(group, artifacts);
+    const targets = sourceArtifacts
       .filter((artifact) => artifact.url)
       .map((artifact): AgentImageEditTarget => {
         const job = artifact.jobId ? jobs.find((item) => item.id === artifact.jobId) : undefined;
@@ -10906,6 +10909,18 @@ function buildAgentResultGroupRevisionDiff(
     copyChanges,
     otherChanges,
   };
+}
+
+function resolveAgentResultGroupArtifacts(
+  group: AgentPlanGroup,
+  artifactPool: PersistedGeneratedArtifact[]
+): PersistedGeneratedArtifact[] {
+  const artifactIds = new Set(group.artifactIds ?? []);
+  const jobIds = new Set(group.jobIds ?? []);
+  if (artifactIds.size === 0 && jobIds.size === 0) return [];
+  return artifactPool.filter((artifact) =>
+    artifactIds.has(artifact.id) || (artifact.jobId ? jobIds.has(artifact.jobId) : false)
+  );
 }
 
 function buildAgentImageRevisionMessage(target: AgentImageEditTarget, userBrief: string): string {
