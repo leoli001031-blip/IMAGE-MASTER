@@ -527,8 +527,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*正在用 Agent 审核「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图[\s\S]*for \(const artifact of qaArtifacts\)[\s\S]*await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*已完成「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图的视觉 QA[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*正在用 Agent 审核「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图[\s\S]*for \(const artifact of qaArtifacts\)[\s\S]*await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*已完成「\$\{group\.title\}」这一组 \$\{qaArtifacts\.length\} 张图的视觉 QA[\s\S]*return[\s\S]*getAgentResultGroupSaveAsAssetIntent\(brief\)/,
   "focused result-group chat should run visual QA for the selected group before falling through to picking or revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupSaveAsAssetIntent\(brief\)[\s\S]*saveTargets = sourceArtifacts[\s\S]*image-master:generation-frame-output-save[\s\S]*artifactId: target\.artifact\.id[\s\S]*group: group\.title[\s\S]*已提交保存「\$\{group\.title\}」这一组 \$\{saveTargets\.length\} 张图为资产[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused result-group chat should save the selected group as assets before falling through to picking or revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -590,6 +595,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageSaveAsAssetIntent[\s\S]*保存为资产[\s\S]*素材库\|资产库[\s\S]*放到\(素材库\|资产库\)/,
   "single-image save-as-asset intent should require explicit asset-library wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentResultGroupSaveAsAssetIntent[\s\S]*这组\|本组\|这一组\|当前组[\s\S]*保存为资产[\s\S]*素材库\|资产库/,
+  "result-group save-as-asset intent should require explicit group and asset-library wording"
 );
 assert.match(
   workbenchSource,

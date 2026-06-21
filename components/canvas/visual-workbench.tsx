@@ -2999,6 +2999,46 @@ export function VisualWorkbench() {
       setComposeMessage(`已完成「${group.title}」这一组 ${qaArtifacts.length} 张图的视觉 QA。`);
       return;
     }
+    if (getAgentResultGroupSaveAsAssetIntent(brief)) {
+      const saveTargets = sourceArtifacts
+        .filter((artifact) => typeof artifact.url === "string" && artifact.url.length > 0)
+        .map((artifact) => {
+          const job = artifact.jobId ? jobs.find((item) => item.id === artifact.jobId) : undefined;
+          const metadata = mergeGenerationOutputPreviewMetadata({ artifact, job });
+          return {
+            artifact,
+            job,
+            metadata,
+            prompt: getGenerationOutputPreviewPrompt({ artifact, job, metadata }),
+          };
+        });
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (saveTargets.length === 0) {
+        setComposeMessage(`「${group.title}」没有可保存为资产的成片。`);
+        return;
+      }
+      for (const target of saveTargets) {
+        window.dispatchEvent(
+          new CustomEvent("image-master:generation-frame-output-save", {
+            detail: {
+              artifactId: target.artifact.id,
+              jobId: target.artifact.jobId,
+              nodeId: target.artifact.nodeId,
+              url: target.artifact.url,
+              title: target.artifact.title,
+              status: target.artifact.status,
+              prompt: target.prompt,
+              metadata: target.metadata,
+              group: group.title,
+            },
+          })
+        );
+      }
+      setHighlightedArtifactGroupTitle(group.title);
+      setComposeMessage(`已提交保存「${group.title}」这一组 ${saveTargets.length} 张图为资产；保存成功后会自动标记为可用。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (sourceArtifacts.length === 0) {
@@ -12151,6 +12191,12 @@ function getAgentImageSaveAsAssetIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库))/.test(compactText);
+}
+
+function getAgentResultGroupSaveAsAssetIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(?:(保存|存|加入|添加|收进|放进|放到)(这组|本组|这一组|当前组|这批|这一批|当前这组)(图|图片|结果)?(为资产|到素材库|到资产库|进素材库|进资产库)|(?:这组|本组|这一组|当前组|这批|这一批|当前这组)(图|图片|结果)?(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库)))/.test(compactText);
 }
 
 function getAgentImageOpenDetailIntent(text: string): boolean {
