@@ -392,6 +392,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /function AgentReviewSuggestionCards[\s\S]*const visibleSuggestions = suggestions\.slice\(0, 4\)[\s\S]*const hiddenSuggestionCount = Math\.max\(0, suggestions\.length - visibleSuggestions\.length\)[\s\S]*\{visibleSuggestions\.map\(\(suggestion\)[\s\S]*hiddenSuggestionCount > 0[\s\S]*还有 \{hiddenSuggestionCount\} 条建议未展开[\s\S]*function buildAgentExecutableReviewSuggestions[\s\S]*return suggestions;/,
+  "Agent review suggestion cards should keep all candidate suggestions and explain when only the top items are shown"
+);
+assert.match(
+  workbenchSource,
   /reviewProgressSummary = buildAgentReviewProgressSummary[\s\S]*activeFilter: resultReviewFilter[\s\S]*<AgentReviewProgress summary=\{reviewProgressSummary\} \/>[\s\S]*function AgentReviewProgress[\s\S]*data-testid="agent-review-progress"[\s\S]*summary\.scopeLabel \? `\$\{summary\.scopeLabel\}进度` : "挑图进度"[\s\S]*QA 风险 \{summary\.risk\}[\s\S]*function buildAgentReviewProgressSummary[\s\S]*activeFilter: ResultReviewFilter[\s\S]*getAgentReviewArtifactsForFilter\(visibleArtifacts, activeFilter\)[\s\S]*scopeLabel = activeFilter === "all" \? "" : getResultReviewFilterLabel\(activeFilter\)[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*isArtifactVisualQaRisk\(artifact\)/,
   "Agent review assistant should show filtered pick progress before executable suggestions"
 );

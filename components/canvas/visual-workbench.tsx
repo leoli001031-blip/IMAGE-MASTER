@@ -10776,13 +10776,16 @@ function AgentReviewSuggestionCards({
   executedActions: Record<string, AgentReviewSuggestionExecutionState>;
   onAction: (suggestion: AgentExecutableReviewSuggestion, action: AgentReviewSuggestionAction) => void;
 }) {
+  const visibleSuggestions = suggestions.slice(0, 4);
+  const hiddenSuggestionCount = Math.max(0, suggestions.length - visibleSuggestions.length);
+
   return (
     <div className="space-y-1.5" data-testid="agent-review-suggestions">
       <div className="flex items-center gap-1.5 text-[11px] font-medium text-warm-ink">
         <Sparkles className="h-3.5 w-3.5 text-warm-primary" />
         可执行建议
       </div>
-      {suggestions.slice(0, 4).map((suggestion) => {
+      {visibleSuggestions.map((suggestion) => {
         const execution = executedActions[suggestion.id];
         const impactItems = getAgentReviewSuggestionImpactItems(suggestion);
         return (
@@ -10853,6 +10856,11 @@ function AgentReviewSuggestionCards({
           </div>
         );
       })}
+      {hiddenSuggestionCount > 0 && (
+        <div className="rounded-md border border-warm-line/50 bg-warm-paper/75 px-2 py-1.5 text-[10px] leading-4 text-warm-muted">
+          还有 {hiddenSuggestionCount} 条建议未展开；先处理当前高优先级项，列表会自动刷新。
+        </div>
+      )}
     </div>
   );
 }
@@ -12958,7 +12966,7 @@ function buildAgentExecutableReviewSuggestions({
 
   add(buildAgentExecutableGroupSuggestion(visibleArtifacts, planGroups, matrixItems));
 
-  return suggestions.slice(0, 4);
+  return suggestions;
 }
 
 function buildAgentExecutableGroupSuggestion(
