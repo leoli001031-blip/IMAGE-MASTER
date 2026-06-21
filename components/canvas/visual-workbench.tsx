@@ -10374,6 +10374,7 @@ function AgentPlanDiffCard({
     { label: "文案", values: diff.copyChanges },
     { label: "其他", values: diff.otherChanges },
   ].filter((section) => section.values.length > 0);
+  const confirmationItems = getAgentPlanDiffConfirmationItems(diff);
 
   return (
     <div className="rounded-lg border border-warm-primary/20 bg-warm-primary-soft/45 px-3 py-2 text-[11px] leading-4">
@@ -10381,11 +10382,20 @@ function AgentPlanDiffCard({
         <span className="font-medium text-warm-ink">本次计划变更</span>
         <span className="text-warm-muted">{diff.summary}</span>
       </div>
-      {(diff.scopeSummary || diff.preservedSummary || diff.nextAction) && (
-        <div className="mt-1.5 space-y-0.5 text-warm-muted">
-          {diff.scopeSummary && <div>{diff.scopeSummary}</div>}
-          {diff.preservedSummary && <div>{diff.preservedSummary}</div>}
-          {diff.nextAction && <div>{diff.nextAction}</div>}
+      {confirmationItems.length > 0 && (
+        <div className="mt-2 border-t border-warm-primary/15 pt-2">
+          <div className="mb-1.5 flex items-center gap-1.5 font-medium text-warm-ink">
+            <ListChecks className="h-3.5 w-3.5 text-warm-primary" />
+            执行前确认
+          </div>
+          <div className="space-y-1">
+            {confirmationItems.map((item) => (
+              <div key={item.label} className="flex gap-2">
+                <span className="w-12 shrink-0 text-warm-muted">{item.label}</span>
+                <span className="min-w-0 flex-1 text-warm-ink">{item.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {sections.length > 0 && (
@@ -10449,6 +10459,14 @@ function getAgentPlanDiffChangeLines(diff: AgentPlanDiff): string[] {
     ...diff.copyChanges,
     ...diff.otherChanges,
   ];
+}
+
+function getAgentPlanDiffConfirmationItems(diff: AgentPlanDiff): Array<{ label: string; text: string }> {
+  return [
+    { label: "改动范围", text: diff.scopeSummary || diff.summary },
+    { label: "保持不变", text: diff.preservedSummary || "未提到的图组、比例和参考图角色保持不变。" },
+    { label: "下一步", text: diff.nextAction || "确认后应用这份计划。" },
+  ].filter((item) => item.text.trim().length > 0);
 }
 
 function AgentGapChecklist({ items }: { items: AgentGapHintItem[] }) {

@@ -313,8 +313,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function AgentPlanDiffCard[\s\S]*diff\.scopeSummary[\s\S]*diff\.preservedSummary[\s\S]*diff\.nextAction/,
-  "plan diff card should show the same reviewable impact notes as the conversation"
+  /function AgentPlanDiffCard[\s\S]*getAgentPlanDiffConfirmationItems\(diff\)[\s\S]*执行前确认[\s\S]*\{item\.label\}[\s\S]*\{item\.text\}[\s\S]*function getAgentPlanDiffConfirmationItems[\s\S]*改动范围[\s\S]*保持不变[\s\S]*下一步/,
+  "plan diff card should show a clear execution confirmation checklist"
 );
 assert.match(
   source,
