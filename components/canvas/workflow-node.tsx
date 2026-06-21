@@ -766,6 +766,7 @@ function dispatchArtifactGroupRetry(detail: ArtifactGroupEditDetail): void {
 }
 
 function dispatchArtifactEdit(data: CanvasNodeData, nodeId: string): void {
+  const group = getArtifactGroupEditDetail(data)?.group;
   window.dispatchEvent(
     new CustomEvent("image-master:generation-frame-output-edit", {
       detail: {
@@ -775,7 +776,7 @@ function dispatchArtifactEdit(data: CanvasNodeData, nodeId: string): void {
         url: getStringParameter(data.referenceUrl) || getStringParameter(data.previewUrl),
         title: getArtifactNodeFullTitle(data),
         status: getStringParameter(data.artifactStatus),
-        group: getArtifactGroupEditDetail(data)?.group,
+        group,
       },
     })
   );
@@ -797,6 +798,7 @@ function dispatchArtifactSave(data: CanvasNodeData, nodeId: string): void {
 }
 
 function dispatchArtifactRetry(data: CanvasNodeData, nodeId: string): void {
+  const group = getArtifactGroupEditDetail(data)?.group;
   window.dispatchEvent(
     new CustomEvent("image-master:generation-frame-output-retry", {
       detail: {
@@ -806,6 +808,7 @@ function dispatchArtifactRetry(data: CanvasNodeData, nodeId: string): void {
         url: getStringParameter(data.referenceUrl) || getStringParameter(data.previewUrl),
         title: getArtifactNodeFullTitle(data),
         status: getStringParameter(data.artifactStatus),
+        group,
       },
     })
   );

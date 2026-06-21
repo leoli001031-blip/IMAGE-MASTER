@@ -189,7 +189,7 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /function dispatchArtifactEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle[\s\S]*group: getArtifactGroupEditDetail\(data\)\?\.group/,
+  /function dispatchArtifactEdit[\s\S]*const group = getArtifactGroupEditDetail\(data\)\?\.group;[\s\S]*image-master:generation-frame-output-edit[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle[\s\S]*group,/,
   "artifact result cards should dispatch the same single-image edit context and group as the detail preview"
 );
 assert.match(
@@ -199,8 +199,8 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /function dispatchArtifactRetry[\s\S]*image-master:generation-frame-output-retry[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
-  "artifact result cards should dispatch the same single-image retry context as the detail preview"
+  /function dispatchArtifactRetry[\s\S]*const group = getArtifactGroupEditDetail\(data\)\?\.group;[\s\S]*image-master:generation-frame-output-retry[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle[\s\S]*group,/,
+  "artifact result cards should dispatch the same single-image retry context and group as the detail preview"
 );
 assert.match(
   outputPreviewModalSource,
