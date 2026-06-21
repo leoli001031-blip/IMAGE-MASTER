@@ -459,7 +459,7 @@ function detectExplicitPlatformWorkflowIntent(text: string): boolean {
 }
 
 function detectMixedCommercePackIntent(text: string): boolean {
-  if (!/(商品|产品|product)/.test(text)) return false;
+  if (!/(商品|产品|product|保温杯|水杯|杯子|杯|bottle|tumbler|thermos|cup)/.test(text)) return false;
   let deliverables = 0;
   if (/主图|商品主图|产品主图|main image|hero/.test(text)) deliverables += 1;
   if (/场景图|客厅|卧室|室内|户外|街拍|生活方式|lifestyle|scene/.test(text)) deliverables += 1;
@@ -505,8 +505,8 @@ function detectProductModelSceneIntent(text: string): {
   const modelIntentText = stripNegativeModelIntent(text);
   return {
     hasProduct:
-      /\b(product|bag|handbag|purse|plush|phone|camera|watch|shoes?|clothing|dress|coat|jacket|sneaker)\b/.test(text) ||
-      /(商品|产品|包|女包|手袋|毛绒|手机|相机|手表|鞋|服装|衣服|外套|羽绒服)/.test(text),
+      /\b(product|bag|handbag|purse|plush|phone|camera|watch|shoes?|clothing|dress|coat|jacket|sneaker|bottle|tumbler|thermos|cup)\b/.test(text) ||
+      /(商品|产品|包|女包|手袋|毛绒|手机|相机|手表|鞋|服装|衣服|外套|羽绒服|保温杯|水杯|杯子|杯)/.test(text),
     hasModel:
       /\b(model|wearing|wear|holding|carry|carrying|showcase|lookbook|portrait|person|woman|man)\b/.test(modelIntentText) ||
       /(模特|穿着|上身|背着|拿着|手拿|手持|真人|人物|女性|男性|真人展示|模特展示|人物展示|上身展示|背着展示|佩戴展示)/.test(modelIntentText),

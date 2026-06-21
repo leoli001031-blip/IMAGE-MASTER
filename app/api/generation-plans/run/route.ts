@@ -359,6 +359,7 @@ function summarizeAgentMatrixItem(item: AgentPlanGenerationMatrixItem) {
     referenceRoles: item.referenceRoles,
     providerReferenceRoles: item.providerReferenceRoles,
     assetGroupIds: item.assetGroupIds,
+    copyMode: item.copyMode,
     status: item.status,
     summary: item.summary,
   };

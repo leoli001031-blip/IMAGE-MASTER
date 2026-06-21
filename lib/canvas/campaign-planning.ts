@@ -485,17 +485,22 @@ function parseRequestedCampaignImageCount(brief: string): number | undefined {
 function parseRequestedMultiSceneImageCount(text: string): number | undefined {
   if (!/(场景|scene|lifestyle|室内|户外|商场|厨房|办公室|露营)/i.test(text)) return undefined;
 
-  const explicitTotal = text.match(/(?:共|总共|一共|合计)\s*([0-9一二两三四五六七八九十]{1,3})\s*张/);
-  const explicitTotalCount = parseCountToken(explicitTotal?.[1]);
-  if (explicitTotalCount > 0) return explicitTotalCount;
-
   const sceneCountMatch = text.match(/([0-9一二两三四五六七八九十]{1,3})\s*个(?:不同)?(?:场景|scene|lifestyle)/i);
-  const perSceneMatch = text.match(/每(?:个|组)?(?:场景|scene|lifestyle)?\s*([0-9一二两三四五六七八九十]{1,3})\s*张/i);
+  const perSceneMatch = text.match(
+    /(?:每(?:个|组)?(?:场景|scene|lifestyle)?|场景各|各)\s*([0-9一二两三四五六七八九十]{1,3})\s*张/i
+  );
   const sceneCount = parseCountToken(sceneCountMatch?.[1]);
   const perSceneCount = parseCountToken(perSceneMatch?.[1]);
   if (sceneCount > 0 && perSceneCount > 0) return sceneCount * perSceneCount;
+  const namedSceneCount = countNamedSceneTerms(text);
+  if (namedSceneCount > 1 && perSceneCount > 0) return namedSceneCount * perSceneCount;
 
   return undefined;
+}
+
+function countNamedSceneTerms(text: string): number {
+  const sceneTerms = ["办公室", "户外", "室内", "商场", "厨房", "咖啡厅", "家居", "卧室", "客厅", "露营", "雪山", "街拍"];
+  return sceneTerms.filter((term) => text.includes(term)).length;
 }
 
 function parseCountToken(value: string | undefined): number {

@@ -1005,18 +1005,20 @@ function resolveAgentMatrixCopyMode(
 ): string | undefined {
   const currentMode = item.copyRenderPolicy?.mode;
   const itemCopyText = `${item.title} ${item.type} ${item.prompt} ${item.copyText}`.toLowerCase();
+  if (currentMode && currentMode !== "metadata_only") return currentMode;
+  if (
+    currentMode === "metadata_only" &&
+    item.copyRenderPolicy?.requestedMode === "layout_layer" &&
+    referenceRoles.includes("copy")
+  ) {
+    return "layout_layer";
+  }
+  if (currentMode) return currentMode;
   if (
     requestedMode !== "burn_in" &&
     /(?:文案|文字).{0,8}(?:不|别|不要|无需|不需要).{0,8}(?:进图|入图|烧字|烧进|写进|渲染|出字|放进图)|(?:不|别|不要|无需|不需要).{0,8}(?:文案|文字|烧字|烧进|直接出字|直接生成文字|把字放进图|把文案放进图|把文字放进图|出字|进图)/.test(itemCopyText)
   ) {
     return "layout_layer";
-  }
-  if (
-    requestedMode === "burn_in" &&
-    referenceRoles.includes("copy") &&
-    (!currentMode || currentMode === "metadata_only" || currentMode === "layout_layer")
-  ) {
-    return "burn_in";
   }
   if (
     referenceRoles.includes("copy") &&
@@ -1168,9 +1170,14 @@ function normalizeLlmMatrix(
       referenceRoles: boundedReferenceRoles,
       providerReferenceRoles: nextProviderReferenceRoles,
       assetGroupIds: nextAssetGroupIds,
+      copyMode: normalizeAgentMatrixCopyMode(getString(record.copyMode)) ?? fallback.copyMode,
       summary,
     };
   });
+}
+
+function normalizeAgentMatrixCopyMode(value: string): string | undefined {
+  return value === "burn_in" || value === "layout_layer" || value === "metadata_only" ? value : undefined;
 }
 
 function protectLlmMatrixReferenceRouting(

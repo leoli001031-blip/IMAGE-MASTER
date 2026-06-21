@@ -852,6 +852,22 @@ function validateCopyPolicy(scenario, run) {
       addIssue(scenario.id, "copy_policy", `${job.metadata?.planItemTitle} routed copy as provider image input`);
     }
     const policy = getJobCopyPolicy(job);
+    const matrixCopyMode = job.metadata?.agentMatrixItem?.copyMode;
+    if (!matrixCopyMode) {
+      addIssue(scenario.id, "copy_policy", `${job.metadata?.planItemTitle} missing agentMatrixItem.copyMode`);
+    } else if (policy?.mode === "burn_in" && matrixCopyMode !== "burn_in") {
+      addIssue(
+        scenario.id,
+        "copy_policy",
+        `${job.metadata?.planItemTitle} matrix copyMode ${matrixCopyMode} missed burn_in copyRenderPolicy`
+      );
+    } else if (policy?.mode !== "burn_in" && matrixCopyMode === "burn_in") {
+      addIssue(
+        scenario.id,
+        "copy_policy",
+        `${job.metadata?.planItemTitle} matrix copyMode burn_in disagrees with non-burn copyRenderPolicy ${policy?.mode || "missing"}`
+      );
+    }
     validatePromptCopyPolicy(scenario, job, policy);
   }
 }

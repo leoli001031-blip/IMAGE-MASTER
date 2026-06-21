@@ -55,6 +55,7 @@ try {
   assertDraft(payload.workflow);
   assertPlanPreview(payload.planPreview, payload.workflowDraft);
   assertAgentSkill(payload.planPreview, payload.workflowDraft);
+  await assertAdditionalPlanningCases();
 
   console.log(
     `Workflow compose smoke passed on ${baseUrl}: ` +
@@ -65,6 +66,44 @@ try {
   await cleanup();
   await stopSmokeServer(server);
   runtime.cleanup();
+}
+
+async function assertAdditionalPlanningCases() {
+  const countedDetail = await requestJson(`${baseUrl}/api/workflow-compose`, {
+    method: "POST",
+    body: JSON.stringify({
+      brief: "给智能保温杯做淘宝详情页共8张，商品主图1张，商品细节2张，办公室和户外场景各2张，海报1张，海报文案烧进图。",
+      previewPlan: true,
+      saveWorkflow: false,
+      copyRenderMode: "burn_in",
+    }),
+  });
+  if (countedDetail.planPreview?.estimatedCount !== 8) {
+    throw new Error(`Expected explicit Taobao count to stay 8, got ${countedDetail.planPreview?.estimatedCount}`);
+  }
+  const countedSlots = countedDetail.planPreview.items.map((item) => item.slot);
+  if (countedSlots.filter((slot) => String(slot).startsWith("scene")).length !== 4) {
+    throw new Error(`Expected office/outdoor scene count to be 4, got ${JSON.stringify(countedSlots)}`);
+  }
+  if (countedDetail.planPreview.items.filter((item) => item.copyMode === "burn_in").length !== 1) {
+    throw new Error("Expected only the explicit poster item to burn copy in counted Taobao plan");
+  }
+
+  const productScene = await requestJson(`${baseUrl}/api/workflow-compose`, {
+    method: "POST",
+    body: JSON.stringify({
+      brief: "给智能保温杯做多场景图，办公室、户外、商场3个场景每个2张，另外做1张海报文案烧进图。",
+      previewPlan: true,
+      saveWorkflow: false,
+      copyRenderMode: "burn_in",
+    }),
+  });
+  if (productScene.planPreview?.agentPlan?.skillId !== "workflow.product_scene.v1") {
+    throw new Error(`Expected thermos multi-scene brief to use product scene skill, got ${productScene.planPreview?.agentPlan?.skillId}`);
+  }
+  if (productScene.planPreview?.estimatedCount !== 7) {
+    throw new Error(`Expected multi-scene plus poster count to be 7, got ${productScene.planPreview?.estimatedCount}`);
+  }
 }
 
 function assertAgentSkill(planPreview, draft) {
