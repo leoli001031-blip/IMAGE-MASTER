@@ -12,6 +12,7 @@ export interface PendingResultEditTarget {
 
 const PENDING_RESULT_EDIT_TARGET_STORAGE_KEY = "image-master:pending-result-edit-target";
 const MAX_PENDING_METADATA_TEXT_LENGTH = 6000;
+const MAX_PENDING_INLINE_IMAGE_URL_LENGTH = 4096;
 
 const PENDING_RESULT_EDIT_METADATA_KEYS = [
   "prompt",
@@ -84,7 +85,7 @@ export function takePendingResultEditTarget(): PendingResultEditTarget | null {
 
 function normalizePendingResultEditTarget(value: unknown): PendingResultEditTarget | null {
   if (!isRecord(value)) return null;
-  const url = getString(value.url);
+  const url = getStorageSafeImageUrl(value.url);
   if (!url) return null;
   return {
     url,
@@ -113,7 +114,7 @@ function compactPendingMetadataValue(value: unknown): unknown {
   if (typeof value === "string") {
     const text = value.trim();
     if (!text) return undefined;
-    if (text.startsWith("data:image/") && text.length > 4096) return undefined;
+    if (text.startsWith("data:image/") && text.length > MAX_PENDING_INLINE_IMAGE_URL_LENGTH) return undefined;
     return text.length > MAX_PENDING_METADATA_TEXT_LENGTH
       ? `${text.slice(0, MAX_PENDING_METADATA_TEXT_LENGTH)}...`
       : text;
@@ -139,6 +140,13 @@ function compactPendingMetadataValue(value: unknown): unknown {
 
 function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function getStorageSafeImageUrl(value: unknown): string | undefined {
+  const url = getString(value);
+  if (!url) return undefined;
+  if (url.startsWith("data:image/") && url.length > MAX_PENDING_INLINE_IMAGE_URL_LENGTH) return undefined;
+  return url;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -149,8 +149,13 @@ assert.match(
 );
 assert.match(
   resultEditTargetStorageSource,
-  /MAX_PENDING_METADATA_TEXT_LENGTH[\s\S]*compactPendingResultEditMetadata[\s\S]*data:image\/[\s\S]*text\.length > 4096/,
+  /MAX_PENDING_METADATA_TEXT_LENGTH[\s\S]*MAX_PENDING_INLINE_IMAGE_URL_LENGTH[\s\S]*compactPendingResultEditMetadata[\s\S]*data:image\/[\s\S]*MAX_PENDING_INLINE_IMAGE_URL_LENGTH/,
   "result-page Agent edit handoff should avoid storing oversized inline reference images"
+);
+assert.match(
+  resultEditTargetStorageSource,
+  /const url = getStorageSafeImageUrl\(value\.url\)[\s\S]*function getStorageSafeImageUrl[\s\S]*data:image\/[\s\S]*MAX_PENDING_INLINE_IMAGE_URL_LENGTH/,
+  "result-page Agent edit handoff should reject oversized inline result image URLs before sessionStorage"
 );
 
 assert.match(
