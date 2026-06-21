@@ -658,6 +658,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasSaveAsAssetIntent = hasAgentGlobalResultReviewSaveAsAssetIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*saveTargets = targets[\s\S]*image-master:generation-frame-output-save[\s\S]*group: getGenerationOutputPreviewGroup\(target\.metadata, target\.artifact\)[\s\S]*已提交保存 \$\{saveTargets\.length\} 张\$\{scopeLabel\}为资产[\s\S]*return true[\s\S]*hasRetryIntent = hasAgentGlobalResultReviewRetryIntent\(brief\)/,
+  "global result review commands should save scoped result-wall targets as assets before retry or status commands"
+);
+assert.match(
+  workbenchSource,
   /handleApplyGlobalResultReviewCommand[\s\S]*filterIntent = getAgentGlobalResultReviewFilterIntent\(brief\)[\s\S]*setResultReviewFilter\(filterIntent\)[\s\S]*setHighlightedResultReviewFilter\(filterIntent\)[\s\S]*已切到「\$\{label\}」[\s\S]*const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)/,
   "global result review commands should switch result-wall filters before treating text as status or redo commands"
 );
@@ -688,7 +693,7 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /function getAgentGlobalResultReviewTargets[\s\S]*activeFilter: ResultReviewFilter = "all"[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent\(compactText\)[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*return artifacts[\s\S]*function hasAgentCurrentFilteredResultScopeIntent[\s\S]*所有结果\|全部结果\|结果墙[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
+  /function getAgentGlobalResultReviewTargets[\s\S]*activeFilter: ResultReviewFilter = "all"[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*hasAgentCurrentFilteredResultScopeIntent\(compactText\)[\s\S]*activeFilter === "all"[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*return artifacts[\s\S]*function hasAgentCurrentFilteredResultScopeIntent[\s\S]*所有结果\|全部结果\|结果墙[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
   "global result review commands should separate explicit status scopes and let current-filter pronouns target the filtered subset"
 );
 assert.match(
@@ -708,6 +713,11 @@ assert.ok(
     resultReviewRetryIntentSource.includes("当前筛选") &&
     resultReviewRetryIntentSource.includes("return hasRetryAction && hasTargetScope"),
   "global redo execution intent should require an execution verb plus an explicit result scope, while excluding status-marking language"
+);
+assert.match(
+  workbenchSource,
+  /function hasAgentGlobalResultReviewSaveAsAssetIntent[\s\S]*hasAgentGlobalResultReviewScopeIntent\(text\)[\s\S]*保存为资产[\s\S]*素材库\|资产库/,
+  "global save-as-asset intent should require explicit result scope and asset-library wording"
 );
 assert.match(
   workbenchSource,

@@ -3352,6 +3352,52 @@ export function VisualWorkbench() {
       );
       return true;
     }
+    const hasSaveAsAssetIntent = hasAgentGlobalResultReviewSaveAsAssetIntent(brief);
+    if (hasSaveAsAssetIntent) {
+      const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
+      const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter);
+      const saveTargets = targets
+        .filter((artifact) => typeof artifact.url === "string" && artifact.url.length > 0)
+        .map((artifact) => {
+          const job = artifact.jobId ? jobs.find((item) => item.id === artifact.jobId) : undefined;
+          const metadata = mergeGenerationOutputPreviewMetadata({ artifact, job });
+          return {
+            artifact,
+            job,
+            metadata,
+            prompt: getGenerationOutputPreviewPrompt({ artifact, job, metadata }),
+          };
+        });
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (targets.length === 0) {
+        setComposeMessage(`当前结果墙里没有找到可保存的${scopeLabel}。`);
+        return true;
+      }
+      if (saveTargets.length === 0) {
+        setComposeMessage(`${targets.length} 张${scopeLabel}里没有可保存为资产的本地图像。`);
+        return true;
+      }
+      for (const target of saveTargets) {
+        window.dispatchEvent(
+          new CustomEvent("image-master:generation-frame-output-save", {
+            detail: {
+              artifactId: target.artifact.id,
+              jobId: target.artifact.jobId,
+              nodeId: target.artifact.nodeId,
+              url: target.artifact.url,
+              title: target.artifact.title,
+              status: target.artifact.status,
+              prompt: target.prompt,
+              metadata: target.metadata,
+              group: getGenerationOutputPreviewGroup(target.metadata, target.artifact),
+            },
+          })
+        );
+      }
+      setComposeMessage(`已提交保存 ${saveTargets.length} 张${scopeLabel}为资产；保存成功后会自动标记为可用。`);
+      return true;
+    }
     const hasRetryIntent = hasAgentGlobalResultReviewRetryIntent(brief);
     if (hasRetryIntent) {
       const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
@@ -12302,8 +12348,10 @@ function getAgentGlobalResultReviewTargets(
   if (targetsRejectedScope) {
     return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "rejected");
   }
-  if (activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent(compactText)) {
-    return artifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, activeFilter));
+  if (hasAgentCurrentFilteredResultScopeIntent(compactText)) {
+    return activeFilter === "all"
+      ? artifacts
+      : artifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, activeFilter));
   }
   if (/(全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText)) {
     return artifacts;
@@ -12343,6 +12391,12 @@ function hasAgentGlobalResultReviewRetryIntent(text: string): boolean {
   const hasRetryAction = /(执行|重跑|重试|重新生成|重新跑|再跑|跑一下|处理|重做一下|重做一遍|重做一轮|再生成)/.test(compactText);
   const hasTargetScope = /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|当前|当前筛选|筛选结果|这批|这一批|这类|这部分|当前这批|当前这些|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
   return hasRetryAction && hasTargetScope;
+}
+
+function hasAgentGlobalResultReviewSaveAsAssetIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText || !hasAgentGlobalResultReviewScopeIntent(text)) return false;
+  return /(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库)|保存.*(素材库|资产库)|存.*(素材库|资产库)|加入.*(素材库|资产库)|添加.*(素材库|资产库)|收进.*(素材库|资产库)|放进.*(素材库|资产库)|放到.*(素材库|资产库))/.test(compactText);
 }
 
 function getAgentGlobalResultReviewScopeLabel(text: string, activeFilter: ResultReviewFilter = "all"): string {
