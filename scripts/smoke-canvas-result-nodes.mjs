@@ -497,8 +497,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*getAgentImageDownloadIntent\(brief\)[\s\S]*downloadAgentImageTarget\(target\.url, target\.title\)[\s\S]*已开始下载「\$\{target\.title\}」[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageDownloadIntent\(brief\)[\s\S]*downloadAgentImageTarget\(target\.url, target\.title\)[\s\S]*已开始下载「\$\{target\.title\}」[\s\S]*return[\s\S]*getAgentImageCopyPromptIntent\(brief\)/,
   "focused single-image chat should download the selected result before falling through to revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageCopyPromptIntent\(brief\)[\s\S]*target\.prompt\?\.trim\(\)[\s\S]*navigator\.clipboard\?\.writeText[\s\S]*await navigator\.clipboard\.writeText\(targetPrompt\)[\s\S]*已复制「\$\{target\.title\}」的 prompt[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused single-image chat should copy the selected result prompt before falling through to revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -580,6 +585,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageDownloadIntent[\s\S]*下载\|导出\|另存为[\s\S]*保存到\|保存至[\s\S]*本地保存/,
   "single-image download intent should require explicit download or local-save wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageCopyPromptIntent[\s\S]*复制\|拷贝\|copy[\s\S]*prompt\|提示词\|原prompt\|原始prompt[\s\S]*\/i\.test\(compactText\)/,
+  "single-image copy-prompt intent should require explicit prompt wording"
 );
 assert.match(
   workbenchSource,

@@ -2738,6 +2738,22 @@ export function VisualWorkbench() {
       setComposeMessage(`已开始下载「${target.title}」。`);
       return;
     }
+    if (getAgentImageCopyPromptIntent(brief)) {
+      const targetPrompt = target.prompt?.trim();
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (!targetPrompt) {
+        setComposeMessage(`「${target.title}」没有记录 prompt，可以打开详情查看参考图和 QA。`);
+        return;
+      }
+      if (!navigator.clipboard?.writeText) {
+        setComposeMessage("当前浏览器不能直接复制 prompt，请打开详情手动复制。");
+        return;
+      }
+      await navigator.clipboard.writeText(targetPrompt);
+      setComposeMessage(`已复制「${target.title}」的 prompt。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (keepCountIntent === 1 && target.artifactId) {
@@ -12078,6 +12094,12 @@ function getAgentImageDownloadIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(下载|导出|另存为)(这张|当前)?(图|图片|结果)?|(?:这张|当前)?(图|图片|结果)?(下载|导出|另存为)|(?:存到|保存到|保存至|存进|保存进)本地|本地保存/.test(compactText);
+}
+
+function getAgentImageCopyPromptIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(复制|拷贝|copy)(这张|当前)?的?(prompt|提示词|原prompt|原始prompt)|(?:prompt|提示词|原prompt|原始prompt)(复制|拷贝|copy)/i.test(compactText);
 }
 
 function downloadAgentImageTarget(url: string, title: string): void {
