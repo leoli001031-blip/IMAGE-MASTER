@@ -10778,6 +10778,7 @@ function getAgentScopeConfirmationItems({
     return [
       { label: "范围", text: "只修改这张成片。" },
       { label: "继承", text: "原参考图、比例、用途和文案策略会带回。" },
+      { label: "执行", text: "提交后生成一个新版本，回填到结果墙。" },
       { label: "不影响", text: "其他图组和整套计划不变。" },
     ];
   }
@@ -10786,6 +10787,7 @@ function getAgentScopeConfirmationItems({
     return [
       { label: "范围", text: focusedGroupScopeText || `只影响这组 ${focusedGroup.count} 张。` },
       { label: "继承", text: getAgentFocusedGroupInheritedText(focusedGroup) },
+      { label: "执行", text: "只给本组待处理图创建修改任务。" },
       { label: "不影响", text: "其他图组保持不动，不重写全局计划。" },
     ];
   }
@@ -10800,12 +10802,14 @@ function getAgentScopeConfirmationItems({
             ? "可以对这类结果保留、淘汰、标待重做，或点单张继续改。"
             : "当前没有命中，先显示全部或换筛选。"
         },
+        { label: "执行", text: "自然语言命令只作用于当前筛选或点名对象。" },
         { label: "不影响", text: "没有点名的结果保持不变。" },
       ];
     }
     return [
       { label: "范围", text: `当前结果墙 ${visibleOutputCount} 张。` },
       { label: "操作", text: "可保留、淘汰、标待重做，或点单张继续改。" },
+      { label: "执行", text: "挑图命令会先改状态；重做需要点名单张或分组。" },
       { label: "不影响", text: "不会重新规划项目，除非你明确要求。" },
     ];
   }
