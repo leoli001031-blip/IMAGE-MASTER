@@ -11742,15 +11742,31 @@ function buildAgentExecutableGroupSuggestion(
   planGroups: AgentPlanGroup[],
   matrixItems: WorkflowPlanPreviewAgentMatrixItem[]
 ): AgentExecutableReviewSuggestion | null {
-  const explicitGroup = planGroups.find((group) => (group.artifactIds?.length ?? 0) > 1);
+  const artifactById = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+  const explicitGroup = planGroups
+    .map((group) => {
+      const groupArtifacts = (group.artifactIds ?? [])
+        .map((artifactId) => artifactById.get(artifactId))
+        .filter((artifact): artifact is PersistedGeneratedArtifact => Boolean(artifact));
+      return {
+        group,
+        artifacts: getAgentActionableGroupSuggestionArtifacts(groupArtifacts),
+      };
+    })
+    .filter((entry) => entry.artifacts.length > 1)
+    .sort(
+      (a, b) =>
+        getAgentResultGroupSuggestionRank(a.group.title, a.artifacts, matrixItems) -
+        getAgentResultGroupSuggestionRank(b.group.title, b.artifacts, matrixItems)
+    )[0];
   if (explicitGroup) {
     return {
-      id: `group:${explicitGroup.title}`,
-      title: `调整「${explicitGroup.title}」这组`,
-      body: `这组有 ${explicitGroup.artifactIds?.length ?? explicitGroup.count} 张。可以只重做这组，或让 Agent 换姿势、换场景、调整烧字策略。`,
-      groupTitle: explicitGroup.title,
-      artifactIds: explicitGroup.artifactIds,
-      editBrief: `调整「${explicitGroup.title}」：只改这一组，其他已保留图片不变。`,
+      id: `group:${explicitGroup.group.title}`,
+      title: `调整「${explicitGroup.group.title}」这组`,
+      body: `这组还有 ${explicitGroup.artifacts.length} 张待处理。可以只重做这组待处理图片，或让 Agent 换姿势、换场景、调整烧字策略。`,
+      groupTitle: explicitGroup.group.title,
+      artifactIds: explicitGroup.artifacts.map((artifact) => artifact.id),
+      editBrief: `调整「${explicitGroup.group.title}」：只改这一组待处理图片，其他已保留图片不变。`,
       actions: ["group_edit", "group_redo"],
     };
   }
@@ -11761,6 +11777,10 @@ function buildAgentExecutableGroupSuggestion(
     byGroup.set(group, [...(byGroup.get(group) ?? []), artifact]);
   }
   const candidate = Array.from(byGroup.entries())
+    .map(([groupTitle, items]) => [
+      groupTitle,
+      getAgentActionableGroupSuggestionArtifacts(items),
+    ] as const)
     .filter(([, items]) => items.length > 1)
     .sort((a, b) => getAgentResultGroupSuggestionRank(a[0], a[1], matrixItems) - getAgentResultGroupSuggestionRank(b[0], b[1], matrixItems))[0];
   if (!candidate) return null;
@@ -11779,6 +11799,15 @@ function buildAgentExecutableGroupSuggestion(
     editBrief: `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`,
     actions: ["group_edit", "group_redo"],
   };
+}
+
+function getAgentActionableGroupSuggestionArtifacts(
+  artifacts: PersistedGeneratedArtifact[]
+): PersistedGeneratedArtifact[] {
+  return artifacts.filter((artifact) => {
+    const reviewStatus = getArtifactReviewStatus(artifact);
+    return reviewStatus !== "approved" && reviewStatus !== "rejected";
+  });
 }
 
 function getAgentArtifactResultGroupLabel(artifact: PersistedGeneratedArtifact): string {

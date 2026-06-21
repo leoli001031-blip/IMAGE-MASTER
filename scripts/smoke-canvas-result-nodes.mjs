@@ -391,6 +391,16 @@ assert.match(
   "Agent review suggestions that ask users to inspect a result should expose a direct detail action"
 );
 assert.match(
+  workbenchSource,
+  /function buildAgentExecutableGroupSuggestion[\s\S]*getAgentActionableGroupSuggestionArtifacts[\s\S]*artifactIds: explicitGroup\.artifacts\.map[\s\S]*只改这一组待处理图片/,
+  "Agent group suggestions should only bind actionable pending or redo images, not already picked results"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentActionableGroupSuggestionArtifacts[\s\S]*reviewStatus !== "approved" && reviewStatus !== "rejected"/,
+  "Agent group suggestions should skip already kept or rejected images"
+);
+assert.match(
   artifactRouteSource,
   /normalizeReviewStatePatch[\s\S]*reviewState[\s\S]*artifactDB\.update\(id,[\s\S]*metadata: \{[\s\S]*\.\.\.existing\.metadata[\s\S]*reviewState/,
   "artifact PATCH should merge review state into existing metadata instead of replacing prompt/reference context"
