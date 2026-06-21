@@ -601,6 +601,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /const activeOption = resultReviewFilterOptions\.find[\s\S]*isActiveFilterHighlighted[\s\S]*data-testid="result-review-active-filter"[\s\S]*正在查看：\{activeOption\.label\}[\s\S]*\{activeCount\} 张[\s\S]*onClick=\{\(\) => onChange\("all"\)\}[\s\S]*显示全部/,
+  "result review filter should show a clear active-filter summary and a one-click return to all results"
+);
+assert.match(
+  workbenchSource,
   /type ResultReviewFilter = "all" \| "approved" \| "pending" \| "needs_redo" \| "rejected" \| "failed" \| "qa_risk"[\s\S]*只看待检查[\s\S]*只看已淘汰[\s\S]*只看 QA 风险/,
   "result review filter should expose every pick-state plus a QA-risk view for large result sets"
 );

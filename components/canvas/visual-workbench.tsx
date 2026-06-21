@@ -7537,6 +7537,10 @@ function ResultReviewFilterBar({
   highlightedValue?: ResultReviewFilter | null;
   onChange: (value: ResultReviewFilter) => void;
 }) {
+  const activeOption = resultReviewFilterOptions.find((option) => option.id === value) ?? resultReviewFilterOptions[0];
+  const activeCount = counts[value] ?? 0;
+  const isActiveFilterHighlighted = highlightedValue === value && value !== "all";
+
   return (
     <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-wrap gap-1.5 lg:right-[350px]">
       <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-warm-line/55 bg-warm-paper/90 p-1 text-[11px] text-warm-muted shadow-sm backdrop-blur">
@@ -7554,7 +7558,8 @@ function ResultReviewFilterBar({
                 active
                   ? "bg-warm-ink text-warm-paper shadow-sm"
                   : "text-warm-muted hover:bg-warm-bg hover:text-warm-ink",
-                highlighted && !active && "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                highlighted && !active && "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
+                highlighted && active && "ring-2 ring-emerald-200"
               )}
               title={`${option.label}：${count} 张`}
             >
@@ -7566,6 +7571,25 @@ function ResultReviewFilterBar({
           );
         })}
       </div>
+      {value !== "all" && (
+        <div
+          className={cn(
+            "pointer-events-auto inline-flex items-center gap-2 rounded-full border border-warm-line/55 bg-warm-paper/90 px-2.5 py-1.5 text-[11px] text-warm-muted shadow-sm backdrop-blur",
+            isActiveFilterHighlighted && "border-emerald-200 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-100"
+          )}
+          data-testid="result-review-active-filter"
+        >
+          <span className="font-medium text-warm-ink">正在查看：{activeOption.label}</span>
+          <span>{activeCount} 张</span>
+          <button
+            type="button"
+            onClick={() => onChange("all")}
+            className="rounded-full bg-warm-bg px-2 py-0.5 font-medium text-warm-muted transition hover:bg-warm-soft hover:text-warm-ink"
+          >
+            显示全部
+          </button>
+        </div>
+      )}
     </div>
   );
 }
