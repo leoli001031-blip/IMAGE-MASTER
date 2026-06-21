@@ -837,6 +837,7 @@ function ArtifactGroupHeaderNode({
     : undefined;
   const filteredReviewSummary = getStringArrayParameter(parameters?.layoutFilteredReviewSummary);
   const filteredVisualQaSummary = getStringArrayParameter(parameters?.layoutFilteredVisualQaSummary);
+  const groupHighlighted = parameters?.layoutGroupHighlighted === true;
   const count = typeof parameters?.layoutGroupCount === "number" && Number.isFinite(parameters.layoutGroupCount)
     ? parameters.layoutGroupCount
     : undefined;
@@ -874,10 +875,12 @@ function ArtifactGroupHeaderNode({
   return (
     <div
       className={cn(
-        "pointer-events-auto nodrag nopan flex h-[30px] items-center gap-3 text-warm-ink",
-        selected && "rounded ring-2 ring-warm-primary/15"
+        "pointer-events-auto nodrag nopan flex h-[30px] items-center gap-3 text-warm-ink transition-all",
+        selected && "rounded ring-2 ring-warm-primary/15",
+        groupHighlighted && "rounded-md bg-warm-primary-soft/70 px-2 ring-2 ring-warm-primary/25 shadow-sm"
       )}
       data-artifact-group-header="true"
+      data-artifact-group-highlighted={groupHighlighted ? "true" : undefined}
       style={{ width, maxWidth: width }}
       title={`${data.label}${captionParts.length ? ` · ${captionParts.join(" · ")}` : ""}`}
     >

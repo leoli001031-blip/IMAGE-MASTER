@@ -129,6 +129,11 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
+  /layoutGroupHighlighted[\s\S]*data-artifact-group-highlighted=\{groupHighlighted \? "true" : undefined\}/,
+  "artifact group headers should expose a brief highlighted state after group actions"
+);
+assert.match(
+  workflowNodeSource,
   /layoutHeaderAvailable[\s\S]*return null/,
   "artifact result nodes should hide repeated group badges when a group header exists"
 );
@@ -299,6 +304,21 @@ assert.match(
   workbenchSource,
   /window\.addEventListener\("image-master:artifact-review-state"[\s\S]*"image-master:artifact-group-review-state"[\s\S]*"image-master:artifact-group-retry"/,
   "visual workbench should wire review and group retry events"
+);
+assert.match(
+  workbenchSource,
+  /highlightedArtifactGroupTitle[\s\S]*withArtifactGroupHighlightContext[\s\S]*layoutGroupHighlighted/,
+  "visual workbench should pass highlighted group context into result group headers"
+);
+assert.match(
+  workbenchSource,
+  /handleGroupReviewState[\s\S]*setHighlightedArtifactGroupTitle\(String\(detail\.group\)\)[\s\S]*handleGroupRetry[\s\S]*setHighlightedArtifactGroupTitle\(String\(detail\.group\)\)/,
+  "group keep/retry actions should briefly highlight the affected result group"
+);
+assert.match(
+  workbenchSource,
+  /<CanvasAgentPanel[\s\S]*onHighlightArtifactGroup=\{setHighlightedArtifactGroupTitle\}[\s\S]*handleArtifactGroupEdit[\s\S]*onHighlightArtifactGroup\(title\)[\s\S]*action === "group_edit"[\s\S]*onHighlightArtifactGroup\(groupTitle\)/,
+  "group adjust actions should briefly highlight the affected result group"
 );
 assert.match(
   workbenchSource,

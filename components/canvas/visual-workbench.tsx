@@ -1224,6 +1224,7 @@ export function VisualWorkbench() {
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false);
   const [resultReviewFilter, setResultReviewFilter] = useState<ResultReviewFilter>("all");
   const [highlightedResultReviewFilter, setHighlightedResultReviewFilter] = useState<ResultReviewFilter | null>(null);
+  const [highlightedArtifactGroupTitle, setHighlightedArtifactGroupTitle] = useState("");
   const [hiddenArtifactNodeIds, setHiddenArtifactNodeIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
@@ -1701,13 +1702,19 @@ export function VisualWorkbench() {
     const timeout = window.setTimeout(() => setHighlightedResultReviewFilter(null), 1800);
     return () => window.clearTimeout(timeout);
   }, [highlightedResultReviewFilter]);
+  useEffect(() => {
+    if (!highlightedArtifactGroupTitle) return;
+    const timeout = window.setTimeout(() => setHighlightedArtifactGroupTitle(""), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [highlightedArtifactGroupTitle]);
   const canvasStageNodes = useMemo(
     () =>
       stageNodes
         .filter((node) => !isGenerationFrameNode(node))
         .filter((node) => isCanvasNodeVisibleForResultReviewFilter(node, resultReviewFilter, resultArtifactById))
-        .map((node) => withResultReviewFilterContext(node, resultReviewFilter, resultArtifactById)),
-    [resultArtifactById, resultReviewFilter, stageNodes]
+        .map((node) => withResultReviewFilterContext(node, resultReviewFilter, resultArtifactById))
+        .map((node) => withArtifactGroupHighlightContext(node, highlightedArtifactGroupTitle)),
+    [highlightedArtifactGroupTitle, resultArtifactById, resultReviewFilter, stageNodes]
   );
   const canvasStageEdges = useMemo(() => {
     if (canvasStageNodes.length === stageNodes.length) return stageEdges;
@@ -4591,6 +4598,7 @@ export function VisualWorkbench() {
         setArtifactMessage("这组暂时不能标记挑图状态");
         return;
       }
+      if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
       void handleSetArtifactGroupReviewStatus(artifactIds, reviewStatus, detail?.note);
     };
 
@@ -4604,6 +4612,7 @@ export function VisualWorkbench() {
         setJobMessage("这组没有可重跑的任务");
         return;
       }
+      if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
       setComposeMessage(`按原上下文重做「${detail?.group || "当前图组"}」；其他已保留图片不受影响。`);
       handleRetryAll(new CustomEvent("image-master:generation-frame-output-retry-all", { detail: { jobIds } }));
     };
@@ -5895,6 +5904,7 @@ export function VisualWorkbench() {
         onImportProduct={() => agentProductInputRef.current?.click()}
         onGenerateSample={() => void handleGenerateAgentSample()}
         onCollapsedChange={setAgentPanelCollapsed}
+        onHighlightArtifactGroup={setHighlightedArtifactGroupTitle}
       />
       <input
         ref={agentProductInputRef}
@@ -7287,6 +7297,34 @@ function withResultReviewFilterContext(
   };
 }
 
+function withArtifactGroupHighlightContext(
+  node: CanvasFlowNode,
+  highlightedGroupTitle: string
+): CanvasFlowNode {
+  if (!highlightedGroupTitle || node.data.source !== "artifact-group-header") return node;
+  const parameters = typeof node.data.parameters === "object" && node.data.parameters
+    ? node.data.parameters as Record<string, unknown>
+    : {};
+  const groupTitle = getStringValue(parameters.layoutGroup) || node.data.label;
+  if (normalizeArtifactGroupTitle(groupTitle) !== normalizeArtifactGroupTitle(highlightedGroupTitle)) {
+    return node;
+  }
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      parameters: {
+        ...parameters,
+        layoutGroupHighlighted: true,
+      },
+    },
+  };
+}
+
+function normalizeArtifactGroupTitle(value: string): string {
+  return value.trim().replace(/\s+/g, "").toLowerCase();
+}
+
 function artifactMatchesResultReviewFilter(
   artifact: PersistedGeneratedArtifact,
   filter: ResultReviewFilter
@@ -8382,6 +8420,7 @@ function CanvasAgentPanel({
   onImportProduct,
   onGenerateSample,
   onCollapsedChange,
+  onHighlightArtifactGroup,
 }: {
   productAsset?: CanvasAsset;
   activeProductComponentTitle: string;
@@ -8418,6 +8457,7 @@ function CanvasAgentPanel({
   onImportProduct: () => void;
   onGenerateSample: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
+  onHighlightArtifactGroup: (groupTitle: string) => void;
 }) {
   const [agentEventHistory, setAgentEventHistory] = useState<AgentConversationMessage[]>([]);
   const [executedReviewSuggestionActions, setExecutedReviewSuggestionActions] = useState<Record<string, AgentReviewSuggestionExecutionState>>({});
@@ -8808,6 +8848,7 @@ function CanvasAgentPanel({
         reason: "这是成片墙中的一个结果分组，适合批量换姿势、换场景或重做风格。",
         missingHints: [],
       });
+      onHighlightArtifactGroup(title);
       if (!composeBrief.trim()) onComposeBriefChange(`调整「${title}」：`);
       onCollapsedChange(false);
     };
@@ -8980,6 +9021,7 @@ function CanvasAgentPanel({
         missingHints: [],
       };
       setFocusedPlanGroup(nextGroup);
+      onHighlightArtifactGroup(groupTitle);
       onComposeBriefChange(suggestion.editBrief || `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`);
       onCollapsedChange(false);
       recordAction(`已选中「${groupTitle}」这一组；接下来只调整这组。`);
