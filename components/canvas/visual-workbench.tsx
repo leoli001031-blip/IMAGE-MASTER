@@ -8859,6 +8859,7 @@ function CanvasAgentPanel({
   const hasAgentPlanAttentionItems = planAttentionHints.length > 0;
   const editContextHint = buildAgentEditContextHint(editTarget);
   const focusedGroupHint = buildAgentFocusedGroupHint(focusedPlanGroup);
+  const focusedGroupScopeText = buildAgentFocusedGroupScopeText(focusedPlanGroup, focusedGroupArtifacts);
   const progressSteps = buildAgentProgressSteps({
     hasComposeBrief,
     hasPlan: Boolean(workflowPlanPreview),
@@ -9449,7 +9450,7 @@ function CanvasAgentPanel({
                   正在调整：{focusedPlanGroup.title}
                 </div>
                 <div className="mt-0.5 text-[11px] text-warm-muted">
-                  只影响这组，当前 {focusedPlanGroup.count} 张
+                  {focusedGroupScopeText}
                 </div>
               </div>
               <button
@@ -10922,6 +10923,26 @@ function buildAgentFocusedGroupHint(group: AgentPlanGroup | null): string {
     roles.length ? `参考角色继续按 ${roles.join("、")}。` : "没有强参考角色时，会优先沿用本组成片主体和构图。",
     "可以直接说换场景、改数量、文案烧进图或不要这组。",
   ].filter(Boolean).join("\n");
+}
+
+function buildAgentFocusedGroupScopeText(
+  group: AgentPlanGroup | null,
+  artifacts: PersistedGeneratedArtifact[]
+): string {
+  if (!group) return "";
+  if (artifacts.length === 0) return `只影响这组，当前 ${group.count} 张`;
+
+  const actionableCount = artifacts.filter((artifact) => {
+    const status = getArtifactReviewStatus(artifact);
+    return status !== "approved" && status !== "rejected";
+  }).length;
+  const protectedCount = artifacts.length - actionableCount;
+  const parts = [
+    `只影响这组，待处理 ${actionableCount}/${artifacts.length} 张`,
+    protectedCount > 0 ? `已保留/已淘汰 ${protectedCount} 张不动` : "",
+    `状态：${formatAgentArtifactReviewSummary(artifacts) || "待检查"}`,
+  ].filter(Boolean);
+  return parts.join("；");
 }
 
 function buildAgentResultGroupRevisionDiff(

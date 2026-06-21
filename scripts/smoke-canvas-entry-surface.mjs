@@ -218,6 +218,11 @@ assert.match(
 );
 assert.match(
   source,
+  /focusedGroupScopeText = buildAgentFocusedGroupScopeText\(focusedPlanGroup, focusedGroupArtifacts\)[\s\S]*\{focusedGroupScopeText\}[\s\S]*function buildAgentFocusedGroupScopeText[\s\S]*待处理 \$\{actionableCount\}\/\$\{artifacts\.length\} 张[\s\S]*已保留\/已淘汰 \$\{protectedCount\} 张不动/,
+  "focused result group context should show actionable counts and protected keep/reject state"
+);
+assert.match(
+  source,
   /if \(focusedPlanGroup && composeBrief\.trim\(\) && !workflowPlanPreview && !hasEditTarget\) \{[\s\S]*onApplyResultGroupEdit\(focusedPlanGroup, composeBrief, focusedGroupArtifacts\)/,
   "submitting while a result group is focused should run a scoped group edit instead of global replanning"
 );
