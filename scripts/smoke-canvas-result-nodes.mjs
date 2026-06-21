@@ -307,6 +307,16 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /setExecutedReviewSuggestionActions[\s\S]*getAgentReviewSuggestionActionLabel\(action\)[\s\S]*text/,
+  "Agent review suggestion actions should record visible per-card execution feedback"
+);
+assert.match(
+  workbenchSource,
+  /AgentReviewSuggestionCards[\s\S]*executedActions[\s\S]*已执行：\{execution\.label\}[\s\S]*execution\.text[\s\S]*executed && "border-emerald-300/,
+  "Agent review suggestion cards should show which action has already run"
+);
+assert.match(
+  workbenchSource,
   /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-open[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
   "Agent review suggestion cards should execute detail, single redo, single edit, and group redo actions"
 );

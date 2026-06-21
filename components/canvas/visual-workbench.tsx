@@ -1093,6 +1093,12 @@ interface AgentExecutableReviewSuggestion {
   actions: AgentReviewSuggestionAction[];
 }
 
+interface AgentReviewSuggestionExecutionState {
+  action: AgentReviewSuggestionAction;
+  label: string;
+  text: string;
+}
+
 interface AgentGapHintItem {
   label: string;
   text: string;
@@ -8394,6 +8400,7 @@ function CanvasAgentPanel({
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
   const [agentEventHistory, setAgentEventHistory] = useState<AgentConversationMessage[]>([]);
+  const [executedReviewSuggestionActions, setExecutedReviewSuggestionActions] = useState<Record<string, AgentReviewSuggestionExecutionState>>({});
   const hasComposeBrief = !!composeBrief.trim();
   const canCompose = hasComposeBrief && !composingWorkflow;
   const agentPlan = workflowPlanPreview?.agentPlan;
@@ -8626,6 +8633,18 @@ function CanvasAgentPanel({
     matrixItems,
     activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
   });
+  const executableReviewSuggestionIds = executableReviewSuggestions.map((suggestion) => suggestion.id).join("|");
+  useEffect(() => {
+    if (!executableReviewSuggestionIds) {
+      setExecutedReviewSuggestionActions({});
+      return;
+    }
+    const ids = new Set(executableReviewSuggestionIds.split("|"));
+    setExecutedReviewSuggestionActions((items) => {
+      const next = Object.fromEntries(Object.entries(items).filter(([id]) => ids.has(id)));
+      return Object.keys(next).length === Object.keys(items).length ? items : next;
+    });
+  }, [executableReviewSuggestionIds]);
   const visibleAgentHistory = canShowResultReviewAssistant
     ? agentEventHistory
     : agentEventHistory.filter((message) =>
@@ -8784,6 +8803,14 @@ function CanvasAgentPanel({
       : [];
     const groupTitle = suggestion.groupTitle || group?.title || suggestion.title;
     const recordAction = (text: string) => {
+      setExecutedReviewSuggestionActions((items) => ({
+        ...items,
+        [suggestion.id]: {
+          action,
+          label: getAgentReviewSuggestionActionLabel(action),
+          text,
+        },
+      }));
       rememberAgentEvent(`review-action:${suggestion.id}:${action}`, {
         role: "agent",
         title: "已执行建议",
@@ -9142,6 +9169,7 @@ function CanvasAgentPanel({
           {executableReviewSuggestions.length > 0 && (
             <AgentReviewSuggestionCards
               suggestions={executableReviewSuggestions}
+              executedActions={executedReviewSuggestionActions}
               onAction={handleAgentReviewSuggestionAction}
             />
           )}
@@ -9681,9 +9709,11 @@ function AgentQaSummary({ items }: { items: AgentQaSummaryItem[] }) {
 
 function AgentReviewSuggestionCards({
   suggestions,
+  executedActions,
   onAction,
 }: {
   suggestions: AgentExecutableReviewSuggestion[];
+  executedActions: Record<string, AgentReviewSuggestionExecutionState>;
   onAction: (suggestion: AgentExecutableReviewSuggestion, action: AgentReviewSuggestionAction) => void;
 }) {
   return (
@@ -9692,47 +9722,64 @@ function AgentReviewSuggestionCards({
         <Sparkles className="h-3.5 w-3.5 text-warm-primary" />
         可执行建议
       </div>
-      {suggestions.slice(0, 4).map((suggestion) => (
-        <div
-          key={suggestion.id}
-          className={cn(
-            "rounded-lg border px-2.5 py-2 text-[11px] leading-4",
-            suggestion.tone === "warn"
-              ? "border-amber-200/80 bg-amber-50/80"
-              : suggestion.tone === "success"
-                ? "border-emerald-200/80 bg-emerald-50/80"
-                : "border-warm-line/60 bg-warm-paper"
-          )}
-        >
-          <div className="font-medium text-warm-ink">{suggestion.title}</div>
-          <div className="mt-0.5 text-warm-muted">{suggestion.body}</div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {suggestion.actions.map((action) => {
-              const ActionIcon = getAgentReviewSuggestionActionIcon(action);
-              return (
-                <button
-                  key={`${suggestion.id}-${action}`}
-                  type="button"
-                  className={cn(
-                    "inline-flex h-7 items-center gap-1 rounded-md border bg-white/75 px-2 text-[10px] font-medium transition hover:bg-white",
-                    action === "approve"
-                      ? "border-emerald-200 text-emerald-700 hover:border-emerald-300"
-                      : action === "reject"
-                        ? "border-zinc-200 text-zinc-600 hover:border-zinc-300"
-                        : action === "mark_needs_redo" || action === "redo" || action === "group_redo"
-                          ? "border-amber-200 text-amber-700 hover:border-amber-300"
-                          : "border-warm-line/60 text-warm-ink hover:border-warm-primary/40 hover:text-warm-primary"
-                  )}
-                  onClick={() => onAction(suggestion, action)}
-                >
-                  <ActionIcon className="h-3 w-3" />
-                  {getAgentReviewSuggestionActionLabel(action)}
-                </button>
-              );
-            })}
+      {suggestions.slice(0, 4).map((suggestion) => {
+        const execution = executedActions[suggestion.id];
+        return (
+          <div
+            key={suggestion.id}
+            className={cn(
+              "rounded-lg border px-2.5 py-2 text-[11px] leading-4",
+              suggestion.tone === "warn"
+                ? "border-amber-200/80 bg-amber-50/80"
+                : suggestion.tone === "success"
+                  ? "border-emerald-200/80 bg-emerald-50/80"
+                  : "border-warm-line/60 bg-warm-paper"
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 font-medium text-warm-ink">{suggestion.title}</div>
+              {execution && (
+                <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] leading-none text-emerald-700">
+                  已执行：{execution.label}
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5 text-warm-muted">{suggestion.body}</div>
+            {execution && (
+              <div className="mt-1.5 rounded-md bg-white/70 px-2 py-1 text-[10px] leading-4 text-emerald-700">
+                {execution.text}
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {suggestion.actions.map((action) => {
+                const ActionIcon = getAgentReviewSuggestionActionIcon(action);
+                const executed = execution?.action === action;
+                return (
+                  <button
+                    key={`${suggestion.id}-${action}`}
+                    type="button"
+                    className={cn(
+                      "inline-flex h-7 items-center gap-1 rounded-md border bg-white/75 px-2 text-[10px] font-medium transition hover:bg-white",
+                      action === "approve"
+                        ? "border-emerald-200 text-emerald-700 hover:border-emerald-300"
+                        : action === "reject"
+                          ? "border-zinc-200 text-zinc-600 hover:border-zinc-300"
+                          : action === "mark_needs_redo" || action === "redo" || action === "group_redo"
+                            ? "border-amber-200 text-amber-700 hover:border-amber-300"
+                            : "border-warm-line/60 text-warm-ink hover:border-warm-primary/40 hover:text-warm-primary",
+                      executed && "border-emerald-300 bg-emerald-50 text-emerald-700"
+                    )}
+                    onClick={() => onAction(suggestion, action)}
+                  >
+                    <ActionIcon className="h-3 w-3" />
+                    {getAgentReviewSuggestionActionLabel(action)}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
