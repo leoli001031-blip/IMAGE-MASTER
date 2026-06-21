@@ -2681,8 +2681,11 @@ export function VisualWorkbench() {
           "approved",
           `Agent 自然语言只保留 1 张：${brief}`
         );
+        const remainingText = formatAgentReviewRemainingSummary(visibleArtifacts, {
+          [target.artifactId]: "approved",
+        });
         setAgentLastUserBrief(brief);
-        setComposeMessage(`已保留「${target.title}」；只影响这张，其他图不变。`);
+        setComposeMessage(`已保留「${target.title}」；只影响这张，其他图不变。${remainingText}`);
         setComposeBrief("");
         return;
       }
@@ -2705,9 +2708,12 @@ export function VisualWorkbench() {
         reviewStatusIntent,
         `Agent 自然语言：${brief}`
       );
+      const remainingText = formatAgentReviewRemainingSummary(visibleArtifacts, {
+        [target.artifactId]: reviewStatusIntent,
+      });
       setAgentLastUserBrief(brief);
       setComposeMessage(
-        `已把「${target.title}」标记为${getArtifactReviewStatusLabel(reviewStatusIntent)}；只影响这张，其他图不变。`
+        `已把「${target.title}」标记为${getArtifactReviewStatusLabel(reviewStatusIntent)}；只影响这张，其他图不变。${remainingText}`
       );
       setComposeBrief("");
       return;
@@ -2860,9 +2866,13 @@ export function VisualWorkbench() {
           `Agent 自然语言只保留 ${keepCountIntent} 张，其余淘汰：${brief}`
         );
       }
+      const remainingText = formatAgentReviewRemainingSummary(sourceArtifacts, {
+        ...Object.fromEntries(keepIds.map((artifactId) => [artifactId, "approved" as const])),
+        ...Object.fromEntries(rejectIds.map((artifactId) => [artifactId, "rejected" as const])),
+      });
       setAgentLastUserBrief(brief);
       setComposeMessage(
-        `已为「${group.title}」只保留 ${keepIds.length}/${sourceArtifacts.length} 张，其余标记为已淘汰；只影响这组，其他图组不变。`
+        `已为「${group.title}」只保留 ${keepIds.length}/${sourceArtifacts.length} 张，其余标记为已淘汰；只影响这组，其他图组不变。${remainingText}`
       );
       setComposeBrief("");
       return;
@@ -2885,9 +2895,13 @@ export function VisualWorkbench() {
         reviewStatusIntent,
         `Agent 自然语言：${brief}`
       );
+      const remainingText = formatAgentReviewRemainingSummary(
+        sourceArtifacts,
+        Object.fromEntries(artifactIds.map((artifactId) => [artifactId, reviewStatusIntent]))
+      );
       setAgentLastUserBrief(brief);
       setComposeMessage(
-        `已把「${group.title}」这一组 ${artifactIds.length} 张标记为${getArtifactReviewStatusLabel(reviewStatusIntent)}；只影响这组，其他图组不变。`
+        `已把「${group.title}」这一组 ${artifactIds.length} 张标记为${getArtifactReviewStatusLabel(reviewStatusIntent)}；只影响这组，其他图组不变。${remainingText}`
       );
       setComposeBrief("");
       return;

@@ -477,13 +477,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactReviewStatus[\s\S]*Agent 自然语言[\s\S]*只影响这张，其他图不变[\s\S]*setComposingWorkflow\(true\)/,
-  "focused single-image chat should mark review state directly before creating revision jobs"
+  /handleRunAgentImageRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactReviewStatus[\s\S]*Agent 自然语言[\s\S]*remainingText = formatAgentReviewRemainingSummary\(visibleArtifacts[\s\S]*只影响这张，其他图不变。\$\{remainingText\}[\s\S]*setComposingWorkflow\(true\)/,
+  "focused single-image chat should mark review state and report remaining review work before creating revision jobs"
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*Agent 自然语言只保留 1 张[\s\S]*当前选中的是单张图；要只保留 \$\{keepCountIntent\} 张[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
-  "focused single-image chat should not create revision jobs for only-keep-N group commands"
+  /handleRunAgentImageRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*Agent 自然语言只保留 1 张[\s\S]*remainingText = formatAgentReviewRemainingSummary\(visibleArtifacts[\s\S]*当前选中的是单张图；要只保留 \$\{keepCountIntent\} 张[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
+  "focused single-image chat should handle only-keep-one and reject larger only-keep-N group commands without creating revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -492,13 +492,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*只影响这组，其他图组不变[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
-  "focused result-group chat should mark group review state directly before creating revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*remainingText = formatAgentReviewRemainingSummary\([\s\S]*sourceArtifacts[\s\S]*只影响这组，其他图组不变。\$\{remainingText\}[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
+  "focused result-group chat should mark group review state and report remaining review work before creating revision jobs"
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*其余淘汰[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
-  "focused result-group chat should execute only-keep-N picking before generic review-state or revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*selectAgentResultGroupKeepArtifacts\(sourceArtifacts, keepCountIntent\)[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*其余淘汰[\s\S]*remainingText = formatAgentReviewRemainingSummary\(sourceArtifacts[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)/,
+  "focused result-group chat should execute only-keep-N picking and report remaining review work before generic review-state or revision jobs"
 );
 assert.match(
   workbenchSource,
