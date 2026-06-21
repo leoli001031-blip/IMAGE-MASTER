@@ -402,6 +402,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /qaSummaryItems = buildAgentQaSummaryItems\(\{[\s\S]*visibleOutputCount: reviewSuggestionArtifacts\.length[\s\S]*visibleArtifacts: reviewSuggestionArtifacts[\s\S]*activeJobCount: canShowResultReviewAssistant \? activeJobCount : 1/,
+  "Agent QA summary should describe the same active result-review filter subset as suggestions"
+);
+assert.match(
+  workbenchSource,
   /showReviewSuggestionEmptyState[\s\S]*executableReviewSuggestions\.length === 0[\s\S]*<AgentReviewSuggestionEmptyState[\s\S]*filter=\{resultReviewFilter\}[\s\S]*count=\{reviewSuggestionArtifacts\.length\}[\s\S]*onShowAll=\{\(\) => onShowResultReviewFilter\?\.\("all"\)\}[\s\S]*function AgentReviewSuggestionEmptyState[\s\S]*当前「\$\{label\}」没有可执行建议[\s\S]*data-testid="agent-review-suggestion-empty"[\s\S]*显示全部/,
   "Agent review assistant should explain empty suggestion states and offer to show all results"
 );

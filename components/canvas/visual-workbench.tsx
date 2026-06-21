@@ -9203,8 +9203,8 @@ function CanvasAgentPanel({
     ? getAgentReviewArtifactsForFilter(visibleArtifacts, resultReviewFilter)
     : [];
   const qaSummaryItems = buildAgentQaSummaryItems({
-    visibleOutputCount: canShowResultReviewAssistant ? visibleOutputCount : 0,
-    visibleArtifacts: canShowResultReviewAssistant ? visibleArtifacts : [],
+    visibleOutputCount: reviewSuggestionArtifacts.length,
+    visibleArtifacts: reviewSuggestionArtifacts,
     activeJobCount: canShowResultReviewAssistant ? activeJobCount : 1,
     planGroups,
     matrixItems,
