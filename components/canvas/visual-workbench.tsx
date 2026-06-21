@@ -3352,6 +3352,36 @@ export function VisualWorkbench() {
       );
       return true;
     }
+    const hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent(brief);
+    if (hasOpenFolderIntent) {
+      const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
+      const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter);
+      const urls = targets
+        .map((artifact) => artifact.url)
+        .filter((url): url is string => typeof url === "string" && url.length > 0);
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (targets.length === 0) {
+        setComposeMessage(`当前结果墙里没有找到可打开文件夹的${scopeLabel}。`);
+        return true;
+      }
+      if (urls.length === 0) {
+        setComposeMessage(`${targets.length} 张${scopeLabel}里没有可打开文件夹的本地图像。`);
+        return true;
+      }
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-open-folder", {
+          detail: {
+            urls,
+            group: scopeLabel,
+            title: scopeLabel,
+            artifactIds: targets.map((artifact) => artifact.id),
+          },
+        })
+      );
+      setComposeMessage(`正在打开 ${urls.length} 张${scopeLabel}所在文件夹。`);
+      return true;
+    }
     const hasSaveAsAssetIntent = hasAgentGlobalResultReviewSaveAsAssetIntent(brief);
     if (hasSaveAsAssetIntent) {
       const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
@@ -12397,6 +12427,12 @@ function hasAgentGlobalResultReviewSaveAsAssetIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText || !hasAgentGlobalResultReviewScopeIntent(text)) return false;
   return /(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库)|保存.*(素材库|资产库)|存.*(素材库|资产库)|加入.*(素材库|资产库)|添加.*(素材库|资产库)|收进.*(素材库|资产库)|放进.*(素材库|资产库)|放到.*(素材库|资产库))/.test(compactText);
+}
+
+function hasAgentGlobalResultReviewOpenFolderIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText || !hasAgentGlobalResultReviewScopeIntent(text)) return false;
+  return /(打开|查看|显示|定位|找到|露出).*(本地)?(文件夹|目录|所在位置|本地位置|finder|访达)|(?:本地)?(文件夹|目录|所在位置|本地位置|finder|访达).*(打开|查看|显示|定位|找到|露出)/i.test(compactText);
 }
 
 function getAgentGlobalResultReviewScopeLabel(text: string, activeFilter: ResultReviewFilter = "all"): string {

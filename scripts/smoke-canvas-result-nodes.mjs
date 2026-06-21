@@ -658,6 +658,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*urls = targets[\s\S]*image-master:generation-frame-output-open-folder[\s\S]*urls,[\s\S]*artifactIds: targets\.map[\s\S]*正在打开 \$\{urls\.length\} 张\$\{scopeLabel\}所在文件夹[\s\S]*return true[\s\S]*hasSaveAsAssetIntent = hasAgentGlobalResultReviewSaveAsAssetIntent\(brief\)/,
+  "global result review commands should open scoped result-wall folders before save, retry, or status commands"
+);
+assert.match(
+  workbenchSource,
   /handleApplyGlobalResultReviewCommand[\s\S]*hasSaveAsAssetIntent = hasAgentGlobalResultReviewSaveAsAssetIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*saveTargets = targets[\s\S]*image-master:generation-frame-output-save[\s\S]*group: getGenerationOutputPreviewGroup\(target\.metadata, target\.artifact\)[\s\S]*已提交保存 \$\{saveTargets\.length\} 张\$\{scopeLabel\}为资产[\s\S]*return true[\s\S]*hasRetryIntent = hasAgentGlobalResultReviewRetryIntent\(brief\)/,
   "global result review commands should save scoped result-wall targets as assets before retry or status commands"
 );
@@ -718,6 +723,11 @@ assert.match(
   workbenchSource,
   /function hasAgentGlobalResultReviewSaveAsAssetIntent[\s\S]*hasAgentGlobalResultReviewScopeIntent\(text\)[\s\S]*保存为资产[\s\S]*素材库\|资产库/,
   "global save-as-asset intent should require explicit result scope and asset-library wording"
+);
+assert.match(
+  workbenchSource,
+  /function hasAgentGlobalResultReviewOpenFolderIntent[\s\S]*hasAgentGlobalResultReviewScopeIntent\(text\)[\s\S]*文件夹\|目录\|所在位置\|本地位置[\s\S]*finder\|访达/,
+  "global open-folder intent should require explicit result scope and local-folder wording"
 );
 assert.match(
   workbenchSource,
