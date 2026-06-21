@@ -9135,6 +9135,7 @@ function CanvasAgentPanel({
               artifactId: suggestion.artifactId,
               jobId: suggestion.jobId || artifact?.jobId,
               title: artifact?.title || suggestion.title,
+              group: artifact ? getAgentArtifactResultGroupLabel(artifact) : undefined,
             },
           })
         );

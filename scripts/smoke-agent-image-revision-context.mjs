@@ -208,6 +208,11 @@ assert.match(
   "Agent group redo should preserve the group title when forwarding to retry-all"
 );
 assert.match(
+  source,
+  /action === "redo"[\s\S]*image-master:generation-frame-output-retry[\s\S]*group: artifact \? getAgentArtifactResultGroupLabel\(artifact\) : undefined/,
+  "Agent single-image redo suggestions should preserve the source result group"
+);
+assert.match(
   rerunRouteSource,
   /groupTitle\?: unknown[\s\S]*groupTitle: getString\(body\.groupTitle\)[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*rerunSourcePlanItemTitle[\s\S]*rerunSourceOutputSlotId/,
   "rerun API should persist source group and original slot metadata"
