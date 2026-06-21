@@ -5374,6 +5374,15 @@ export function VisualWorkbench() {
             await handleRetryJob(job);
           }
         }
+        const groupTitle = getStringValue(detail?.group);
+        if (groupTitle) {
+          setHighlightedArtifactGroupTitle(groupTitle);
+          setComposeMessage(`已触发「${groupTitle}」${retryJobs.length} 张待处理图片重做；生成完成后回到这一组检查新版本，已保留/已淘汰图片不受影响。`);
+          setJobMessage(`「${groupTitle}」${retryJobs.length} 张图片正在重做，完成后回到该组检查`);
+        } else {
+          setComposeMessage(`已触发 ${retryJobs.length} 张图片重做；生成完成后在结果墙检查新版本。`);
+          setJobMessage(`已触发 ${retryJobs.length} 张图片重做`);
+        }
       })();
     };
 

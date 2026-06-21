@@ -487,6 +487,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /const handleRetryAll[\s\S]*const groupTitle = getStringValue\(detail\?\.group\)[\s\S]*setHighlightedArtifactGroupTitle\(groupTitle\)[\s\S]*已触发「\$\{groupTitle\}」\$\{retryJobs\.length\} 张待处理图片重做[\s\S]*生成完成后回到这一组检查新版本[\s\S]*已保留\/已淘汰图片不受影响/,
+  "group retry-all should finish with Agent feedback that points users back to the affected group"
+);
+assert.match(
+  workbenchSource,
   /handleEdit[\s\S]*const inferredGroup = artifact \? getAgentArtifactResultGroupLabel\(artifact\) : ""[\s\S]*const detailGroup = getStringValue\(detail\.group\)[\s\S]*metadata\.resultGroupTitle = detailGroup/,
   "single-image Agent edit targets should preserve or infer the source result group"
 );
