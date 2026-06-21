@@ -1073,6 +1073,7 @@ type AgentReviewSuggestionAction =
   | "approve"
   | "mark_needs_redo"
   | "reject"
+  | "open"
   | "redo"
   | "edit"
   | "copy"
@@ -8823,6 +8824,27 @@ function CanvasAgentPanel({
       return;
     }
 
+    if (action === "open") {
+      if (!artifact) {
+        recordAction(`没有找到「${suggestion.title}」对应的大图。`);
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-open", {
+          detail: {
+            artifactId: artifact.id,
+            jobId: artifact.jobId,
+            nodeId: artifact.nodeId,
+            title: artifact.title,
+            url: artifact.url,
+            status: artifact.status,
+          },
+        })
+      );
+      recordAction(`已打开「${artifact.title}」详情，可以检查参考图、prompt 和 QA。`);
+      return;
+    }
+
     if (action === "redo") {
       if (suggestion.jobId || artifact?.jobId) {
         window.dispatchEvent(
@@ -9719,6 +9741,7 @@ function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction
   if (action === "approve") return "保留";
   if (action === "mark_needs_redo") return "标记重做";
   if (action === "reject") return "淘汰";
+  if (action === "open") return "看详情";
   if (action === "redo") return "执行重做";
   if (action === "edit") return "让 Agent 改";
   if (action === "copy") return "修改文案";
@@ -9729,6 +9752,7 @@ function getAgentReviewSuggestionActionLabel(action: AgentReviewSuggestionAction
 function getAgentReviewSuggestionActionIcon(action: AgentReviewSuggestionAction) {
   if (action === "approve") return PackageCheck;
   if (action === "reject") return Trash2;
+  if (action === "open") return Search;
   if (action === "redo" || action === "group_redo" || action === "mark_needs_redo") return RefreshCw;
   if (action === "copy") return Copy;
   return Wand2;
@@ -11379,7 +11403,7 @@ function buildAgentExecutableReviewSuggestions({
       "visual-qa",
       "视觉 QA 风险",
       `${riskText}。建议先让 Agent 只修这张，或标记为重做。`,
-      ["edit", "mark_needs_redo", "approve"],
+      ["open", "edit", "mark_needs_redo", "approve"],
       "warn",
       `只修改这张图的 QA 风险：${riskText}。保留原商品、模特、场景、比例和图组用途。`
     ));
@@ -11397,7 +11421,7 @@ function buildAgentExecutableReviewSuggestions({
       "copy-risk",
       "检查烧字图",
       "这张含画面文字，优先检查文案是否在安全区，不要改到商品包装标签。",
-      ["copy", "mark_needs_redo", "approve"],
+      ["open", "copy", "mark_needs_redo", "approve"],
       "warn"
     ));
   }
@@ -11413,7 +11437,7 @@ function buildAgentExecutableReviewSuggestions({
       "commerce-lead",
       "优先挑关键图",
       "这张更影响首屏或转化，建议先点开看商品一致性、构图和文案。",
-      ["edit", "approve", "reject"]
+      ["open", "edit", "approve", "reject"]
     ));
   }
 

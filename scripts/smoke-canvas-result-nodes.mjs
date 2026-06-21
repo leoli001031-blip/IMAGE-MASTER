@@ -302,13 +302,18 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /AgentReviewSuggestionCards[\s\S]*agent-review-suggestions[\s\S]*getAgentReviewSuggestionActionLabel[\s\S]*执行重做/,
-  "Agent completion recommendations should render executable suggestion cards"
+  /AgentReviewSuggestionCards[\s\S]*agent-review-suggestions[\s\S]*getAgentReviewSuggestionActionLabel[\s\S]*看详情[\s\S]*执行重做/,
+  "Agent completion recommendations should render executable suggestion cards with a direct detail action"
 );
 assert.match(
   workbenchSource,
-  /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
-  "Agent review suggestion cards should execute single redo, single edit, and group redo actions"
+  /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-open[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
+  "Agent review suggestion cards should execute detail, single redo, single edit, and group redo actions"
+);
+assert.match(
+  workbenchSource,
+  /视觉 QA 风险[\s\S]*\["open", "edit", "mark_needs_redo", "approve"\][\s\S]*检查烧字图[\s\S]*\["open", "copy", "mark_needs_redo", "approve"\][\s\S]*优先挑关键图[\s\S]*\["open", "edit", "approve", "reject"\]/,
+  "Agent review suggestions that ask users to inspect a result should expose a direct detail action"
 );
 assert.match(
   artifactRouteSource,
