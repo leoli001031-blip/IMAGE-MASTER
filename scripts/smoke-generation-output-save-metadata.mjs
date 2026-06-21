@@ -84,6 +84,11 @@ assert.match(
   /onEdit\?: \(item: ImageDetailItem\) => void;[\s\S]*Wand2[\s\S]*label="让 Agent 改"/,
   "shared image detail panel should expose a handoff action for Agent single-image edits"
 );
+assert.match(
+  imageDetailPanelSource,
+  /onSetReviewStatus\?:[\s\S]*挑图状态[\s\S]*label="保留"[\s\S]*label="待重做"[\s\S]*label="淘汰"/,
+  "shared image detail panel should let result surfaces mark keep, redo, and reject review states"
+);
 
 assert.match(
   imageDetailPanelSource,
@@ -136,6 +141,11 @@ assert.match(
   resultPageSource,
   /writePendingResultEditTarget[\s\S]*prompt: sourceImage\.prompt \|\| getMetadataString\(metadata, "prompt"\)[\s\S]*router\.push\("\/canvas\?restore=1&editResult=1"\)/,
   "result page detail edits should hand off the selected image, prompt, and metadata to the canvas Agent"
+);
+assert.match(
+  resultPageSource,
+  /handleSetResultReviewStatus[\s\S]*\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}[\s\S]*reviewState[\s\S]*onSetReviewStatus=\{\(item, status\)/,
+  "result page image details should persist keep, pending, redo, and reject review states"
 );
 assert.match(
   workbenchSource,

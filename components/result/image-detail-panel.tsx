@@ -3,6 +3,8 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  CheckCircle2,
+  Circle,
   Copy,
   Download,
   ExternalLink,
@@ -13,6 +15,7 @@ import {
   Save,
   Wand2,
   X,
+  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import Image from "next/image";
@@ -51,6 +54,8 @@ export interface ImageDetailItem {
   model?: string;
   error?: string;
   errorCode?: string;
+  reviewStatus?: ImageDetailReviewStatus;
+  reviewLabel?: string;
   createdAt?: string;
   references?: {
     providerInputs: ImageDetailReference[];
@@ -82,6 +87,8 @@ export interface ImageDetailItem {
   prevItem?: { id: string; title: string };
   nextItem?: { id: string; title: string };
 }
+
+export type ImageDetailReviewStatus = "approved" | "pending" | "needs_redo" | "rejected" | "failed";
 
 /* ------------------------------------------------------------------ */
 /*  Labels                                                             */
@@ -140,6 +147,7 @@ interface ImageDetailPanelProps {
   onRetry?: (item: ImageDetailItem) => void;
   onSaveAsAsset?: (item: ImageDetailItem) => void;
   onOpenFolder?: (item: ImageDetailItem) => void;
+  onSetReviewStatus?: (item: ImageDetailItem, status: Exclude<ImageDetailReviewStatus, "failed">) => void;
 }
 
 export function ImageDetailPanel({
@@ -152,6 +160,7 @@ export function ImageDetailPanel({
   onRetry,
   onSaveAsAsset,
   onOpenFolder,
+  onSetReviewStatus,
 }: ImageDetailPanelProps) {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
@@ -288,6 +297,40 @@ export function ImageDetailPanel({
                 <p className="text-sm">{item.error}</p>
                 {item.errorCode && (
                   <p className="mt-1 text-xs text-warm-muted">code: {item.errorCode}</p>
+                )}
+              </Section>
+            )}
+
+            {onSetReviewStatus && item.reviewStatus !== "failed" && (
+              <Section icon={CheckCircle2} title="挑图状态">
+                <div className="flex flex-wrap gap-2">
+                  <ReviewStatusButton
+                    icon={CheckCircle2}
+                    label="保留"
+                    active={item.reviewStatus === "approved"}
+                    onClick={() => onSetReviewStatus(item, "approved")}
+                  />
+                  <ReviewStatusButton
+                    icon={Circle}
+                    label="待检"
+                    active={!item.reviewStatus || item.reviewStatus === "pending"}
+                    onClick={() => onSetReviewStatus(item, "pending")}
+                  />
+                  <ReviewStatusButton
+                    icon={RefreshCw}
+                    label="待重做"
+                    active={item.reviewStatus === "needs_redo"}
+                    onClick={() => onSetReviewStatus(item, "needs_redo")}
+                  />
+                  <ReviewStatusButton
+                    icon={XCircle}
+                    label="淘汰"
+                    active={item.reviewStatus === "rejected"}
+                    onClick={() => onSetReviewStatus(item, "rejected")}
+                  />
+                </div>
+                {item.reviewLabel && (
+                  <p className="text-xs text-warm-muted">当前：{item.reviewLabel}</p>
                 )}
               </Section>
             )}
@@ -586,6 +629,34 @@ function ActionBtn({
     <button
       onClick={onClick}
       className="flex items-center gap-1.5 rounded-md px-3 py-2 text-xs text-warm-muted transition hover:bg-warm-primary-soft hover:text-warm-ink"
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+}
+
+function ReviewStatusButton({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ElementType;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition",
+        active
+          ? "border-warm-primary/40 bg-warm-primary-soft text-warm-primary"
+          : "border-warm-line bg-warm-bg text-warm-muted hover:border-warm-primary/30 hover:text-warm-ink"
+      )}
     >
       <Icon className="h-3.5 w-3.5" />
       {label}

@@ -14,6 +14,7 @@ import {
   ImageDetailPanel,
   type ImageDetailDiagnostics,
   type ImageDetailItem,
+  type ImageDetailReviewStatus,
 } from "@/components/result/image-detail-panel";
 import { JobCard } from "@/components/ui/job-card";
 import { StatusBean } from "@/components/ui/status-bean";
@@ -345,6 +346,70 @@ export default function ResultPage() {
     router.push("/canvas?restore=1&editResult=1");
   };
 
+  const handleSetResultReviewStatus = async (
+    img: GeneratedImage,
+    status: Exclude<ImageDetailReviewStatus, "failed">
+  ) => {
+    const sourceImage = activeImages.find((item) => item.id === img.id) || img;
+    const artifactId = getImageArtifactId(sourceImage);
+    const reviewState = buildResultReviewState(status, "result-page-review");
+
+    const applyReviewState = (item: GeneratedImage): GeneratedImage =>
+      item.id === sourceImage.id
+        ? {
+            ...item,
+            metadata: {
+              ...item.metadata,
+              reviewState,
+              ...(artifactId ? { artifactId } : {}),
+            },
+          }
+        : item;
+
+    if (!artifactId) {
+      if (generatedImages.length > 0) setGeneratedImages(generatedImages.map(applyReviewState));
+      setRecentGeneratedImages((items) => items.map(applyReviewState));
+      setSelectedImage((current) => (current?.id === sourceImage.id ? applyReviewState(current) : current));
+      showToast("已临时标记；这张图缺少产物记录，刷新后不会保留");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewState }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "审核状态保存失败");
+
+      const payloadMetadata = isRecord(payload.metadata) ? payload.metadata : {};
+      const persistedReviewState = isRecord(payloadMetadata.reviewState)
+        ? payloadMetadata.reviewState
+        : reviewState;
+      const applyPersistedReviewState = (item: GeneratedImage): GeneratedImage =>
+        item.id === sourceImage.id
+          ? {
+              ...item,
+              metadata: {
+                ...item.metadata,
+                reviewState: persistedReviewState,
+                artifactId,
+              },
+            }
+          : item;
+
+      if (generatedImages.length > 0) setGeneratedImages(generatedImages.map(applyPersistedReviewState));
+      setRecentGeneratedImages((items) => items.map(applyPersistedReviewState));
+      setSelectedImage((current) =>
+        current?.id === sourceImage.id ? applyPersistedReviewState(current) : current
+      );
+      showToast(`已标记为${RESULT_REVIEW_STATUS_LABELS[status]}`);
+    } catch {
+      showToast("审核状态保存失败");
+    }
+  };
+
   const handleBackToGenerate = () => {
     useGenerateStore.getState().reset();
     router.push("/canvas");
@@ -491,6 +556,10 @@ export default function ResultPage() {
             const source = displayImages.find((image) => image.id === item.id);
             if (source) void handleOpenFolder(source);
           }}
+          onSetReviewStatus={(item, status) => {
+            const source = displayImages.find((image) => image.id === item.id);
+            if (source) void handleSetResultReviewStatus(source, status);
+          }}
         />
       )}
     </div>
@@ -619,6 +688,15 @@ type ResultReference = {
 };
 
 type ResultReviewStatus = "pass" | "manual" | "fail";
+type ResultArtifactReviewStatus = ImageDetailReviewStatus;
+
+const RESULT_REVIEW_STATUS_LABELS: Record<ResultArtifactReviewStatus, string> = {
+  approved: "可用",
+  pending: "待检查",
+  needs_redo: "建议重做",
+  rejected: "已淘汰",
+  failed: "生成失败",
+};
 
 type ResultReviewCheck = {
   id: string;
@@ -646,6 +724,7 @@ function buildImageDetailItem(image: GeneratedImage, images: GeneratedImage[]): 
   const index = images.findIndex((item) => item.id === image.id);
   const providerInputs = references.filter((reference) => reference.providerUsable);
   const promptOnly = references.filter((reference) => !reference.providerUsable);
+  const reviewStatus = getImageReviewStatus(image);
 
   return {
     id: image.id,
@@ -660,6 +739,8 @@ function buildImageDetailItem(image: GeneratedImage, images: GeneratedImage[]): 
     model: getModelLabelFromMetadata(metadata),
     error: image.error,
     errorCode: image.errorCode,
+    reviewStatus,
+    reviewLabel: RESULT_REVIEW_STATUS_LABELS[reviewStatus],
     createdAt:
       getMetadataString(metadata, "createdAt") ||
       getMetadataString(metadata, "completedAt") ||
@@ -684,6 +765,43 @@ function getImageJobId(image: GeneratedImage): string | undefined {
   const jobId = getMetadataString(metadata, "jobId");
   if (jobId) return jobId;
   return image.id.startsWith("job_") ? image.id : undefined;
+}
+
+function getImageArtifactId(image: GeneratedImage): string | undefined {
+  const metadata = getImageMetadata(image);
+  const artifactId =
+    getMetadataString(metadata, "artifactId") ||
+    getMetadataString(metadata, "outputArtifactId") ||
+    getMetadataString(metadata, "generatedArtifactId");
+  if (artifactId) return artifactId;
+  return image.id.startsWith("artifact_") ? image.id : undefined;
+}
+
+function getImageReviewStatus(image: GeneratedImage): ResultArtifactReviewStatus {
+  if (image.error || !image.url) return "failed";
+  const reviewState = getImageMetadata(image).reviewState;
+  if (isRecord(reviewState)) {
+    const status = getStringValue(reviewState.status);
+    if (isResultArtifactReviewStatus(status)) return status;
+  }
+  return "pending";
+}
+
+function buildResultReviewState(
+  status: Exclude<ResultArtifactReviewStatus, "failed">,
+  source: string
+): Record<string, unknown> {
+  return {
+    status,
+    label: RESULT_REVIEW_STATUS_LABELS[status],
+    note: `用户在结果页标记为${RESULT_REVIEW_STATUS_LABELS[status]}`,
+    source,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function isResultArtifactReviewStatus(value: string): value is ResultArtifactReviewStatus {
+  return Object.prototype.hasOwnProperty.call(RESULT_REVIEW_STATUS_LABELS, value);
 }
 
 function getResultReferences(image: GeneratedImage): ResultReference[] {
@@ -843,10 +961,7 @@ function getCopyModeLabel(image: GeneratedImage): string | undefined {
 }
 
 function getResultReviewLabel(image: GeneratedImage): string {
-  const checks = buildResultReviewChecks(image);
-  if (checks.some((check) => check.status === "fail")) return "需处理";
-  if (checks.some((check) => check.status === "manual")) return "待复核";
-  return "已检查";
+  return RESULT_REVIEW_STATUS_LABELS[getImageReviewStatus(image)];
 }
 
 function buildResultReviewChecks(image: GeneratedImage): ResultReviewCheck[] {
