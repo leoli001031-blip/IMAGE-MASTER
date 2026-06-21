@@ -118,6 +118,23 @@ assert(!mixedTextPlans[2].copyText, "explicit no-text detail shot should not inh
 assert(mixedTextPlans[2].copyRenderMode === "metadata_only", "explicit no-text detail shot should stay metadata-only");
 assert(mixedTextPlans[3].copyText === "画面文字：ritual", "fourth shot should keep its own burn-in copy");
 
+const projectorCampaignPlans = buildGenerationFramePlanSpecs({
+  request: "给这个便携智能投影仪做一套 6 张宣传图：商品主图、细节特写、客厅场景图、户外露营场景图、淘宝详情卖点海报需要烧字、横版活动 banner 不要烧字。比例按用途自适应，商品外观必须跟参考图一致。",
+  outputType: "custom_template",
+  frameLabel: "样张图组",
+});
+assert(projectorCampaignPlans.length === 6, "explicit projector campaign list should create six plans");
+assert(projectorCampaignPlans[0].title.includes("商品主图"), "first projector shot should stay product main");
+assert(projectorCampaignPlans[1].title.includes("细节特写"), "second projector shot should stay detail macro");
+assert(projectorCampaignPlans[2].title.includes("客厅场景图"), "third projector shot should stay living room scene");
+assert(projectorCampaignPlans[3].title.includes("户外露营场景图"), "fourth projector shot should stay outdoor camping scene");
+assert(projectorCampaignPlans[4].title.includes("淘宝详情卖点海报"), "fifth projector shot should stay Taobao selling poster");
+assert(projectorCampaignPlans[4].copyRenderMode === "burn_in", "Taobao selling poster should burn requested copy");
+assert(projectorCampaignPlans[5].title.includes("横版活动 banner"), "sixth projector shot should stay horizontal banner");
+assert(projectorCampaignPlans[5].ratio === "3:2", "horizontal banner should use landscape ratio");
+assert(projectorCampaignPlans[5].copyRenderMode === "metadata_only", "explicit no-text banner should stay metadata-only");
+assert(projectorCampaignPlans.every((plan) => !plan.title.includes("模特图")), "product-only projector request should not inject model shots");
+
 const countedCampaignPlans = buildGenerationFramePlanSpecs({
   request: "做一组完整的小红书+淘宝宣传图组，共 10 张。需要：1 张小红书封面海报 2:3 带字；3 张模特展示图 2:3，必须是同一个模特，但每张姿势完全不同：分别安排站立侧身回头、边走边看向橱窗、坐在花店外椅子上低头整理包；2 张商品静物场景图 3:2；2 张材质/五金细节图 4:5；2 张详情页卖点海报 4:5 带短文案。",
   outputType: "custom_template",

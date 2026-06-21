@@ -1382,7 +1382,9 @@ function buildRequestedShotTemplates(request: string, targetCount: number): Plan
   return shotNames.map((shotName, index) => {
     const profile = inferRequestedShotProfile(shotName, request);
     const normalizedTitle = normalizeRequestedShotTitle(shotName, index);
-    const noTextRequested = isNoTextShotRequested(`${shotName} ${request}`);
+    const noTextRequested =
+      isNoTextShotRequested(shotName) ||
+      (!isShotBurnInRequested(shotName) && isGlobalNoTextRequested(request));
     const copyText = noTextRequested ? undefined : extractRequestedShotBurnInText(shotName, request);
     const copyRenderMode = noTextRequested ? "metadata_only" : copyText ? "burn_in" : undefined;
     return {
@@ -1560,7 +1562,7 @@ function splitRequestedShotItems(rawList: string): string[] {
   }
 
   return clean.split(
-    /\s*(?:,|，|、|\/|\||\band\b)\s*(?=(?:\d{1,2}|[一二两三四五六七八九十])?\s*(?:张|个|幅)?\s*(?:\d+\s*:\s*\d+|白底|主图|主视觉|海报|详情|细节|材质|卖点|小红书|封面|模特|场景|环境|雪山|户外|室内|街拍|amazon|taobao|poster|detail|model|scene|cover|banner))/i
+    /\s*(?:,|，|、|\/|\||\band\b)\s*(?=(?:\d{1,2}|[一二两三四五六七八九十])?\s*(?:张|个|幅)?\s*(?:\d+\s*:\s*\d+|白底|主图|主视觉|海报|详情|细节|材质|卖点|小红书|封面|模特|场景|环境|雪山|户外|室内|客厅|卧室|露营|街拍|淘宝|活动|横版|竖版|amazon|taobao|poster|detail|model|scene|cover|banner))/i
   );
 }
 
@@ -1694,8 +1696,12 @@ function isNoTextShotRequested(value: string): boolean {
   return /(无字|无文字|不要文字|不要文案|不加字|不带字|不要加字|不烧字|不要烧字|不出字|不要出字|文案不要进图|文字不要进图|文案不进图|文字不进图|不要把文案放进图|不要把文字放进图|不要进图|no\s+text|without\s+text|textless)/i.test(value);
 }
 
+function isGlobalNoTextRequested(value: string): boolean {
+  return /(整套|全部|所有|全都|每张|这套).{0,12}(无字|无文字|不要文字|不要文案|不加字|不带字|不要加字|不烧字|不要烧字|文案不进图|文字不进图|no\s+text|without\s+text|textless)/i.test(value);
+}
+
 function extractRequestedShotBurnInText(value: string, context = ""): string | undefined {
-  if (isNoTextShotRequested(`${value} ${context}`)) return undefined;
+  if (isNoTextShotRequested(value)) return undefined;
   if (!isShotBurnInRequested(value)) return undefined;
   const quoted = value.match(/[「『“"]([^」』”"]{1,24})[」』”"]/);
   const text = quoted?.[1]?.trim();

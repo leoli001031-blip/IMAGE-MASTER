@@ -3408,18 +3408,23 @@ export function VisualWorkbench() {
         ? extractAgentBurnInCopyText(cleanBrief || generationRequest)
         : undefined;
       const planPrompt = buildJobPromptFromNode(frameNode, undefined, referenceContext);
-      const allowSampleBurnIn = sampleCopyRenderMode === "burn_in";
+      const allowGlobalSampleBurnIn = sampleCopyRenderMode === "burn_in";
       const planItems = buildGenerationFramePlanItems(frameNode, planPrompt)
         .slice(0, sampleOutputCount)
         .map((item) => {
-          const itemCopyText = allowSampleBurnIn
+          const itemWantsBurnIn =
+            item.copyRenderMode === "burn_in" ||
+            (allowGlobalSampleBurnIn && item.textAllowed);
+          const itemCopyText = itemWantsBurnIn
             ? referenceCopyText ?? item.copyText ?? (item.textAllowed ? sampleCopyText : undefined)
             : undefined;
           return {
             ...item,
-            textAllowed: allowSampleBurnIn ? item.textAllowed || Boolean(itemCopyText) : false,
+            textAllowed: itemWantsBurnIn ? item.textAllowed || Boolean(itemCopyText) : false,
             copyText: itemCopyText,
-            copyRenderMode: allowSampleBurnIn && itemCopyText ? "burn_in" : sampleCopyRenderMode,
+            copyRenderMode: itemWantsBurnIn && itemCopyText
+              ? "burn_in"
+              : item.copyRenderMode ?? sampleCopyRenderMode,
           };
         });
       const batchId = `agent_sample_${frameNode.id}_${Date.now()}`;
