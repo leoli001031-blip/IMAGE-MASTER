@@ -223,12 +223,12 @@ assert.match(
 );
 assert.match(
   source,
-  /\{focusedPlanGroup && !editTarget && \(/,
-  "focused result group context should be visible even after the original plan preview is gone"
+  /<AgentScopeContextCard[\s\S]*focusedGroup=\{focusedPlanGroup\}[\s\S]*focusedGroupScopeText=\{focusedGroupScopeText\}[\s\S]*function AgentScopeContextCard[\s\S]*data-testid="agent-active-scope"[\s\S]*分组：\$\{focusedGroup\.title\}/,
+  "focused result group context should be visible in the Agent scope card even after the original plan preview is gone"
 );
 assert.match(
   source,
-  /focusedGroupScopeText = buildAgentFocusedGroupScopeText\(focusedPlanGroup, focusedGroupArtifacts\)[\s\S]*\{focusedGroupScopeText\}[\s\S]*function buildAgentFocusedGroupScopeText[\s\S]*待处理 \$\{actionableCount\}\/\$\{artifacts\.length\} 张[\s\S]*已保留\/已淘汰 \$\{protectedCount\} 张不动/,
+  /focusedGroupScopeText = buildAgentFocusedGroupScopeText\(focusedPlanGroup, focusedGroupArtifacts\)[\s\S]*focusedGroupScopeText=\{focusedGroupScopeText\}[\s\S]*function AgentScopeContextCard[\s\S]*\{focusedGroupScopeText \|\| `只影响这组 \$\{focusedGroup\.count\} 张[\s\S]*function buildAgentFocusedGroupScopeText[\s\S]*待处理 \$\{actionableCount\}\/\$\{artifacts\.length\} 张[\s\S]*已保留\/已淘汰 \$\{protectedCount\} 张不动/,
   "focused result group context should show actionable counts and protected keep/reject state"
 );
 assert.match(

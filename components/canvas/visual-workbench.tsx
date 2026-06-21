@@ -9607,21 +9607,16 @@ function CanvasAgentPanel({
             </button>
           </div>
           <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
-            {editTarget && (
-              <div className="flex items-center gap-2 rounded-lg border border-warm-line/60 bg-warm-bg p-2">
-                <img
-                  src={editTarget.url}
-                  alt={editTarget.title}
-                  className="h-12 w-12 shrink-0 rounded-md bg-warm-paper object-cover"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium text-warm-ink">{editTarget.title}</div>
-                  <div className="mt-0.5 truncate text-[11px] text-warm-muted">
-                    保留需要保留的主体，按你的话改
-                  </div>
-                </div>
-              </div>
-            )}
+            <AgentScopeContextCard
+              editTarget={editTarget}
+              focusedGroup={null}
+              focusedGroupScopeText=""
+              visibleOutputCount={visibleOutputCount}
+              activeJobCount={activeJobCount}
+              hasPlan={false}
+              onClearEditTarget={onClearEditTarget}
+              onClearFocusedGroup={() => undefined}
+            />
             <AgentConversation messages={agentMessages} compact />
             <textarea
               ref={editTextareaRef}
@@ -9697,6 +9692,16 @@ function CanvasAgentPanel({
             visibleOutputCount={visibleOutputCount}
             activeJobCount={activeJobCount}
           />
+          <AgentScopeContextCard
+            editTarget={editTarget}
+            focusedGroup={focusedPlanGroup}
+            focusedGroupScopeText={focusedGroupScopeText}
+            visibleOutputCount={visibleOutputCount}
+            activeJobCount={activeJobCount}
+            hasPlan={Boolean(workflowPlanPreview)}
+            onClearEditTarget={onClearEditTarget}
+            onClearFocusedGroup={() => setFocusedPlanGroup(null)}
+          />
 
           <AgentConversation messages={agentMessages} />
 
@@ -9720,51 +9725,6 @@ function CanvasAgentPanel({
               }
               onAction={workflowPlanPreview ? onApplyWorkflowPlan : undefined}
             />
-          )}
-
-          {focusedPlanGroup && !editTarget && (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-warm-primary/20 bg-warm-primary-soft/55 px-2.5 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-xs font-medium text-warm-ink">
-                  正在调整：{focusedPlanGroup.title}
-                </div>
-                <div className="mt-0.5 text-[11px] text-warm-muted">
-                  {focusedGroupScopeText}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setFocusedPlanGroup(null)}
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-paper hover:text-warm-ink"
-                title="取消分组上下文"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-
-          {editTarget && (
-            <div className="flex items-center gap-2 rounded-lg border border-warm-primary/20 bg-warm-primary-soft/55 p-2">
-              <img
-                src={editTarget.url}
-                alt={editTarget.title}
-                className="h-12 w-12 shrink-0 rounded-md bg-warm-paper object-cover"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-medium text-warm-ink">{editTarget.title}</div>
-                <div className="mt-0.5 text-[11px] leading-4 text-warm-muted">
-                  这张会作为上一版参考图
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={onClearEditTarget}
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-paper hover:text-warm-ink"
-                title="取消修改目标"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
           )}
 
           {completionSummary && (
@@ -9996,6 +9956,135 @@ function AgentProjectContextCard({
         <AgentContextMetric label="结果" value={`${visibleOutputCount} 张`} active={visibleOutputCount > 0} />
         <AgentContextMetric label="生成" value={activeJobCount > 0 ? `${activeJobCount} 中` : "空闲"} active={activeJobCount > 0} />
       </div>
+    </div>
+  );
+}
+
+function AgentScopeContextCard({
+  editTarget,
+  focusedGroup,
+  focusedGroupScopeText,
+  visibleOutputCount,
+  activeJobCount,
+  hasPlan,
+  onClearEditTarget,
+  onClearFocusedGroup,
+}: {
+  editTarget: AgentImageEditTarget | null;
+  focusedGroup: AgentPlanGroup | null;
+  focusedGroupScopeText: string;
+  visibleOutputCount: number;
+  activeJobCount: number;
+  hasPlan: boolean;
+  onClearEditTarget: () => void;
+  onClearFocusedGroup: () => void;
+}) {
+  if (editTarget?.url) {
+    return (
+      <div
+        className="rounded-lg border border-warm-primary/25 bg-warm-primary-soft/55 px-3 py-2.5"
+        data-testid="agent-active-scope"
+      >
+        <AgentScopeHeader
+          icon={Wand2}
+          label="当前作用域"
+          title={`单图：${editTarget.title}`}
+          onClear={onClearEditTarget}
+          clearTitle="取消修改目标"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <img
+            src={editTarget.url}
+            alt={editTarget.title}
+            className="h-10 w-10 shrink-0 rounded-md bg-warm-paper object-cover"
+          />
+          <p className="min-w-0 text-[11px] leading-4 text-warm-muted">
+            只修改这张；原参考图、比例、用途和文案策略会带回。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (focusedGroup) {
+    return (
+      <div
+        className="rounded-lg border border-warm-primary/25 bg-warm-primary-soft/55 px-3 py-2.5"
+        data-testid="agent-active-scope"
+      >
+        <AgentScopeHeader
+          icon={SquareStack}
+          label="当前作用域"
+          title={`分组：${focusedGroup.title}`}
+          onClear={onClearFocusedGroup}
+          clearTitle="取消分组上下文"
+        />
+        <p className="mt-1.5 text-[11px] leading-4 text-warm-muted">
+          {focusedGroupScopeText || `只影响这组 ${focusedGroup.count} 张；其他图组保持不动。`}
+        </p>
+      </div>
+    );
+  }
+
+  if (!hasPlan && visibleOutputCount > 0 && activeJobCount === 0) {
+    return (
+      <div
+        className="rounded-lg border border-warm-line/55 bg-warm-bg px-3 py-2.5"
+        data-testid="agent-active-scope"
+      >
+        <AgentScopeHeader
+          icon={ListChecks}
+          label="当前作用域"
+          title={`结果墙：${visibleOutputCount} 张`}
+        />
+        <p className="mt-1.5 text-[11px] leading-4 text-warm-muted">
+          可以直接说“保留待检查图”“淘汰已失败图”或点一张图继续改。
+        </p>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function AgentScopeHeader({
+  icon: Icon,
+  label,
+  title,
+  onClear,
+  clearTitle,
+}: {
+  icon: React.ElementType;
+  label: string;
+  title: string;
+  onClear?: () => void;
+  clearTitle?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-warm-paper text-warm-primary">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-warm-muted">
+            {label}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-warm-ink">
+            {title}
+          </div>
+        </div>
+      </div>
+      {onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-warm-muted transition hover:bg-warm-paper hover:text-warm-ink"
+          title={clearTitle}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }

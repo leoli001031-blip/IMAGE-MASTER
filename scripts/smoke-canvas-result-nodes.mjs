@@ -367,6 +367,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /<AgentProjectContextCard[\s\S]*<AgentScopeContextCard[\s\S]*focusedGroup=\{focusedPlanGroup\}[\s\S]*onClearFocusedGroup=\{\(\) => setFocusedPlanGroup\(null\)\}[\s\S]*<AgentConversation[\s\S]*function AgentScopeContextCard[\s\S]*data-testid="agent-active-scope"[\s\S]*单图：\$\{editTarget\.title\}[\s\S]*分组：\$\{focusedGroup\.title\}[\s\S]*结果墙：\$\{visibleOutputCount\} 张/,
+  "Agent panel should show a clear current scope card before chat for single-image, group, and result-wall commands"
+);
+assert.match(
+  workbenchSource,
   /const selectGroupForEdit[\s\S]*onHighlightArtifactGroup\(groupTitle\)[\s\S]*action === "group_edit"[\s\S]*selectGroupForEdit/,
   "Agent group edit suggestions should reuse the scoped group-edit path and highlight the affected group"
 );
