@@ -633,8 +633,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function buildAgentQaSummaryItems[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*getAgentArtifactProviderReferenceRoles\(visibleArtifacts\)[\s\S]*商品[\s\S]*模特[\s\S]*文案[\s\S]*光影[\s\S]*重做/,
-  "Agent QA summary should read completed artifact metadata and cover product, model, copy, lighting, and redo guidance"
+  /function buildAgentQaSummaryItems[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*getAgentArtifactProviderReferenceRoles\(visibleArtifacts\)[\s\S]*formatAgentArtifactReviewSummary\(visibleArtifacts\)[\s\S]*label: "挑图"[\s\S]*商品[\s\S]*模特[\s\S]*文案[\s\S]*光影[\s\S]*重做/,
+  "Agent QA summary should read completed artifact metadata and cover picking progress, product, model, copy, lighting, and redo guidance"
 );
 assert.match(
   source,

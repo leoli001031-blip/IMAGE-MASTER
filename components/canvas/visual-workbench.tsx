@@ -11307,9 +11307,23 @@ function buildAgentQaSummaryItems({
     matrixItems.some((item) => item.referenceRoles.includes("model") && !item.providerReferenceRoles.includes("model")) ||
     artifactPromptOnlyRoles.includes("model");
   const visualQaItems = getAgentVisualQaSummaryItems(visibleArtifacts);
+  const reviewSummary = formatAgentArtifactReviewSummary(visibleArtifacts);
+  const hasReviewRisk = visibleArtifacts.some((artifact) => {
+    const status = getArtifactReviewStatus(artifact);
+    return status === "needs_redo" || status === "failed";
+  });
+  const allApproved = visibleArtifacts.length > 0 &&
+    visibleArtifacts.every((artifact) => getArtifactReviewStatus(artifact) === "approved");
 
   return [
     ...visualQaItems,
+    {
+      label: "挑图",
+      tone: hasReviewRisk ? "warn" : allApproved ? "success" : "default",
+      text: reviewSummary
+        ? `${reviewSummary}。先处理建议重做和失败，再保留可用图；误标后可在详情里恢复待检查。`
+        : `共 ${visibleOutputCount} 张结果待挑；先看主图、海报和详情图。`
+    },
     {
       label: "商品",
       tone: hasProductProvider ? "success" : "warn",
