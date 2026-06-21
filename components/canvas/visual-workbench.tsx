@@ -11512,6 +11512,7 @@ function buildAgentCompletionSummary({
   const failedCount = getAgentArtifactFailureCount(visibleArtifacts);
   const reviewSummary = formatAgentArtifactReviewSummary(visibleArtifacts);
   const visualQaSummary = formatAgentVisualQaSummary(visibleArtifacts);
+  const markedRedoCount = visibleArtifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "needs_redo").length;
   const candidateGroups = planGroups
     .filter((group) => /主图|详情|细节|海报|模特|场景|卖点|封面/.test(group.title))
     .slice(0, 3)
@@ -11537,8 +11538,12 @@ function buildAgentCompletionSummary({
       : `建议先重做：先挑最影响转化的 ${candidateGroups[0] || "主图/海报"}，只重做问题单张。`;
   const resultEntryText =
     "结果入口：画布结果墙已按用途分组；点单张看大图、参考图和 prompt，点分组只改这一组。";
+  const reviewActionText = markedRedoCount > 0
+    ? `已标待重做 ${markedRedoCount} 张：可执行建议会优先处理这些图；已保留/已淘汰不会被重做。`
+    : "";
   const nextText = buildAgentCompletionNextAction({
     failedCount,
+    markedRedoCount,
     hasPlan,
     redoTarget,
     riskChecks,
@@ -11548,6 +11553,7 @@ function buildAgentCompletionSummary({
     reviewSummary ? `挑图状态：${reviewSummary}。` : "",
     visualQaSummary ? `视觉 QA：${visualQaSummary}。` : "",
     resultEntryText,
+    reviewActionText,
     keepText,
     riskText,
     redoText,
@@ -11557,17 +11563,22 @@ function buildAgentCompletionSummary({
 
 function buildAgentCompletionNextAction({
   failedCount,
+  markedRedoCount,
   hasPlan,
   redoTarget,
   riskChecks,
 }: {
   failedCount: number;
+  markedRedoCount: number;
   hasPlan: boolean;
   redoTarget: { label: string; reason: string } | null;
   riskChecks: string[];
 }): string {
   if (failedCount > 0) {
     return "下一步：先点失败图重试，稳定后再挑图导出。";
+  }
+  if (markedRedoCount > 0) {
+    return `下一步：先执行 ${markedRedoCount} 张待重做项；也可以点图说具体怎么改。`;
   }
   if (riskChecks.includes("文案安全区")) {
     return "下一步：先点开烧字图检查安全区；不满意就说“这张文案短一点”。";

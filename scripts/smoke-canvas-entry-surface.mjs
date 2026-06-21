@@ -618,8 +618,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function buildAgentCompletionSummary[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*buildAgentCompletionRiskChecks\(\{ planGroups, matrixItems, visibleArtifacts \}\)[\s\S]*结果入口：画布结果墙已按用途分组[\s\S]*点单张看大图、参考图和 prompt[\s\S]*有问题点单张说“这张重做”，或点一组说“换一批”/,
-  "Agent completion summary should use current plan groups and guide users to the result wall, image details, and single/group redo"
+  /function buildAgentCompletionSummary[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*markedRedoCount[\s\S]*getArtifactReviewStatus\(artifact\) === "needs_redo"[\s\S]*结果入口：画布结果墙已按用途分组[\s\S]*点单张看大图、参考图和 prompt[\s\S]*已标待重做 \$\{markedRedoCount\} 张[\s\S]*已保留\/已淘汰不会被重做[\s\S]*有问题点单张说“这张重做”，或点一组说“换一批”/,
+  "Agent completion summary should use current plan groups, review-state counts, result-wall guidance, and single/group redo"
 );
 assert.match(
   source,
@@ -643,8 +643,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function buildAgentCompletionNextAction[\s\S]*先点失败图重试[\s\S]*先点开烧字图检查安全区[\s\S]*先补商品参考图[\s\S]*先看模特脸、眼神、头和手/,
-  "Agent completion next action should be driven by failed outputs, copy placement, product lock, and model consistency risks"
+  /function buildAgentCompletionNextAction[\s\S]*markedRedoCount[\s\S]*先点失败图重试[\s\S]*先执行 \$\{markedRedoCount\} 张待重做项[\s\S]*先点开烧字图检查安全区[\s\S]*先补商品参考图[\s\S]*先看模特脸、眼神、头和手/,
+  "Agent completion next action should be driven by failed outputs, marked redo items, copy placement, product lock, and model consistency risks"
 );
 assert.match(
   source,
