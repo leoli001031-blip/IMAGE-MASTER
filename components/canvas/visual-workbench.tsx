@@ -10004,6 +10004,12 @@ function AgentScopeContextCard({
   onClearFocusedGroup: () => void;
 }) {
   if (editTarget?.url) {
+    const scopeItems = getAgentScopeConfirmationItems({
+      editTarget,
+      focusedGroup: null,
+      focusedGroupScopeText: "",
+      visibleOutputCount,
+    });
     return (
       <div
         className="rounded-lg border border-warm-primary/25 bg-warm-primary-soft/55 px-3 py-2.5"
@@ -10022,15 +10028,19 @@ function AgentScopeContextCard({
             alt={editTarget.title}
             className="h-10 w-10 shrink-0 rounded-md bg-warm-paper object-cover"
           />
-          <p className="min-w-0 text-[11px] leading-4 text-warm-muted">
-            只修改这张；原参考图、比例、用途和文案策略会带回。
-          </p>
+          <AgentScopeConfirmationRows items={scopeItems} />
         </div>
       </div>
     );
   }
 
   if (focusedGroup) {
+    const scopeItems = getAgentScopeConfirmationItems({
+      editTarget: null,
+      focusedGroup,
+      focusedGroupScopeText,
+      visibleOutputCount,
+    });
     return (
       <div
         className="rounded-lg border border-warm-primary/25 bg-warm-primary-soft/55 px-3 py-2.5"
@@ -10043,14 +10053,18 @@ function AgentScopeContextCard({
           onClear={onClearFocusedGroup}
           clearTitle="取消分组上下文"
         />
-        <p className="mt-1.5 text-[11px] leading-4 text-warm-muted">
-          {focusedGroupScopeText || `只影响这组 ${focusedGroup.count} 张；其他图组保持不动。`}
-        </p>
+        <AgentScopeConfirmationRows items={scopeItems} className="mt-1.5" />
       </div>
     );
   }
 
   if (!hasPlan && visibleOutputCount > 0 && activeJobCount === 0) {
+    const scopeItems = getAgentScopeConfirmationItems({
+      editTarget: null,
+      focusedGroup: null,
+      focusedGroupScopeText: "",
+      visibleOutputCount,
+    });
     return (
       <div
         className="rounded-lg border border-warm-line/55 bg-warm-bg px-3 py-2.5"
@@ -10061,14 +10075,80 @@ function AgentScopeContextCard({
           label="当前作用域"
           title={`结果墙：${visibleOutputCount} 张`}
         />
-        <p className="mt-1.5 text-[11px] leading-4 text-warm-muted">
-          可以直接说“保留待检查图”“淘汰已失败图”或点一张图继续改。
-        </p>
+        <AgentScopeConfirmationRows items={scopeItems} className="mt-1.5" />
       </div>
     );
   }
 
   return null;
+}
+
+function AgentScopeConfirmationRows({
+  items,
+  className,
+}: {
+  items: Array<{ label: string; text: string }>;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0 flex-1 space-y-0.5 text-[11px] leading-4", className)}>
+      {items.map((item) => (
+        <div key={item.label} className="flex gap-1.5">
+          <span className="w-9 shrink-0 text-warm-muted">{item.label}</span>
+          <span className="min-w-0 flex-1 text-warm-ink">{item.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getAgentScopeConfirmationItems({
+  editTarget,
+  focusedGroup,
+  focusedGroupScopeText,
+  visibleOutputCount,
+}: {
+  editTarget: AgentImageEditTarget | null;
+  focusedGroup: AgentPlanGroup | null;
+  focusedGroupScopeText: string;
+  visibleOutputCount: number;
+}): Array<{ label: string; text: string }> {
+  if (editTarget?.url) {
+    return [
+      { label: "范围", text: "只修改这张成片。" },
+      { label: "继承", text: "原参考图、比例、用途和文案策略会带回。" },
+      { label: "不影响", text: "其他图组和整套计划不变。" },
+    ];
+  }
+
+  if (focusedGroup) {
+    return [
+      { label: "范围", text: focusedGroupScopeText || `只影响这组 ${focusedGroup.count} 张。` },
+      { label: "继承", text: getAgentFocusedGroupInheritedText(focusedGroup) },
+      { label: "不影响", text: "其他图组保持不动，不重写全局计划。" },
+    ];
+  }
+
+  if (visibleOutputCount > 0) {
+    return [
+      { label: "范围", text: `当前结果墙 ${visibleOutputCount} 张。` },
+      { label: "操作", text: "可保留、淘汰、标待重做，或点单张继续改。" },
+      { label: "不影响", text: "不会重新规划项目，除非你明确要求。" },
+    ];
+  }
+
+  return [];
+}
+
+function getAgentFocusedGroupInheritedText(group: AgentPlanGroup): string {
+  const inherited: string[] = [];
+  if (group.summary) inherited.push("用途");
+  if (group.providerRoles.length > 0 || group.promptOnlyRoles.length > 0) inherited.push("参考角色");
+  if (group.ratios.length > 0) inherited.push("比例");
+  if (group.copyModes.length > 0) inherited.push("文案策略");
+  return inherited.length > 0
+    ? `${inherited.join("、")}沿用当前组。`
+    : "沿用当前组的主体和构图。";
 }
 
 function AgentScopeHeader({

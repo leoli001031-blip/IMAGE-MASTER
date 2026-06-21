@@ -372,6 +372,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /function AgentScopeConfirmationRows[\s\S]*\{item\.label\}[\s\S]*\{item\.text\}[\s\S]*function getAgentScopeConfirmationItems[\s\S]*范围[\s\S]*继承[\s\S]*不影响[\s\S]*getAgentFocusedGroupInheritedText/,
+  "Agent scope cards should summarize scope, inherited context, and unaffected areas as scan-friendly rows"
+);
+assert.match(
+  workbenchSource,
   /const selectGroupForEdit[\s\S]*onHighlightArtifactGroup\(groupTitle\)[\s\S]*action === "group_edit"[\s\S]*selectGroupForEdit/,
   "Agent group edit suggestions should reuse the scoped group-edit path and highlight the affected group"
 );

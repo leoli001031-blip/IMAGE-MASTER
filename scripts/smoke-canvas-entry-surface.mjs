@@ -228,8 +228,8 @@ assert.match(
 );
 assert.match(
   source,
-  /focusedGroupScopeText = buildAgentFocusedGroupScopeText\(focusedPlanGroup, focusedGroupArtifacts\)[\s\S]*focusedGroupScopeText=\{focusedGroupScopeText\}[\s\S]*function AgentScopeContextCard[\s\S]*\{focusedGroupScopeText \|\| `只影响这组 \$\{focusedGroup\.count\} 张[\s\S]*function buildAgentFocusedGroupScopeText[\s\S]*待处理 \$\{actionableCount\}\/\$\{artifacts\.length\} 张[\s\S]*已保留\/已淘汰 \$\{protectedCount\} 张不动/,
-  "focused result group context should show actionable counts and protected keep/reject state"
+  /focusedGroupScopeText = buildAgentFocusedGroupScopeText\(focusedPlanGroup, focusedGroupArtifacts\)[\s\S]*focusedGroupScopeText=\{focusedGroupScopeText\}[\s\S]*function getAgentScopeConfirmationItems[\s\S]*\{ label: "范围", text: focusedGroupScopeText \|\| `只影响这组 \$\{focusedGroup\.count\} 张。` \}[\s\S]*function buildAgentFocusedGroupScopeText[\s\S]*待处理 \$\{actionableCount\}\/\$\{artifacts\.length\} 张[\s\S]*已保留\/已淘汰 \$\{protectedCount\} 张不动/,
+  "focused result group context should show actionable counts and protected keep/reject state in scope rows"
 );
 assert.match(
   source,
