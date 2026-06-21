@@ -2653,6 +2653,29 @@ export function VisualWorkbench() {
       setComposeMessage("说一下这张图要怎么改");
       return;
     }
+    const reviewStatusIntent = getAgentResultReviewStatusIntent(brief);
+    if (reviewStatusIntent) {
+      if (!target.artifactId) {
+        setComposeMessage(`「${target.title}」还没有可标记挑图状态的成片。`);
+        return;
+      }
+      const filter = getResultReviewFilterForArtifactReviewStatus(reviewStatusIntent);
+      if (filter) {
+        setResultReviewFilter(filter);
+        setHighlightedResultReviewFilter(filter);
+      }
+      await handleSetArtifactReviewStatus(
+        target.artifactId,
+        reviewStatusIntent,
+        `Agent 自然语言：${brief}`
+      );
+      setAgentLastUserBrief(brief);
+      setComposeMessage(
+        `已把「${target.title}」标记为${getArtifactReviewStatusLabel(reviewStatusIntent)}；只影响这张，其他图不变。`
+      );
+      setComposeBrief("");
+      return;
+    }
 
     setComposingWorkflow(true);
     setAgentLastUserBrief(brief);
@@ -2773,7 +2796,7 @@ export function VisualWorkbench() {
     const sourceArtifacts = groupArtifacts.length > 0
       ? groupArtifacts
       : resolveAgentResultGroupArtifacts(group, artifacts);
-    const reviewStatusIntent = getAgentResultGroupReviewStatusIntent(brief);
+    const reviewStatusIntent = getAgentResultReviewStatusIntent(brief);
     if (reviewStatusIntent) {
       const artifactIds = sourceArtifacts.map((artifact) => artifact.id);
       if (artifactIds.length === 0) {
@@ -11181,7 +11204,7 @@ function buildAgentFocusedGroupScopeText(
   return parts.join("；");
 }
 
-function getAgentResultGroupReviewStatusIntent(text: string): ArtifactReviewStatus | null {
+function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | null {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return null;
   if (/(恢复|改回|设为|标为)?待检查|取消标记|取消状态/.test(compactText)) return "pending";

@@ -422,18 +422,23 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactReviewStatus[\s\S]*Agent 自然语言[\s\S]*只影响这张，其他图不变[\s\S]*setComposingWorkflow\(true\)/,
+  "focused single-image chat should mark review state directly before creating revision jobs"
+);
+assert.match(
+  workbenchSource,
   /action === "group_redo"[\s\S]*retryableGroupArtifacts[\s\S]*length === 0[\s\S]*selectGroupForEdit[\s\S]*没有可直接重跑的任务[\s\S]*artifactIds: retryableGroupArtifacts\.map[\s\S]*\$\{retryableGroupArtifacts\.length\} 张待处理图[\s\S]*getRemainingReviewText\(\)/,
   "Agent group redo suggestions should report batch size and remaining review work, with scoped editing fallback"
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultGroupReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*只影响这组，其他图组不变[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
+  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*只影响这组，其他图组不变[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
   "focused result-group chat should mark group review state directly before creating revision jobs"
 );
 assert.match(
   workbenchSource,
-  /function getAgentResultGroupReviewStatusIntent[\s\S]*待检查[\s\S]*needs_redo[\s\S]*rejected[\s\S]*approved/,
-  "focused result-group chat should parse keep, redo, reject, and pending review-state intents"
+  /function getAgentResultReviewStatusIntent[\s\S]*待检查[\s\S]*needs_redo[\s\S]*rejected[\s\S]*approved/,
+  "focused Agent chat should parse keep, redo, reject, and pending review-state intents"
 );
 assert.match(
   workbenchSource,
