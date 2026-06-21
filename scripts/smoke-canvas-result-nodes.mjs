@@ -312,6 +312,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /lastReviewSuggestionExecution[\s\S]*setLastReviewSuggestionExecution\(execution\)[\s\S]*agent-review-action-feedback[\s\S]*最近执行：\{lastReviewSuggestionExecution\.label\}/,
+  "Agent review suggestion actions should keep a visible recent-action confirmation even if suggestions recalculate"
+);
+assert.match(
+  workbenchSource,
   /AgentReviewSuggestionCards[\s\S]*executedActions[\s\S]*已执行：\{execution\.label\}[\s\S]*execution\.text[\s\S]*executed && "border-emerald-300/,
   "Agent review suggestion cards should show which action has already run"
 );

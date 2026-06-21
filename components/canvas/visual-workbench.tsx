@@ -8401,6 +8401,7 @@ function CanvasAgentPanel({
 }) {
   const [agentEventHistory, setAgentEventHistory] = useState<AgentConversationMessage[]>([]);
   const [executedReviewSuggestionActions, setExecutedReviewSuggestionActions] = useState<Record<string, AgentReviewSuggestionExecutionState>>({});
+  const [lastReviewSuggestionExecution, setLastReviewSuggestionExecution] = useState<AgentReviewSuggestionExecutionState | null>(null);
   const hasComposeBrief = !!composeBrief.trim();
   const canCompose = hasComposeBrief && !composingWorkflow;
   const agentPlan = workflowPlanPreview?.agentPlan;
@@ -8635,6 +8636,10 @@ function CanvasAgentPanel({
   });
   const executableReviewSuggestionIds = executableReviewSuggestions.map((suggestion) => suggestion.id).join("|");
   useEffect(() => {
+    if (!canShowResultReviewAssistant) {
+      setLastReviewSuggestionExecution(null);
+      return;
+    }
     if (!executableReviewSuggestionIds) {
       setExecutedReviewSuggestionActions({});
       return;
@@ -8644,7 +8649,7 @@ function CanvasAgentPanel({
       const next = Object.fromEntries(Object.entries(items).filter(([id]) => ids.has(id)));
       return Object.keys(next).length === Object.keys(items).length ? items : next;
     });
-  }, [executableReviewSuggestionIds]);
+  }, [canShowResultReviewAssistant, executableReviewSuggestionIds]);
   const visibleAgentHistory = canShowResultReviewAssistant
     ? agentEventHistory
     : agentEventHistory.filter((message) =>
@@ -8803,14 +8808,16 @@ function CanvasAgentPanel({
       : [];
     const groupTitle = suggestion.groupTitle || group?.title || suggestion.title;
     const recordAction = (text: string) => {
+      const execution = {
+        action,
+        label: getAgentReviewSuggestionActionLabel(action),
+        text,
+      };
       setExecutedReviewSuggestionActions((items) => ({
         ...items,
-        [suggestion.id]: {
-          action,
-          label: getAgentReviewSuggestionActionLabel(action),
-          text,
-        },
+        [suggestion.id]: execution,
       }));
+      setLastReviewSuggestionExecution(execution);
       rememberAgentEvent(`review-action:${suggestion.id}:${action}`, {
         role: "agent",
         title: "已执行建议",
@@ -9164,6 +9171,15 @@ function CanvasAgentPanel({
           {completionSummary && (
             <div className="space-y-2 rounded-lg border border-emerald-200/70 bg-emerald-50 px-3 py-2 text-[11px] leading-4 text-emerald-800">
               <div className="whitespace-pre-line">{completionSummary}</div>
+            </div>
+          )}
+          {lastReviewSuggestionExecution && (
+            <div
+              className="rounded-lg border border-emerald-200/80 bg-emerald-50 px-3 py-2 text-[11px] leading-4 text-emerald-800"
+              data-testid="agent-review-action-feedback"
+            >
+              <div className="font-medium">最近执行：{lastReviewSuggestionExecution.label}</div>
+              <div className="mt-0.5 text-emerald-700">{lastReviewSuggestionExecution.text}</div>
             </div>
           )}
           {executableReviewSuggestions.length > 0 && (
