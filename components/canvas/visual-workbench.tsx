@@ -2668,6 +2668,27 @@ export function VisualWorkbench() {
       setComposeMessage("说一下这张图要怎么改");
       return;
     }
+    if (getAgentImageOpenDetailIntent(brief)) {
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-open", {
+          detail: {
+            nodeId: target.nodeId,
+            outputId: target.outputId,
+            artifactId: target.artifactId,
+            jobId: target.jobId,
+            url: target.url,
+            title: target.title,
+            status: target.status,
+            prompt: target.prompt,
+            metadata: target.metadata,
+          },
+        })
+      );
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(`已打开「${target.title}」详情，可以查看参考图、prompt 和 QA。`);
+      return;
+    }
     if (getAgentImageSaveAsAssetIntent(brief)) {
       window.dispatchEvent(
         new CustomEvent("image-master:generation-frame-output-save", {
@@ -12011,6 +12032,12 @@ function getAgentImageSaveAsAssetIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(保存为资产|存为资产|保存到(素材库|资产库)|存到(素材库|资产库)|加入(素材库|资产库)|添加到(素材库|资产库)|收进(素材库|资产库)|放进(素材库|资产库)|放到(素材库|资产库))/.test(compactText);
+}
+
+function getAgentImageOpenDetailIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(打开|查看|看看|看一下|看)(这张|当前)?的?(详情|参考图|提示词|prompt|原prompt|原始prompt|qa|质检|锁定信息|参考信息)|(?:详情|参考图|提示词|prompt|原prompt|原始prompt|qa|质检|锁定信息|参考信息)(打开|查看|看看|看一下)/i.test(compactText);
 }
 
 function getAgentGlobalResultReviewTargets(

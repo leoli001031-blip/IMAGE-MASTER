@@ -482,6 +482,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageOpenDetailIntent\(brief\)[\s\S]*image-master:generation-frame-output-open[\s\S]*已打开「\$\{target\.title\}」详情[\s\S]*return[\s\S]*getAgentImageSaveAsAssetIntent\(brief\)/,
+  "focused single-image chat should open the selected result detail before falling through to save or revision jobs"
+);
+assert.match(
+  workbenchSource,
   /handleRunAgentImageRevision[\s\S]*getAgentImageSaveAsAssetIntent\(brief\)[\s\S]*image-master:generation-frame-output-save[\s\S]*已提交保存「\$\{target\.title\}」为资产[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
   "focused single-image chat should save the selected result as an asset before falling through to revision jobs"
 );
@@ -550,6 +555,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageSaveAsAssetIntent[\s\S]*保存为资产[\s\S]*素材库\|资产库[\s\S]*放到\(素材库\|资产库\)/,
   "single-image save-as-asset intent should require explicit asset-library wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageOpenDetailIntent[\s\S]*详情\|参考图\|提示词\|prompt[\s\S]*锁定信息\|参考信息[\s\S]*\/i\.test\(compactText\)/,
+  "single-image detail intent should require explicit detail, reference, prompt, QA, or lock-info wording"
 );
 assert.match(
   workbenchSource,
