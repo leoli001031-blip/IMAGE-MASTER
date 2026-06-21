@@ -69,6 +69,12 @@ assert.match(
 );
 
 assert.match(
+  outputPreviewModalSource,
+  /getOutputPreviewSourceVersion\(item\.metadata \?\? \{\}\)[\s\S]*OutputPreviewComparisonImage[\s\S]*对比当前[\s\S]*rerunSourceArtifactUrl[\s\S]*rerunSourceResultUrl/,
+  "canvas image preview modal should let users compare regenerated outputs with the previous version when source URLs are available"
+);
+
+assert.match(
   imageDetailPanelSource,
   /providerReferenceRoles\?: string\[\];[\s\S]*promptOnlyRoles\?: string\[\];[\s\S]*调用总览[\s\S]*强参考：[\s\S]*文字\/约束：/,
   "shared image detail panel should summarize strong and prompt-only invocation roles"

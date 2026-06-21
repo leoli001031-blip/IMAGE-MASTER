@@ -12,6 +12,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/cn";
 import type {
   GenerationReferenceImage,
@@ -136,12 +137,17 @@ export function OutputPreviewModal({
   const outputPurposeLabel = getOutputPreviewPurposeLabel(item);
   const outputRatioLabel = getOutputPreviewRatioLabel(item.metadata ?? {});
   const outputSourceVersion = getOutputPreviewSourceVersion(item.metadata ?? {});
+  const [compareWithSource, setCompareWithSource] = useState(false);
   const canRetryOrEdit = Boolean(item.jobId || item.url);
   const retryTitle = item.jobId
     ? "立即重做当前图"
     : item.url
       ? "没有直接重跑任务时让 Agent 改这张"
       : "当前图没有可重做任务";
+
+  useEffect(() => {
+    setCompareWithSource(false);
+  }, [item.artifactId, item.jobId, item.outputId, item.url]);
 
   return (
     <div
@@ -194,12 +200,37 @@ export function OutputPreviewModal({
           </div>
         </div>
         <div className="grid min-h-0 flex-1 gap-3 overflow-auto bg-warm-bg p-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="flex min-h-[360px] items-center justify-center rounded-md border border-warm-line/50 bg-warm-paper p-2">
-            <img
-              src={item.url}
-              alt={item.title}
-              className="h-[min(72vh,620px)] w-full rounded-md object-contain shadow-sm"
-            />
+          <div className="relative flex min-h-[360px] items-center justify-center rounded-md border border-warm-line/50 bg-warm-paper p-2">
+            {outputSourceVersion?.url && (
+              <button
+                type="button"
+                className="absolute right-3 top-3 z-10 rounded-md border border-warm-line/70 bg-warm-paper/90 px-2.5 py-1 text-xs font-medium text-warm-muted shadow-sm transition hover:border-warm-primary/40 hover:text-warm-primary"
+                onClick={() => setCompareWithSource((value) => !value)}
+              >
+                {compareWithSource ? "退出对比" : "对比当前"}
+              </button>
+            )}
+            {compareWithSource && outputSourceVersion?.url ? (
+              <div className="grid h-[min(72vh,620px)] w-full gap-2 lg:grid-cols-2">
+                <OutputPreviewComparisonImage
+                  label="上一版"
+                  src={outputSourceVersion.url}
+                  alt={outputSourceVersion.title}
+                />
+                <OutputPreviewComparisonImage
+                  label="当前版"
+                  src={item.url}
+                  alt={item.title}
+                  active
+                />
+              </div>
+            ) : (
+              <img
+                src={item.url}
+                alt={item.title}
+                className="h-[min(72vh,620px)] w-full rounded-md object-contain shadow-sm"
+              />
+            )}
           </div>
           <aside className="min-h-0 space-y-3 overflow-y-auto rounded-md border border-warm-line/50 bg-warm-paper p-3">
             <div className="rounded-md border border-warm-line/50 bg-warm-bg p-2">
@@ -340,9 +371,20 @@ export function OutputPreviewModal({
                 <div>用途：{outputPurposeLabel}</div>
                 <div>比例：{outputRatioLabel}</div>
                 {outputSourceVersion && (
-                  <div className="truncate">
-                    上一版：{outputSourceVersion.title}
-                    {outputSourceVersion.artifactId ? ` · ${outputSourceVersion.artifactId}` : ""}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate">
+                      上一版：{outputSourceVersion.title}
+                      {outputSourceVersion.artifactId ? ` · ${outputSourceVersion.artifactId}` : ""}
+                    </span>
+                    {outputSourceVersion.url && (
+                      <button
+                        type="button"
+                        className="rounded border border-warm-line/60 bg-warm-paper px-1.5 py-0.5 text-[10px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                        onClick={() => setCompareWithSource((value) => !value)}
+                      >
+                        {compareWithSource ? "退出对比" : "对比当前"}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -563,6 +605,36 @@ function OutputPreviewReferenceSection({
   );
 }
 
+function OutputPreviewComparisonImage({
+  label,
+  src,
+  alt,
+  active,
+}: {
+  label: string;
+  src: string;
+  alt: string;
+  active?: boolean;
+}) {
+  return (
+    <div className="relative min-h-0 overflow-hidden rounded-md border border-warm-line/50 bg-warm-bg">
+      <img
+        src={src}
+        alt={alt}
+        className="h-full w-full object-contain"
+      />
+      <div
+        className={cn(
+          "absolute left-2 top-2 rounded-full px-2 py-0.5 text-[11px] font-medium",
+          active ? "bg-warm-primary text-warm-paper" : "bg-warm-ink/65 text-warm-paper"
+        )}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
 function getOutputPreviewCopyModeLabel(mode: string): string {
   if (mode === "burn_in") return "烧进图";
   if (mode === "layout_layer") return "图层/后期";
@@ -594,6 +666,7 @@ function getOutputPreviewRatioLabel(metadata: Record<string, unknown>): string {
 function getOutputPreviewSourceVersion(metadata: Record<string, unknown>): {
   artifactId?: string;
   title: string;
+  url?: string;
 } | null {
   const revisionSource = getOutputPreviewRecordValue(metadata.revisionSource);
   const title =
@@ -604,14 +677,19 @@ function getOutputPreviewSourceVersion(metadata: Record<string, unknown>): {
   const artifactId =
     getOutputPreviewMetadataString(metadata, "rerunSourceArtifactId") ||
     getOutputPreviewMetadataString(revisionSource ?? {}, "artifactId");
+  const url =
+    getOutputPreviewMetadataString(metadata, "rerunSourceArtifactUrl") ||
+    getOutputPreviewMetadataString(metadata, "rerunSourceResultUrl") ||
+    getOutputPreviewMetadataString(revisionSource ?? {}, "url");
   const jobId =
     getOutputPreviewMetadataString(metadata, "rerunOfJobId") ||
     getOutputPreviewMetadataString(revisionSource ?? {}, "jobId");
 
-  if (!title && !artifactId && !jobId) return null;
+  if (!title && !artifactId && !jobId && !url) return null;
   return {
     artifactId,
     title: title || "上一版成片",
+    url,
   };
 }
 

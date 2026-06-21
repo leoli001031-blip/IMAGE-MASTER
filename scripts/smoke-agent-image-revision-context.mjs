@@ -298,8 +298,8 @@ assert.match(
 );
 assert.match(
   outputPreviewModalSource,
-  /const outputSourceVersion = getOutputPreviewSourceVersion\(item\.metadata \?\? \{\}\)[\s\S]*上一版：\{outputSourceVersion\.title\}[\s\S]*function getOutputPreviewSourceVersion[\s\S]*revisionSource[\s\S]*rerunSourceArtifactTitle[\s\S]*revisionSource \?\? \{\}, "title"/,
-  "canvas image preview should show the previous version source for rerun and Agent revision images"
+  /const outputSourceVersion = getOutputPreviewSourceVersion\(item\.metadata \?\? \{\}\)[\s\S]*compareWithSource[\s\S]*OutputPreviewComparisonImage[\s\S]*label="上一版"[\s\S]*label="当前版"[\s\S]*上一版：\{outputSourceVersion\.title\}[\s\S]*退出对比[\s\S]*对比当前[\s\S]*function getOutputPreviewSourceVersion[\s\S]*rerunSourceArtifactUrl[\s\S]*rerunSourceResultUrl[\s\S]*revisionSource \?\? \{\}, "url"/,
+  "canvas image preview should show and compare the previous version source for rerun and Agent revision images"
 );
 
 assert.match(
