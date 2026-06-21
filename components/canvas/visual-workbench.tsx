@@ -4752,16 +4752,25 @@ export function VisualWorkbench() {
     const handleGroupRetry = (event: Event) => {
       const detail = readDetail(event);
       const artifactIds = detail?.artifactIds?.filter((value): value is string => typeof value === "string" && !!value.trim()) ?? [];
-      const jobIds = artifactIds
-        .map((artifactId) => artifacts.find((artifact) => artifact.id === artifactId)?.jobId)
+      const groupArtifacts = artifactIds
+        .map((artifactId) => artifacts.find((artifact) => artifact.id === artifactId))
+        .filter((artifact): artifact is PersistedGeneratedArtifact => Boolean(artifact));
+      const retryableArtifacts = groupArtifacts.filter((artifact) => {
+        const status = getArtifactReviewStatus(artifact);
+        return status !== "approved" && status !== "rejected";
+      });
+      const protectedCount = groupArtifacts.length - retryableArtifacts.length;
+      const jobIds = retryableArtifacts
+        .map((artifact) => artifact.jobId)
         .filter((value): value is string => typeof value === "string" && !!value.trim());
       const groupTitle = typeof detail?.group === "string" && detail.group.trim()
         ? detail.group.trim()
         : "当前图组";
       if (jobIds.length === 0) {
+        const protectedHint = protectedCount > 0 ? "；已保留/已淘汰的图片不会被重做" : "";
         if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
-        setJobMessage("这组没有可重跑的任务，已切到调整这组");
-        setComposeMessage(`「${groupTitle}」没有可直接重跑的任务；已切到调整这组，后续只会改这一组。`);
+        setJobMessage(`这组没有可重跑的待处理图片${protectedHint}，已切到调整这组`);
+        setComposeMessage(`「${groupTitle}」没有可直接重跑的待处理图片${protectedHint}；已切到调整这组，后续只会改这一组。`);
         window.dispatchEvent(
           new CustomEvent("image-master:artifact-group-edit", {
             detail: {
@@ -4774,7 +4783,7 @@ export function VisualWorkbench() {
         return;
       }
       if (detail?.group) setHighlightedArtifactGroupTitle(String(detail.group));
-      setComposeMessage(`按原上下文重做「${groupTitle}」；其他已保留图片不受影响。`);
+      setComposeMessage(`按原上下文重做「${groupTitle}」${retryableArtifacts.length} 张待处理图片；已保留和已淘汰图片不受影响。`);
       handleRetryAll(new CustomEvent("image-master:generation-frame-output-retry-all", { detail: { jobIds, group: groupTitle } }));
     };
 

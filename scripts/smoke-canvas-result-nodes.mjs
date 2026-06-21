@@ -337,8 +337,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleGroupRetry[\s\S]*jobIds\.length === 0[\s\S]*没有可重跑的任务，已切到调整这组[\s\S]*image-master:artifact-group-edit/,
+  /handleGroupRetry[\s\S]*jobIds\.length === 0[\s\S]*没有可重跑的待处理图片[\s\S]*已切到调整这组[\s\S]*image-master:artifact-group-edit/,
   "direct group retry should fall back to scoped group editing when no retryable jobs exist"
+);
+assert.match(
+  workbenchSource,
+  /handleGroupRetry[\s\S]*retryableArtifacts[\s\S]*getArtifactReviewStatus\(artifact\)[\s\S]*status !== "approved" && status !== "rejected"[\s\S]*待处理图片[\s\S]*已保留和已淘汰图片不受影响/,
+  "direct group retry should skip already-approved and rejected images"
 );
 assert.match(
   workbenchSource,
