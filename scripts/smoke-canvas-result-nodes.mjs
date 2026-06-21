@@ -292,8 +292,8 @@ assert.match(
 );
 assert.match(
   outputPreviewModalSource,
-  /reviewStatus[\s\S]*onSetReviewStatus[\s\S]*保留[\s\S]*重做[\s\S]*淘汰/,
-  "image detail preview should let users mark review state from the large-image view"
+  /reviewStatus[\s\S]*onSetReviewStatus[\s\S]*保留[\s\S]*onSetReviewStatus\("pending"\)[\s\S]*待检[\s\S]*重做[\s\S]*淘汰/,
+  "image detail preview should let users mark or reset review state from the large-image view"
 );
 assert.match(
   outputPreviewModalSource,

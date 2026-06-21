@@ -2,6 +2,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  CircleDashed,
   Copy,
   Download,
   FolderOpen,
@@ -207,7 +208,7 @@ export function OutputPreviewModal({
                   {getOutputPreviewReviewStatusLabel(reviewStatus)}
                 </span>
               </div>
-              <div className="mb-2 grid grid-cols-3 gap-1.5">
+              <div className="mb-2 grid grid-cols-4 gap-1.5">
                 <button
                   type="button"
                   className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 text-xs font-medium text-emerald-700 transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-45"
@@ -217,6 +218,16 @@ export function OutputPreviewModal({
                 >
                   <Check className="h-3 w-3" />
                   保留
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-warm-line/60 bg-warm-paper px-2 text-xs font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-ink disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={!item.artifactId || reviewStatus === "failed" || reviewStatus === "pending"}
+                  onClick={() => onSetReviewStatus("pending")}
+                  title="恢复为待检查"
+                >
+                  <CircleDashed className="h-3 w-3" />
+                  待检
                 </button>
                 <button
                   type="button"
