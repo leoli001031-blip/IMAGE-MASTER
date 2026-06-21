@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -171,6 +171,11 @@ export function ImageDetailPanel({
 }: ImageDetailPanelProps) {
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
+  const [compareWithSource, setCompareWithSource] = useState(false);
+
+  useEffect(() => {
+    setCompareWithSource(false);
+  }, [item?.id]);
 
   if (!open || !item) return null;
   const sourceVersionTarget = item.sourceVersion && (item.sourceVersion.jobId || item.sourceVersion.artifactId)
@@ -245,16 +250,32 @@ export function ImageDetailPanel({
           {/* image area */}
           <div className="relative flex min-h-0 flex-1 items-center justify-center bg-warm-ink/5 p-4 lg:p-8">
             {item.url ? (
-              <div className="relative h-[min(70vh,720px)] w-full">
-                <Image
-                  src={item.url}
-                  alt={item.title}
-                  width={1200}
-                  height={1200}
-                  className="h-full w-full rounded-lg object-contain"
-                  unoptimized={item.url.startsWith("data:")}
-                />
-              </div>
+              compareWithSource && item.sourceVersion?.url ? (
+                <div className="grid h-[min(70vh,720px)] w-full gap-3 lg:grid-cols-2">
+                  <ComparisonImage
+                    label="上一版"
+                    src={item.sourceVersion.url}
+                    alt={item.sourceVersion.title || "上一版成片"}
+                  />
+                  <ComparisonImage
+                    label="当前版"
+                    src={item.url}
+                    alt={item.title}
+                    active
+                  />
+                </div>
+              ) : (
+                <div className="relative h-[min(70vh,720px)] w-full">
+                  <Image
+                    src={item.url}
+                    alt={item.title}
+                    width={1200}
+                    height={1200}
+                    className="h-full w-full rounded-lg object-contain"
+                    unoptimized={item.url.startsWith("data:")}
+                  />
+                </div>
+              )
             ) : (
               <div className="flex flex-col items-center gap-3 text-warm-muted/50">
                 <AlertTriangle className="h-10 w-10" />
@@ -364,15 +385,28 @@ export function ImageDetailPanel({
               <Section
                 icon={RefreshCw}
                 title="上一版来源"
-                action={sourceVersionTarget && onNavigate ? (
-                  <button
-                    type="button"
-                    onClick={() => onNavigate(sourceVersionTarget)}
-                    className="rounded-md border border-warm-line bg-warm-bg px-2 py-1 text-[11px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
-                  >
-                    打开上一版
-                  </button>
-                ) : undefined}
+                action={
+                  <div className="flex items-center gap-1.5">
+                    {item.sourceVersion.url && (
+                      <button
+                        type="button"
+                        onClick={() => setCompareWithSource((value) => !value)}
+                        className="rounded-md border border-warm-line bg-warm-bg px-2 py-1 text-[11px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                      >
+                        {compareWithSource ? "退出对比" : "对比当前"}
+                      </button>
+                    )}
+                    {sourceVersionTarget && onNavigate && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigate(sourceVersionTarget)}
+                        className="rounded-md border border-warm-line bg-warm-bg px-2 py-1 text-[11px] font-medium text-warm-muted transition hover:border-warm-primary/40 hover:text-warm-primary"
+                      >
+                        打开上一版
+                      </button>
+                    )}
+                  </div>
+                }
               >
                 <div className="flex gap-2 rounded-lg border border-warm-line bg-warm-bg p-2">
                   {item.sourceVersion.url && (
@@ -633,6 +667,39 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-baseline gap-2">
       <dt className="shrink-0 text-warm-muted/60">{label}</dt>
       <dd className="truncate text-warm-ink/80">{value}</dd>
+    </div>
+  );
+}
+
+function ComparisonImage({
+  label,
+  src,
+  alt,
+  active,
+}: {
+  label: string;
+  src: string;
+  alt: string;
+  active?: boolean;
+}) {
+  return (
+    <div className="relative min-h-0 overflow-hidden rounded-lg border border-warm-line bg-warm-paper/80">
+      <Image
+        src={src}
+        alt={alt}
+        width={900}
+        height={900}
+        className="h-full w-full object-contain"
+        unoptimized={src.startsWith("data:")}
+      />
+      <div
+        className={cn(
+          "absolute left-3 top-3 rounded-full px-2.5 py-1 text-xs",
+          active ? "bg-warm-primary text-warm-paper" : "bg-warm-ink/65 text-warm-paper"
+        )}
+      >
+        {label}
+      </div>
     </div>
   );
 }

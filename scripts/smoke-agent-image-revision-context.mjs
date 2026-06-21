@@ -288,8 +288,8 @@ assert.match(
 );
 assert.match(
   imageDetailPanelSource,
-  /sourceVersion\?: \{[\s\S]*title\?: string[\s\S]*url\?: string[\s\S]*sourceVersionTarget[\s\S]*上一版来源[\s\S]*打开上一版[\s\S]*ReferenceThumb[\s\S]*role: "previous"/,
-  "image detail panel should show and open the previous version source for rerun or Agent revision images"
+  /sourceVersion\?: \{[\s\S]*title\?: string[\s\S]*url\?: string[\s\S]*compareWithSource[\s\S]*sourceVersionTarget[\s\S]*ComparisonImage[\s\S]*label="上一版"[\s\S]*label="当前版"[\s\S]*上一版来源[\s\S]*退出对比[\s\S]*对比当前[\s\S]*打开上一版[\s\S]*ReferenceThumb[\s\S]*role: "previous"/,
+  "image detail panel should show, compare, and open the previous version source for rerun or Agent revision images"
 );
 assert.match(
   resultPageSource,
