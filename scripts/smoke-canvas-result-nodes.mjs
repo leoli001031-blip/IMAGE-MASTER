@@ -494,7 +494,7 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙/,
+  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*getAgentGlobalResultReviewScopeLabel\(brief, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙/,
   "global result review commands should clear the command, show progress, and mark scoped result subsets without falling through to planning"
 );
 assert.match(
@@ -514,8 +514,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /function getAgentGlobalResultReviewTargets[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*return artifacts[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
-  "global result review commands should separate target scopes like 待重做图 or 已淘汰图 from actions like 全部标待重做"
+  /function getAgentGlobalResultReviewTargets[\s\S]*activeFilter: ResultReviewFilter = "all"[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*targetsRejectedScope[\s\S]*getArtifactReviewStatus\(artifact\) === "rejected"[\s\S]*activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent\(compactText\)[\s\S]*artifactMatchesResultReviewFilter\(artifact, activeFilter\)[\s\S]*return artifacts[\s\S]*function hasAgentCurrentFilteredResultScopeIntent[\s\S]*所有结果\|全部结果\|结果墙[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
+  "global result review commands should separate explicit status scopes and let current-filter pronouns target the filtered subset"
 );
 assert.match(
   workbenchSource,

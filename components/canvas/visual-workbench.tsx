@@ -3057,9 +3057,9 @@ export function VisualWorkbench() {
     const brief = userBrief.trim();
     const reviewStatus = getAgentResultReviewStatusIntent(brief);
     const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent(brief);
-    const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts);
+    const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
     if (!reviewStatus || !hasScopeIntent) return false;
-    const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief);
+    const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter);
     if (targets.length === 0) {
       setAgentLastUserBrief(brief);
       setComposeBrief("");
@@ -11741,7 +11741,8 @@ function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | 
 
 function getAgentGlobalResultReviewTargets(
   text: string,
-  artifacts: PersistedGeneratedArtifact[]
+  artifacts: PersistedGeneratedArtifact[],
+  activeFilter: ResultReviewFilter = "all"
 ): PersistedGeneratedArtifact[] {
   const compactText = text.replace(/\s+/g, "");
   if (artifacts.length === 0 || !compactText) return [];
@@ -11764,24 +11765,35 @@ function getAgentGlobalResultReviewTargets(
   if (targetsRejectedScope) {
     return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "rejected");
   }
+  if (activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent(compactText)) {
+    return artifacts.filter((artifact) => artifactMatchesResultReviewFilter(artifact, activeFilter));
+  }
   if (/(全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText)) {
     return artifacts;
   }
   return [];
 }
 
-function hasAgentGlobalResultReviewScopeIntent(text: string): boolean {
-  const compactText = text.replace(/\s+/g, "");
-  return /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的)|已保留(都|图|结果|的)|可用图|通过图|保留图|已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
+function hasAgentCurrentFilteredResultScopeIntent(compactText: string): boolean {
+  if (/(所有结果|全部结果|结果墙|整套|这一套|这套)/.test(compactText)) return false;
+  return /(这些|当前|当前筛选|筛选结果|这批|这一批|这类|这部分|当前这批|当前这些|全部|全都|所有)/.test(compactText);
 }
 
-function getAgentGlobalResultReviewScopeLabel(text: string): string {
+function hasAgentGlobalResultReviewScopeIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  return /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的)|已保留(都|图|结果|的)|可用图|通过图|保留图|已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图|当前|当前筛选|筛选结果|这批|这一批|这类|这部分|当前这批|当前这些|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
+}
+
+function getAgentGlobalResultReviewScopeLabel(text: string, activeFilter: ResultReviewFilter = "all"): string {
   const compactText = text.replace(/\s+/g, "");
   if (/(失败|不可用|报错|出错)/.test(compactText)) return "失败结果";
   if (/(待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项)/.test(compactText)) return "待重做结果";
   if (/(待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的))/.test(compactText)) return "待检查结果";
   if (/(已保留(都|图|结果|的)|可用图|通过图|保留图)/.test(compactText)) return "已保留结果";
   if (/(已淘汰(都|图|结果|的)?|淘汰(都|图|结果|的)|已弃用(都|图|结果|的)?|弃用图)/.test(compactText)) return "已淘汰结果";
+  if (activeFilter !== "all" && hasAgentCurrentFilteredResultScopeIntent(compactText)) {
+    return `当前「${getResultReviewFilterLabel(activeFilter)}」结果`;
+  }
   return "当前结果";
 }
 
