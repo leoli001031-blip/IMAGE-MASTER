@@ -1223,6 +1223,7 @@ export function VisualWorkbench() {
   const [agentImageEditTarget, setAgentImageEditTarget] = useState<AgentImageEditTarget | null>(null);
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false);
   const [resultReviewFilter, setResultReviewFilter] = useState<ResultReviewFilter>("all");
+  const [highlightedResultReviewFilter, setHighlightedResultReviewFilter] = useState<ResultReviewFilter | null>(null);
   const [hiddenArtifactNodeIds, setHiddenArtifactNodeIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
@@ -1695,6 +1696,11 @@ export function VisualWorkbench() {
     () => buildResultReviewFilterCounts(visibleArtifacts),
     [visibleArtifacts]
   );
+  useEffect(() => {
+    if (!highlightedResultReviewFilter) return;
+    const timeout = window.setTimeout(() => setHighlightedResultReviewFilter(null), 1800);
+    return () => window.clearTimeout(timeout);
+  }, [highlightedResultReviewFilter]);
   const canvasStageNodes = useMemo(
     () =>
       stageNodes
@@ -4293,6 +4299,8 @@ export function VisualWorkbench() {
             }
           : preview
       );
+      const highlightedFilter = getResultReviewFilterForArtifactReviewStatus(status);
+      if (highlightedFilter) setHighlightedResultReviewFilter(highlightedFilter);
       setArtifactMessage(`已标记「${artifact.title}」为${label}`);
 
       try {
@@ -5811,6 +5819,7 @@ export function VisualWorkbench() {
         <ResultReviewFilterBar
           value={resultReviewFilter}
           counts={resultReviewFilterCounts}
+          highlightedValue={highlightedResultReviewFilter}
           onChange={setResultReviewFilter}
         />
       )}
@@ -7138,10 +7147,12 @@ function CanvasStage({
 function ResultReviewFilterBar({
   value,
   counts,
+  highlightedValue,
   onChange,
 }: {
   value: ResultReviewFilter;
   counts: Record<ResultReviewFilter, number>;
+  highlightedValue?: ResultReviewFilter | null;
   onChange: (value: ResultReviewFilter) => void;
 }) {
   return (
@@ -7149,6 +7160,7 @@ function ResultReviewFilterBar({
       <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-warm-line/55 bg-warm-paper/90 p-1 text-[11px] text-warm-muted shadow-sm backdrop-blur">
         {resultReviewFilterOptions.map((option) => {
           const active = option.id === value;
+          const highlighted = option.id === highlightedValue;
           const count = counts[option.id] ?? 0;
           return (
             <button
@@ -7159,7 +7171,8 @@ function ResultReviewFilterBar({
                 "inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-medium transition",
                 active
                   ? "bg-warm-ink text-warm-paper shadow-sm"
-                  : "text-warm-muted hover:bg-warm-bg hover:text-warm-ink"
+                  : "text-warm-muted hover:bg-warm-bg hover:text-warm-ink",
+                highlighted && !active && "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
               )}
               title={`${option.label}：${count} 张`}
             >
@@ -7193,6 +7206,13 @@ function buildResultReviewFilterCounts(
     if (isArtifactVisualQaRisk(artifact)) counts.qa_risk += 1;
   }
   return counts;
+}
+
+function getResultReviewFilterForArtifactReviewStatus(status: ArtifactReviewStatus): ResultReviewFilter | null {
+  if (status === "approved") return "approved";
+  if (status === "needs_redo") return "needs_redo";
+  if (status === "failed") return "failed";
+  return null;
 }
 
 function isCanvasNodeVisibleForResultReviewFilter(

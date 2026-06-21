@@ -404,6 +404,16 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /highlightedResultReviewFilter[\s\S]*getResultReviewFilterForArtifactReviewStatus\(status\)[\s\S]*ResultReviewFilterBar[\s\S]*highlightedValue=\{highlightedResultReviewFilter\}/,
+  "review status changes should visually highlight the matching result-review filter"
+);
+assert.match(
+  workbenchSource,
+  /function ResultReviewFilterBar[\s\S]*highlightedValue[\s\S]*highlighted && !active[\s\S]*ring-emerald-200/,
+  "result review filter buttons should show a brief highlight when counts change from a review action"
+);
+assert.match(
+  workbenchSource,
   /type ResultReviewFilter = "all" \| "approved" \| "needs_redo" \| "failed" \| "qa_risk"[\s\S]*只看 QA 风险/,
   "result review filter should include a QA-risk view for large result sets"
 );
