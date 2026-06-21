@@ -265,6 +265,11 @@ assert.match(
   "artifact result node caption metadata should mark rerun outputs as new versions"
 );
 assert.match(
+  workflowNodeSource,
+  /artifactSourceVersionTitle = isArtifactResult \? getArtifactNodeSourceVersionTitle\(data\) : ""[\s\S]*title=\{`上一版：\$\{artifactSourceVersionTitle\}`\}[\s\S]*<RefreshCw[\s\S]*新版[\s\S]*function getArtifactNodeSourceVersionTitle[\s\S]*sourceVersionTitle/,
+  "artifact result nodes should render a visible new-version badge with previous-version context"
+);
+assert.match(
   workbenchSource,
   /requestCanvasFocus\(getArtifactResultWallFocusNodeIds\(restoredNodes, 8\)\)/,
   "restored project canvases should also focus the result wall when results exist"

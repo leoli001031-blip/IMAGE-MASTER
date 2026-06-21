@@ -220,6 +220,7 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
   const artifactVisualQaBadge = isArtifactResult ? getArtifactVisualQaBadge(data) : null;
   const artifactReviewDetail = isArtifactResult ? getArtifactReviewDetail(data) : null;
   const artifactCaptionMeta = getArtifactNodeCaptionMeta(data);
+  const artifactSourceVersionTitle = isArtifactResult ? getArtifactNodeSourceVersionTitle(data) : "";
   const artifactLayoutStyle = getArtifactNodeLayoutStyle(data);
   const nodeTitle = isArtifactResult
     ? `${getArtifactNodeFullTitle(data)} · ${semanticVisual.label} · ${kindText}`
@@ -324,6 +325,15 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
                 {getVisualNodeRatioLabel(data) && (
                   <span className="rounded border border-warm-paper/25 bg-warm-paper/75 px-1.5 py-0.5 text-[10px] leading-none text-warm-ink/75 shadow-sm backdrop-blur">
                     {getVisualNodeRatioLabel(data)}
+                  </span>
+                )}
+                {artifactSourceVersionTitle && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded border border-warm-primary/20 bg-warm-primary/90 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm backdrop-blur"
+                    title={`上一版：${artifactSourceVersionTitle}`}
+                  >
+                    <RefreshCw className="h-2.5 w-2.5" />
+                    新版
                   </span>
                 )}
               </div>
@@ -690,6 +700,11 @@ function getArtifactNodeCaptionMeta(data: CanvasNodeData): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function getArtifactNodeSourceVersionTitle(data: CanvasNodeData): string {
+  if (data.source !== "artifact-history") return "";
+  return getStringParameter(getNodeParameters(data)?.sourceVersionTitle) ?? "";
 }
 
 function getArtifactReviewBadge(data: CanvasNodeData): { status: ArtifactReviewStatus; label: string } | null {
