@@ -1017,6 +1017,7 @@ interface GenerationOutputPreviewItem {
   status?: string;
   prompt?: string;
   metadata?: Record<string, unknown>;
+  group?: string;
   provider?: string;
   model?: string;
   error?: string;
@@ -4162,6 +4163,7 @@ export function VisualWorkbench() {
             status: output.status,
             prompt: getGenerationOutputPreviewPrompt({ output, artifact: outputArtifact, job: outputJob, metadata }),
             metadata,
+            group: getGenerationOutputPreviewGroup(metadata, outputArtifact),
             provider: outputArtifact?.provider || getStringValue(metadata.provider),
             model: outputArtifact?.model || getStringValue(metadata.model),
             error: outputJob?.error || getStringValue(metadata.error) || getProviderDiagnosticSummary(metadata),
@@ -4180,6 +4182,7 @@ export function VisualWorkbench() {
         status: detail.status || artifact?.status,
         prompt: getGenerationOutputPreviewPrompt({ artifact, job, metadata: fallbackMetadata }),
         metadata: fallbackMetadata,
+        group: getStringValue(detail.group) || getGenerationOutputPreviewGroup(fallbackMetadata, artifact),
         provider: artifact?.provider || getStringValue(fallbackMetadata.provider),
         model: artifact?.model || getStringValue(fallbackMetadata.model),
         error: job?.error || getStringValue(fallbackMetadata.error) || getProviderDiagnosticSummary(fallbackMetadata),
@@ -5938,6 +5941,7 @@ export function VisualWorkbench() {
           status: item.status,
           prompt: item.prompt,
           metadata: item.metadata,
+          group: item.group,
         },
       })
     );
@@ -6308,6 +6312,17 @@ function getGenerationOutputPreviewPrompt({
     getStringValue(metadata.prompt) ||
     getStringValue(metadata.finalPrompt) ||
     getStringValue(metadata.revisedPrompt)
+  );
+}
+
+function getGenerationOutputPreviewGroup(
+  metadata: Record<string, unknown>,
+  artifact?: PersistedGeneratedArtifact
+): string | undefined {
+  return (
+    getStringValue(metadata.resultGroupTitle) ||
+    getStringValue(metadata.rerunGroupTitle) ||
+    (artifact ? getAgentArtifactResultGroupLabel(artifact) : undefined)
   );
 }
 

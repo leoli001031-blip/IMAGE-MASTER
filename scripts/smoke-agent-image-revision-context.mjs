@@ -60,8 +60,13 @@ assert.match(
 
 assert.match(
   source,
-  /dispatchPreviewOutputAction[\s\S]*prompt: item\.prompt,[\s\S]*metadata: item\.metadata,/,
-  "canvas preview detail actions should pass prompt and metadata into Agent image edit handoff"
+  /dispatchPreviewOutputAction[\s\S]*prompt: item\.prompt,[\s\S]*metadata: item\.metadata,[\s\S]*group: item\.group,/,
+  "canvas preview detail actions should pass prompt, metadata, and group into Agent image edit handoff"
+);
+assert.match(
+  source,
+  /interface GenerationOutputPreviewItem[\s\S]*group\?: string;[\s\S]*function getGenerationOutputPreviewGroup[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*getAgentArtifactResultGroupLabel/,
+  "preview items should preserve or infer their source result group"
 );
 
 assert.match(
