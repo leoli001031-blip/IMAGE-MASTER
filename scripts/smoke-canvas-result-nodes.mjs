@@ -541,7 +541,12 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*getAgentGlobalResultReviewScopeLabel\(brief, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*remainingText = formatAgentReviewRemainingSummary[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙。\$\{remainingText\}/,
+  /handleApplyGlobalResultReviewCommand[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)[\s\S]*keepCountIntent && \(hasScopeIntent \|\| !workflowPlanPreview\)[\s\S]*selectAgentResultGroupKeepArtifacts\(targets, keepCountIntent\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言只保留 \$\{keepCountIntent\} 张[\s\S]*只影响结果墙挑图状态/,
+  "global only-keep-N review commands should pick from result-wall targets without hijacking unspecific plan edits while a preview is open"
+);
+assert.match(
+  workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*getAgentGlobalResultReviewScopeLabel\(brief, resultReviewFilter\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*setComposeBrief\(""\)[\s\S]*正在把 \$\{targetIds\.length\} 张\$\{scopeLabel\}标记为[\s\S]*remainingText = formatAgentReviewRemainingSummary[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙。\$\{remainingText\}/,
   "global result review commands should clear the command, show progress, report remaining review work, and avoid falling through to planning"
 );
 assert.match(

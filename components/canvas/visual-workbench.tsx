@@ -3086,6 +3086,56 @@ export function VisualWorkbench() {
 
   const handleApplyGlobalResultReviewCommand = async (userBrief: string): Promise<boolean> => {
     const brief = userBrief.trim();
+    const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent(brief);
+    const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
+    if (keepCountIntent && (hasScopeIntent || !workflowPlanPreview)) {
+      const targets = hasScopeIntent
+        ? getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter)
+        : visibleArtifacts;
+      const scopeLabel = hasScopeIntent
+        ? getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter)
+        : "当前结果";
+      if (targets.length === 0) {
+        setAgentLastUserBrief(brief);
+        setComposeBrief("");
+        setComposeMessage(`当前结果墙里没有找到可挑选的${scopeLabel}。`);
+        return true;
+      }
+      const keepArtifacts = selectAgentResultGroupKeepArtifacts(targets, keepCountIntent);
+      const keepIds = keepArtifacts.map((artifact) => artifact.id);
+      const rejectIds = targets
+        .filter((artifact) => !keepIds.includes(artifact.id))
+        .map((artifact) => artifact.id);
+      setResultReviewFilter("approved");
+      setHighlightedResultReviewFilter("approved");
+      if (keepIds.length > 0) {
+        await handleSetArtifactGroupReviewStatus(
+          keepIds,
+          "approved",
+          `Agent 自然语言只保留 ${keepCountIntent} 张：${brief}`
+        );
+      }
+      if (rejectIds.length > 0) {
+        await handleSetArtifactGroupReviewStatus(
+          rejectIds,
+          "rejected",
+          `Agent 自然语言只保留 ${keepCountIntent} 张，其余淘汰：${brief}`
+        );
+      }
+      const remainingText = formatAgentReviewRemainingSummary(visibleArtifacts, {
+        ...Object.fromEntries(keepIds.map((artifactId) => [artifactId, "approved" as const])),
+        ...Object.fromEntries(rejectIds.map((artifactId) => [artifactId, "rejected" as const])),
+      });
+      const rejectText = rejectIds.length > 0
+        ? `其余 ${rejectIds.length} 张标记为已淘汰`
+        : "没有淘汰其他图片";
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(
+        `已从${scopeLabel}里保留 ${keepIds.length}/${targets.length} 张，${rejectText}；只影响结果墙挑图状态。${remainingText}`
+      );
+      return true;
+    }
     const hasRetryIntent = hasAgentGlobalResultReviewRetryIntent(brief);
     if (hasRetryIntent) {
       const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
@@ -3112,7 +3162,6 @@ export function VisualWorkbench() {
       return true;
     }
     const reviewStatus = getAgentResultReviewStatusIntent(brief);
-    const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent(brief);
     const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts, resultReviewFilter);
     if (!reviewStatus || !hasScopeIntent) return false;
     const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief, resultReviewFilter);
