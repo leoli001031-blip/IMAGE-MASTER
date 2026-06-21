@@ -502,8 +502,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*getAgentImageCopyPromptIntent\(brief\)[\s\S]*target\.prompt\?\.trim\(\)[\s\S]*navigator\.clipboard\?\.writeText[\s\S]*await navigator\.clipboard\.writeText\(targetPrompt\)[\s\S]*已复制「\$\{target\.title\}」的 prompt[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageCopyPromptIntent\(brief\)[\s\S]*target\.prompt\?\.trim\(\)[\s\S]*navigator\.clipboard\?\.writeText[\s\S]*await navigator\.clipboard\.writeText\(targetPrompt\)[\s\S]*已复制「\$\{target\.title\}」的 prompt[\s\S]*return[\s\S]*getAgentImageVisualQaIntent\(brief\)/,
   "focused single-image chat should copy the selected result prompt before falling through to revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageVisualQaIntent\(brief\)[\s\S]*!target\.artifactId[\s\S]*还没有可质检的产物记录[\s\S]*handleRunArtifactVisualQa\(target\.artifactId\)[\s\S]*正在用 Agent 审核「\$\{target\.title\}」[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused single-image chat should run visual QA for the selected artifact before falling through to revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -590,6 +595,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageCopyPromptIntent[\s\S]*复制\|拷贝\|copy[\s\S]*prompt\|提示词\|原prompt\|原始prompt[\s\S]*\/i\.test\(compactText\)/,
   "single-image copy-prompt intent should require explicit prompt wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageVisualQaIntent[\s\S]*待检查\|未检查\|没检查\|标记\|状态[\s\S]*return false[\s\S]*qa\|质检\|审核[\s\S]*检查\)\(这张\|当前\)/i,
+  "single-image visual QA intent should avoid review-state wording and require explicit QA or check wording"
 );
 assert.match(
   workbenchSource,

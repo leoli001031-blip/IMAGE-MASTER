@@ -2754,6 +2754,17 @@ export function VisualWorkbench() {
       setComposeMessage(`已复制「${target.title}」的 prompt。`);
       return;
     }
+    if (getAgentImageVisualQaIntent(brief)) {
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (!target.artifactId) {
+        setComposeMessage(`「${target.title}」还没有可质检的产物记录。`);
+        return;
+      }
+      void handleRunArtifactVisualQa(target.artifactId);
+      setComposeMessage(`正在用 Agent 审核「${target.title}」，完成后会同步到详情和 QA 风险筛选。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (keepCountIntent === 1 && target.artifactId) {
@@ -12100,6 +12111,13 @@ function getAgentImageCopyPromptIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(复制|拷贝|copy)(这张|当前)?的?(prompt|提示词|原prompt|原始prompt)|(?:prompt|提示词|原prompt|原始prompt)(复制|拷贝|copy)/i.test(compactText);
+}
+
+function getAgentImageVisualQaIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  if (/(待检查|未检查|没检查|标记|状态|设为|改成|改为|回到|恢复)/.test(compactText)) return false;
+  return /(?:(跑|做|执行|开始|重新|再|帮我)?(视觉)?(qa|质检|审核))(这张|当前)?(图|图片|结果)?|(?:检查)(这张|当前)(图|图片|结果)?|(?:这张|当前)(图|图片|结果)?(检查|质检|审核)|(?:商品|模特|光影|文案)(一致性|安全区)?(检查|质检|审核)/i.test(compactText);
 }
 
 function downloadAgentImageTarget(url: string, title: string): void {
