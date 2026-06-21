@@ -183,6 +183,12 @@ assert.match(
 
 assert.match(
   source,
+  /const handleRetryAll = \(event: Event\) => \{[\s\S]*canRetryImageJob\(job\) \|\| canRerunImageJob\(job\) \|\| canRetryJob\(job\)[\s\S]*if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*else if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job\)[\s\S]*else \{[\s\S]*handleRetryJob\(job\)/,
+  "group retry should support completed-image rerun in addition to retry-image and failed-job retry"
+);
+
+assert.match(
+  source,
   /const handleRerunImageJob = async \(job: PersistedGenerationJob\) => \{[\s\S]*\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/rerun[\s\S]*Created from canvas image detail with original references[\s\S]*已带原参考图加入队列/,
   "canvas image detail should create a new version for completed Agent images through the rerun API"
 );

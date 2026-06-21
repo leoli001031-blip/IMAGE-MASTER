@@ -4688,7 +4688,9 @@ export function VisualWorkbench() {
         const retryJobs: PersistedGenerationJob[] = [];
         for (const jobId of jobIds) {
           const job = await resolveRetryJob(jobId);
-          if (job && (canRetryImageJob(job) || canRetryJob(job))) retryJobs.push(job);
+          if (job && (canRetryImageJob(job) || canRerunImageJob(job) || canRetryJob(job))) {
+            retryJobs.push(job);
+          }
         }
         if (retryJobs.length === 0) {
           setJobMessage("当前任务没有可重做图片");
@@ -4698,6 +4700,8 @@ export function VisualWorkbench() {
         for (const job of retryJobs) {
           if (canRetryImageJob(job)) {
             await handleRetryImageJob(job);
+          } else if (canRerunImageJob(job)) {
+            await handleRerunImageJob(job);
           } else {
             await handleRetryJob(job);
           }
