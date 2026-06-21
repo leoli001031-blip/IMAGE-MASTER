@@ -169,8 +169,18 @@ assert.match(
 );
 assert.match(
   outputPreviewModalSource,
-  /本图操作[\s\S]*onEdit[\s\S]*onSaveAsAsset[\s\S]*onOpenFolder/,
-  "image detail preview should keep modify, save-as-asset, and open-folder callbacks in the detail sidebar"
+  /本图操作[\s\S]*onEdit[\s\S]*让 Agent 改[\s\S]*onSaveAsAsset[\s\S]*onOpenFolder/,
+  "image detail preview should expose an explicit Agent-edit callback in the detail sidebar"
+);
+assert.match(
+  workflowNodeSource,
+  /让 Agent 修改[\s\S]*dispatchArtifactEdit\(data, id\)[\s\S]*改图/,
+  "artifact result cards should expose a direct single-image Agent edit action"
+);
+assert.match(
+  workflowNodeSource,
+  /function dispatchArtifactEdit[\s\S]*image-master:generation-frame-output-edit[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
+  "artifact result cards should dispatch the same single-image edit context as the detail preview"
 );
 assert.match(
   outputPreviewModalSource,

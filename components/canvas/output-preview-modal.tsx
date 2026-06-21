@@ -242,7 +242,7 @@ export function OutputPreviewModal({
                   title="把这张图交给 Agent 再修改"
                 >
                   <Wand2 className="h-3 w-3" />
-                  修改
+                  让 Agent 改
                 </button>
                 <button
                   type="button"

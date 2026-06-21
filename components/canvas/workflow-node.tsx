@@ -1,6 +1,6 @@
 import { memo, type CSSProperties } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { Check, ExternalLink, ImageIcon, PenLine, RefreshCw, XCircle } from "lucide-react";
+import { Check, ExternalLink, ImageIcon, PenLine, RefreshCw, Wand2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { AssetPreview } from "@/components/canvas/asset-preview";
 import { CopyNodeSummary } from "@/components/canvas/copy-node-summary";
@@ -376,6 +376,20 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
                 <>
                   <button
                     type="button"
+                    aria-label={`让 Agent 修改：${data.label}`}
+                    className="nodrag nopan inline-flex h-8 items-center gap-1 rounded border border-warm-paper/45 bg-warm-paper/95 px-2 text-[11px] leading-none text-warm-ink shadow-sm backdrop-blur transition hover:bg-warm-paper hover:text-warm-primary"
+                    title="让 Agent 只改这张"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      dispatchArtifactEdit(data, id);
+                    }}
+                  >
+                    <Wand2 className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">改图</span>
+                  </button>
+                  <button
+                    type="button"
                     aria-label={`保留：${data.label}`}
                     className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-emerald-700 shadow-sm backdrop-blur transition hover:bg-emerald-50"
                     title="保留这张"
@@ -738,6 +752,21 @@ function dispatchArtifactGroupRetry(detail: ArtifactGroupEditDetail): void {
   window.dispatchEvent(new CustomEvent("image-master:artifact-group-retry", { detail }));
 }
 
+function dispatchArtifactEdit(data: CanvasNodeData, nodeId: string): void {
+  window.dispatchEvent(
+    new CustomEvent("image-master:generation-frame-output-edit", {
+      detail: {
+        nodeId,
+        artifactId: getStringParameter(data.artifactId),
+        jobId: getStringParameter(data.jobId),
+        url: getStringParameter(data.referenceUrl) || getStringParameter(data.previewUrl),
+        title: getArtifactNodeFullTitle(data),
+        status: getStringParameter(data.artifactStatus),
+      },
+    })
+  );
+}
+
 function getVisualNodePreviewFit(
   semanticType: PortVisualType,
   data: CanvasNodeData
@@ -925,6 +954,10 @@ function getStringArrayParameter(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
     : [];
+}
+
+function getStringParameter(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function getNodeParameters(data: CanvasNodeData): Record<string, unknown> | undefined {
