@@ -2957,7 +2957,10 @@ export function VisualWorkbench() {
     await runWorkflowCompose(brief, canvasProductWorkflowContext ? null : activeProductComponent, "compose", brief);
   };
 
-  const handleEditWorkflowPlanFromAgent = async (visiblePreview?: WorkflowPlanPreview | null) => {
+  const handleEditWorkflowPlanFromAgent = async (
+    visiblePreview?: WorkflowPlanPreview | null,
+    scopeGroup?: AgentPlanGroup | null
+  ) => {
     const brief = composeBrief.trim();
     const activePreview = visiblePreview ?? workflowPlanPreview;
     if (!brief || !activePreview) {
@@ -2969,6 +2972,7 @@ export function VisualWorkbench() {
       preview: activePreview,
       draft: pendingWorkflowDraft,
       userBrief: brief,
+      scopeGroup,
     });
     const effectivePlanEdit = planEdit.changed
       ? planEdit
@@ -2976,6 +2980,7 @@ export function VisualWorkbench() {
           preview: activePreview,
           draft: pendingWorkflowDraft,
           userBrief: brief,
+          scopeGroup,
         });
     if (effectivePlanEdit.changed) {
       setWorkflowPlanPreview(effectivePlanEdit.preview);
@@ -8374,7 +8379,7 @@ function CanvasAgentPanel({
   collapsed: boolean;
   onComposeBriefChange: (brief: string) => void;
   onComposeWorkflow: () => void;
-  onEditWorkflowPlan: (preview: WorkflowPlanPreview) => void;
+  onEditWorkflowPlan: (preview: WorkflowPlanPreview, scopeGroup?: AgentPlanGroup | null) => void;
   onApplyResultGroupEdit: (
     group: AgentPlanGroup,
     brief: string,
@@ -8450,6 +8455,10 @@ function CanvasAgentPanel({
     ? onComposeWorkflow
       : onComposeWorkflow;
   const handlePrimaryAction = () => {
+    if (workflowPlanPreview && focusedPlanGroup && composeBrief.trim() && !hasEditTarget) {
+      onEditWorkflowPlan(workflowPlanPreview, focusedPlanGroup);
+      return;
+    }
     if (focusedPlanGroup && composeBrief.trim() && !workflowPlanPreview && !hasEditTarget) {
       onApplyResultGroupEdit(focusedPlanGroup, composeBrief, focusedGroupArtifacts);
       return;
@@ -16622,10 +16631,12 @@ function applyAgentNaturalLanguagePlanEdit({
   preview,
   draft,
   userBrief,
+  scopeGroup,
 }: {
   preview: WorkflowPlanPreview;
   draft: WorkflowComposeDraft | null;
   userBrief: string;
+  scopeGroup?: AgentPlanGroup | null;
 }): {
   preview: WorkflowPlanPreview;
   draft: WorkflowComposeDraft | null;
@@ -16644,178 +16655,193 @@ function applyAgentNaturalLanguagePlanEdit({
   const changes: string[] = [];
 
   const originalCount = editsUseMatrix ? nextMatrix.length : nextItems.length;
-  const namedSceneEdit = applyAgentNamedScenePlanEdits({
-    text,
-    items: nextItems,
-    matrix: nextMatrix,
-    editsUseMatrix,
-  });
-  nextItems = namedSceneEdit.items;
-  nextMatrix = namedSceneEdit.matrix;
-  changes.push(...namedSceneEdit.changes);
-
-  const removalTargets = getAgentPlanRemovalTargets(text).filter((target) =>
-    !(target.id === "scene" && namedSceneEdit.handledSceneRemoval)
-  );
-  for (const target of removalTargets) {
-    const beforeItems = nextItems.length;
-    const beforeMatrix = nextMatrix.length;
-    if (editsUseMatrix) {
-      nextMatrix = nextMatrix.filter((item) => !agentPlanMatrixItemMatchesTarget(item, target));
-    } else {
-      nextItems = nextItems.filter((item) => !agentPlanPreviewItemMatchesTarget(item, target));
-    }
-    let removed = editsUseMatrix ? beforeMatrix - nextMatrix.length : beforeItems - nextItems.length;
-    if (removed === 0 && target.id === "scene") {
-      if (editsUseMatrix) {
-        nextMatrix = nextMatrix.filter((item) => !isFallbackScenePlanItem(item));
-        removed = beforeMatrix - nextMatrix.length;
-      } else {
-        nextItems = nextItems.filter((item) => !isFallbackScenePreviewItem(item));
-        removed = beforeItems - nextItems.length;
-      }
-    }
-    if (removed > 0) changes.push(`删除${target.label} ${removed} 张`);
-  }
-
-  const relativeCountEdits = getAgentPlanRelativeCountEditsForTargets(text).filter((edit) =>
-    !(edit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)
-  );
-  const relativeTargetIds = new Set(relativeCountEdits.map((edit) => edit.target.id));
-  for (const edit of relativeCountEdits) {
-    const currentCount = getAgentPlanTargetCount({
-      items: nextItems,
-      matrix: nextMatrix,
-      editsUseMatrix,
-      target: edit.target,
-    });
-    const minCount = edit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
-    const nextCount = Math.max(minCount, currentCount + edit.delta);
-    if (currentCount > 0 && nextCount !== currentCount) {
-      if (editsUseMatrix) {
-        nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, nextCount);
-      } else {
-        nextItems = adjustAgentPlanItemsToCount(nextItems, edit.target, nextCount);
-      }
-      const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
-      if (instruction) {
-        nextMatrix = applyAgentPlanContentInstructionToMatrix(nextMatrix, edit.target, instruction);
-        nextItems = applyAgentPlanContentInstructionToItems(nextItems, edit.target, instruction);
-      }
-      changes.push(`${edit.target.label}${edit.label}，剩 ${nextCount} 张${instruction ? `，方向：${instruction}` : ""}`);
-    } else if (currentCount === 0 && edit.delta > 0) {
-      const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
-      const added = createAgentPlanItemsForNewTarget({
-        target: edit.target,
-        count: edit.delta,
-        instruction,
-        existingItems: nextItems,
-        existingMatrix: nextMatrix,
-      });
-      nextItems = [...nextItems, ...added.items];
-      if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
-      changes.push(`新增${edit.target.label} ${edit.delta} 张${instruction ? `，方向：${instruction}` : ""}`);
-    }
-  }
-
-  const countEdits = getAgentPlanCountEdits(text).filter((edit) => !relativeTargetIds.has(edit.target.id));
-  for (const edit of countEdits) {
-    const beforeItems = nextItems.length;
-    const beforeMatrix = nextMatrix.length;
-    if (editsUseMatrix) {
-      nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, edit.count);
-    } else {
-      nextItems = adjustAgentPlanItemsToCount(nextItems, edit.target, edit.count);
-    }
-    if ((editsUseMatrix && nextMatrix.length !== beforeMatrix) || (!editsUseMatrix && nextItems.length !== beforeItems)) {
-      changes.push(`${edit.target.label}改为 ${edit.count} 张`);
-    }
-  }
-
-  const focusedTarget = getFocusedAgentPlanEditTarget(text);
-  const relativeCountEdit = getAgentPlanRelativeCountEdit(text);
-  if (focusedTarget && relativeCountEdit) {
-    const currentCount = getAgentPlanTargetCount({
-      items: nextItems,
-      matrix: nextMatrix,
-      editsUseMatrix,
-      target: focusedTarget,
-    });
-    const minCount = relativeCountEdit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
-    const nextCount = Math.max(minCount, currentCount + relativeCountEdit.delta);
-    if (currentCount > 0 && nextCount !== currentCount) {
-      if (editsUseMatrix) {
-        nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, focusedTarget, nextCount);
-      } else {
-        nextItems = adjustAgentPlanItemsToCount(nextItems, focusedTarget, nextCount);
-      }
-      const instruction = focusedTarget.id === "scene" ? getAgentPlanTargetInstruction(text, focusedTarget) : "";
-      if (instruction) {
-        nextMatrix = applyAgentPlanContentInstructionToMatrix(nextMatrix, focusedTarget, instruction);
-        nextItems = applyAgentPlanContentInstructionToItems(nextItems, focusedTarget, instruction);
-      }
-      changes.push(`${focusedTarget.label}${relativeCountEdit.label}，剩 ${nextCount} 张${instruction ? `，方向：${instruction}` : ""}`);
-    } else if (currentCount === 0 && relativeCountEdit.delta > 0) {
-      const instruction = focusedTarget.id === "scene" ? getAgentPlanTargetInstruction(text, focusedTarget) : "";
-      const added = createAgentPlanItemsForNewTarget({
-        target: focusedTarget,
-        count: relativeCountEdit.delta,
-        instruction,
-        existingItems: nextItems,
-        existingMatrix: nextMatrix,
-      });
-      nextItems = [...nextItems, ...added.items];
-      if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
-      changes.push(`新增${focusedTarget.label} ${relativeCountEdit.delta} 张${instruction ? `，方向：${instruction}` : ""}`);
-    }
-  }
-
-  const copyEdit = getAgentPlanCopyEdit(text);
-  if (copyEdit) {
-    nextMatrix = nextMatrix.map((item) =>
-      copyEdit.targets.length === 0 || copyEdit.targets.some((target) => agentPlanMatrixItemMatchesTarget(item, target))
-        ? { ...item, copyMode: copyEdit.mode }
-        : item
-    );
-    const targetLabel = copyEdit.targets.length > 0
-      ? `${copyEdit.targets.map((target) => target.label).join("、")} `
-      : "";
-    changes.push(copyEdit.mode === "burn_in" ? `${targetLabel}文案改为烧进图` : `${targetLabel}文案改为图层/不进图`);
-  }
-
-  const contentEdit = getAgentPlanContentEdit(text);
-  if (contentEdit && !(contentEdit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)) {
-    if (editsUseMatrix) {
-      nextMatrix = nextMatrix.map((item) =>
-        agentPlanMatrixItemMatchesTarget(item, contentEdit.target)
-          ? {
-              ...item,
-              summary: mergeAgentPlanContentInstruction(item.summary, contentEdit.instruction),
-            }
-          : item
-      );
-    }
-    nextItems = nextItems.map((item) =>
-      agentPlanPreviewItemMatchesTarget(item, contentEdit.target)
-        ? {
-            ...item,
-            purpose: mergeAgentPlanContentInstruction(item.purpose, contentEdit.instruction),
-          }
-        : item
-    );
-    changes.push(`${contentEdit.target.label}换成${contentEdit.instruction}`);
-  }
-
-  if (changes.length === 0) {
-    const fallbackEdit = applyAgentPlanEditFallback({
+  const scopedEdit = scopeGroup
+    ? applyAgentScopedPlanEdit({
+        text,
+        items: nextItems,
+        matrix: nextMatrix,
+        editsUseMatrix,
+        group: scopeGroup,
+      })
+    : null;
+  if (scopedEdit) {
+    nextItems = scopedEdit.items;
+    nextMatrix = scopedEdit.matrix;
+    changes.push(...scopedEdit.changes);
+  } else {
+    const namedSceneEdit = applyAgentNamedScenePlanEdits({
       text,
       items: nextItems,
       matrix: nextMatrix,
       editsUseMatrix,
     });
-    nextItems = fallbackEdit.items;
-    nextMatrix = fallbackEdit.matrix;
-    changes.push(...fallbackEdit.changes);
+    nextItems = namedSceneEdit.items;
+    nextMatrix = namedSceneEdit.matrix;
+    changes.push(...namedSceneEdit.changes);
+
+    const removalTargets = getAgentPlanRemovalTargets(text).filter((target) =>
+      !(target.id === "scene" && namedSceneEdit.handledSceneRemoval)
+    );
+    for (const target of removalTargets) {
+      const beforeItems = nextItems.length;
+      const beforeMatrix = nextMatrix.length;
+      if (editsUseMatrix) {
+        nextMatrix = nextMatrix.filter((item) => !agentPlanMatrixItemMatchesTarget(item, target));
+      } else {
+        nextItems = nextItems.filter((item) => !agentPlanPreviewItemMatchesTarget(item, target));
+      }
+      let removed = editsUseMatrix ? beforeMatrix - nextMatrix.length : beforeItems - nextItems.length;
+      if (removed === 0 && target.id === "scene") {
+        if (editsUseMatrix) {
+          nextMatrix = nextMatrix.filter((item) => !isFallbackScenePlanItem(item));
+          removed = beforeMatrix - nextMatrix.length;
+        } else {
+          nextItems = nextItems.filter((item) => !isFallbackScenePreviewItem(item));
+          removed = beforeItems - nextItems.length;
+        }
+      }
+      if (removed > 0) changes.push(`删除${target.label} ${removed} 张`);
+    }
+
+    const relativeCountEdits = getAgentPlanRelativeCountEditsForTargets(text).filter((edit) =>
+      !(edit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)
+    );
+    const relativeTargetIds = new Set(relativeCountEdits.map((edit) => edit.target.id));
+    for (const edit of relativeCountEdits) {
+      const currentCount = getAgentPlanTargetCount({
+        items: nextItems,
+        matrix: nextMatrix,
+        editsUseMatrix,
+        target: edit.target,
+      });
+      const minCount = edit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
+      const nextCount = Math.max(minCount, currentCount + edit.delta);
+      if (currentCount > 0 && nextCount !== currentCount) {
+        if (editsUseMatrix) {
+          nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, nextCount);
+        } else {
+          nextItems = adjustAgentPlanItemsToCount(nextItems, edit.target, nextCount);
+        }
+        const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
+        if (instruction) {
+          nextMatrix = applyAgentPlanContentInstructionToMatrix(nextMatrix, edit.target, instruction);
+          nextItems = applyAgentPlanContentInstructionToItems(nextItems, edit.target, instruction);
+        }
+        changes.push(`${edit.target.label}${edit.label}，剩 ${nextCount} 张${instruction ? `，方向：${instruction}` : ""}`);
+      } else if (currentCount === 0 && edit.delta > 0) {
+        const instruction = edit.target.id === "scene" ? getAgentPlanTargetInstruction(text, edit.target) : "";
+        const added = createAgentPlanItemsForNewTarget({
+          target: edit.target,
+          count: edit.delta,
+          instruction,
+          existingItems: nextItems,
+          existingMatrix: nextMatrix,
+        });
+        nextItems = [...nextItems, ...added.items];
+        if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
+        changes.push(`新增${edit.target.label} ${edit.delta} 张${instruction ? `，方向：${instruction}` : ""}`);
+      }
+    }
+
+    const countEdits = getAgentPlanCountEdits(text).filter((edit) => !relativeTargetIds.has(edit.target.id));
+    for (const edit of countEdits) {
+      const beforeItems = nextItems.length;
+      const beforeMatrix = nextMatrix.length;
+      if (editsUseMatrix) {
+        nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, edit.target, edit.count);
+      } else {
+        nextItems = adjustAgentPlanItemsToCount(nextItems, edit.target, edit.count);
+      }
+      if ((editsUseMatrix && nextMatrix.length !== beforeMatrix) || (!editsUseMatrix && nextItems.length !== beforeItems)) {
+        changes.push(`${edit.target.label}改为 ${edit.count} 张`);
+      }
+    }
+
+    const focusedTarget = getFocusedAgentPlanEditTarget(text);
+    const relativeCountEdit = getAgentPlanRelativeCountEdit(text);
+    if (focusedTarget && relativeCountEdit) {
+      const currentCount = getAgentPlanTargetCount({
+        items: nextItems,
+        matrix: nextMatrix,
+        editsUseMatrix,
+        target: focusedTarget,
+      });
+      const minCount = relativeCountEdit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
+      const nextCount = Math.max(minCount, currentCount + relativeCountEdit.delta);
+      if (currentCount > 0 && nextCount !== currentCount) {
+        if (editsUseMatrix) {
+          nextMatrix = adjustAgentPlanMatrixToCount(nextMatrix, focusedTarget, nextCount);
+        } else {
+          nextItems = adjustAgentPlanItemsToCount(nextItems, focusedTarget, nextCount);
+        }
+        const instruction = focusedTarget.id === "scene" ? getAgentPlanTargetInstruction(text, focusedTarget) : "";
+        if (instruction) {
+          nextMatrix = applyAgentPlanContentInstructionToMatrix(nextMatrix, focusedTarget, instruction);
+          nextItems = applyAgentPlanContentInstructionToItems(nextItems, focusedTarget, instruction);
+        }
+        changes.push(`${focusedTarget.label}${relativeCountEdit.label}，剩 ${nextCount} 张${instruction ? `，方向：${instruction}` : ""}`);
+      } else if (currentCount === 0 && relativeCountEdit.delta > 0) {
+        const instruction = focusedTarget.id === "scene" ? getAgentPlanTargetInstruction(text, focusedTarget) : "";
+        const added = createAgentPlanItemsForNewTarget({
+          target: focusedTarget,
+          count: relativeCountEdit.delta,
+          instruction,
+          existingItems: nextItems,
+          existingMatrix: nextMatrix,
+        });
+        nextItems = [...nextItems, ...added.items];
+        if (editsUseMatrix) nextMatrix = [...nextMatrix, ...added.matrix];
+        changes.push(`新增${focusedTarget.label} ${relativeCountEdit.delta} 张${instruction ? `，方向：${instruction}` : ""}`);
+      }
+    }
+
+    const copyEdit = getAgentPlanCopyEdit(text);
+    if (copyEdit) {
+      nextMatrix = nextMatrix.map((item) =>
+        copyEdit.targets.length === 0 || copyEdit.targets.some((target) => agentPlanMatrixItemMatchesTarget(item, target))
+          ? { ...item, copyMode: copyEdit.mode }
+          : item
+      );
+      const targetLabel = copyEdit.targets.length > 0
+        ? `${copyEdit.targets.map((target) => target.label).join("、")} `
+        : "";
+      changes.push(copyEdit.mode === "burn_in" ? `${targetLabel}文案改为烧进图` : `${targetLabel}文案改为图层/不进图`);
+    }
+
+    const contentEdit = getAgentPlanContentEdit(text);
+    if (contentEdit && !(contentEdit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)) {
+      if (editsUseMatrix) {
+        nextMatrix = nextMatrix.map((item) =>
+          agentPlanMatrixItemMatchesTarget(item, contentEdit.target)
+            ? {
+                ...item,
+                summary: mergeAgentPlanContentInstruction(item.summary, contentEdit.instruction),
+              }
+            : item
+        );
+      }
+      nextItems = nextItems.map((item) =>
+        agentPlanPreviewItemMatchesTarget(item, contentEdit.target)
+          ? {
+              ...item,
+              purpose: mergeAgentPlanContentInstruction(item.purpose, contentEdit.instruction),
+            }
+          : item
+      );
+      changes.push(`${contentEdit.target.label}换成${contentEdit.instruction}`);
+    }
+
+    if (changes.length === 0) {
+      const fallbackEdit = applyAgentPlanEditFallback({
+        text,
+        items: nextItems,
+        matrix: nextMatrix,
+        editsUseMatrix,
+      });
+      nextItems = fallbackEdit.items;
+      nextMatrix = fallbackEdit.matrix;
+      changes.push(...fallbackEdit.changes);
+    }
   }
 
   if (changes.length === 0 || nextItems.length === 0) {
@@ -16863,12 +16889,202 @@ function applyAgentNaturalLanguagePlanEdit({
     draft: draft ? applyEditedPlanItemsToWorkflowDraft(draft, normalizedItems, normalizedMatrix) : null,
     changed: true,
     message: `已按你的话调整计划：${changes.join("；")}。`,
-    diff: buildAgentPlanDiff(changes, originalCount, normalizedItems.length),
+    diff: buildAgentPlanDiff(changes, originalCount, normalizedItems.length, scopeGroup),
   };
 }
 
 function normalizeAgentPlanEditText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function applyAgentScopedPlanEdit({
+  text,
+  items,
+  matrix,
+  editsUseMatrix,
+  group,
+}: {
+  text: string;
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  editsUseMatrix: boolean;
+  group: AgentPlanGroup;
+}): {
+  items: WorkflowPlanPreviewItem[];
+  matrix: WorkflowPlanPreviewAgentMatrixItem[];
+  changes: string[];
+} | null {
+  let nextItems = [...items];
+  let nextMatrix = [...matrix];
+  const scopedItems = nextItems.filter((item) => agentPlanPreviewItemMatchesScopeGroup(item, group));
+  const scopedMatrix = nextMatrix.filter((item) => agentPlanMatrixItemMatchesScopeGroup(item, group));
+  const hasScope = editsUseMatrix ? scopedMatrix.length > 0 : scopedItems.length > 0;
+  if (!hasScope) return null;
+
+  const changes: string[] = [];
+  const groupLabel = group.title || "这组";
+  if (shouldRemoveScopedPlanGroup(text, group)) {
+    if (editsUseMatrix) {
+      const before = nextMatrix.length;
+      nextMatrix = nextMatrix.filter((item) => !agentPlanMatrixItemMatchesScopeGroup(item, group));
+      changes.push(`删除「${groupLabel}」${before - nextMatrix.length} 张`);
+    } else {
+      const before = nextItems.length;
+      nextItems = nextItems.filter((item) => !agentPlanPreviewItemMatchesScopeGroup(item, group));
+      changes.push(`删除「${groupLabel}」${before - nextItems.length} 张`);
+    }
+    return { items: nextItems, matrix: nextMatrix, changes };
+  }
+
+  const relativeCountEdit = getAgentPlanRelativeCountEdit(text);
+  const absoluteCount = relativeCountEdit ? 0 : getScopedAgentPlanCountEdit(text);
+  if (relativeCountEdit || absoluteCount > 0) {
+    const currentCount = editsUseMatrix ? scopedMatrix.length : scopedItems.length;
+    const minCount = relativeCountEdit?.delta && relativeCountEdit.delta < 0 && isSoftReduceAgentPlanEdit(text) ? 1 : 0;
+    const nextCount = absoluteCount > 0
+      ? absoluteCount
+      : Math.max(minCount, currentCount + (relativeCountEdit?.delta ?? 0));
+    if (currentCount > 0 && nextCount !== currentCount) {
+      if (editsUseMatrix) {
+        nextMatrix = adjustScopedAgentPlanMatrixToCount(nextMatrix, group, nextCount);
+      } else {
+        nextItems = adjustScopedAgentPlanItemsToCount(nextItems, group, nextCount);
+      }
+      const label = relativeCountEdit?.label ? `${relativeCountEdit.label}，剩 ${nextCount} 张` : `改为 ${nextCount} 张`;
+      changes.push(`「${groupLabel}」${label}`);
+    }
+  }
+
+  const copyMode = getScopedAgentPlanCopyMode(text);
+  if (copyMode) {
+    nextMatrix = nextMatrix.map((item) =>
+      agentPlanMatrixItemMatchesScopeGroup(item, group) ? { ...item, copyMode } : item
+    );
+    nextItems = nextItems.map((item) =>
+      agentPlanPreviewItemMatchesScopeGroup(item, group) ? { ...item, copyMode } : item
+    );
+    changes.push(copyMode === "burn_in" ? `「${groupLabel}」文案改为烧进图` : `「${groupLabel}」文案改为图层/不进图`);
+  }
+
+  const contentInstruction = extractAgentPlanContentInstruction(text);
+  const freeformInstruction = changes.length === 0 ? getScopedAgentPlanFreeformInstruction(text, group) : "";
+  const instruction = contentInstruction || freeformInstruction;
+  if (instruction) {
+    nextMatrix = nextMatrix.map((item) =>
+      agentPlanMatrixItemMatchesScopeGroup(item, group)
+        ? { ...item, summary: mergeAgentPlanContentInstruction(item.summary, instruction) }
+        : item
+    );
+    nextItems = nextItems.map((item) =>
+      agentPlanPreviewItemMatchesScopeGroup(item, group)
+        ? { ...item, purpose: mergeAgentPlanContentInstruction(item.purpose, instruction) }
+        : item
+    );
+    changes.push(`「${groupLabel}」更新方向：${instruction}`);
+  }
+
+  return changes.length > 0 ? { items: nextItems, matrix: nextMatrix, changes } : null;
+}
+
+function agentPlanPreviewItemMatchesScopeGroup(item: WorkflowPlanPreviewItem, group: AgentPlanGroup): boolean {
+  const groupId = normalizeAgentPlanScopeKey(group.id);
+  const groupTitle = normalizeAgentPlanScopeKey(group.title);
+  const slot = normalizeAgentPlanScopeKey(item.slot);
+  const baseSlot = normalizeAgentPlanScopeKey(getPreviewItemBaseSlotId(item.slot));
+  const id = normalizeAgentPlanScopeKey(item.id);
+  const title = normalizeAgentPlanScopeKey(getAgentPlanGroupDisplayTitle(item.title, item.slot));
+  return [slot, baseSlot, id, title].includes(groupId) || (!!groupTitle && title === groupTitle);
+}
+
+function agentPlanMatrixItemMatchesScopeGroup(
+  item: WorkflowPlanPreviewAgentMatrixItem,
+  group: AgentPlanGroup
+): boolean {
+  const groupId = normalizeAgentPlanScopeKey(group.id);
+  const groupTitle = normalizeAgentPlanScopeKey(group.title);
+  const groupSlot = normalizeAgentPlanScopeKey(getAgentPlanGroupSlotId(item));
+  const outputSlot = normalizeAgentPlanScopeKey(item.outputSlotId);
+  const type = normalizeAgentPlanScopeKey(item.type);
+  const itemId = normalizeAgentPlanScopeKey(item.itemId);
+  const id = normalizeAgentPlanScopeKey(item.id);
+  const title = normalizeAgentPlanScopeKey(getAgentPlanGroupDisplayTitle(item.title, item.outputSlotId || item.type));
+  return [groupSlot, outputSlot, type, itemId, id, title].includes(groupId) || (!!groupTitle && title === groupTitle);
+}
+
+function normalizeAgentPlanScopeKey(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function shouldRemoveScopedPlanGroup(text: string, group: AgentPlanGroup): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (/(不要|别|无需|不需要)(文案|文字|字幕|字|烧字|出字|带字|进图)/.test(compactText)) return false;
+  const removeIntent = /(不要|删除|去掉|不用|取消|别做|拿掉|删掉)/;
+  if (!removeIntent.test(compactText)) return false;
+  if (/(这组|这一组|这个图组|本组|当前组|该组|整组)/.test(compactText)) return true;
+  const groupTitle = group.title.replace(/\s+/g, "");
+  return !!groupTitle && compactText.includes(groupTitle);
+}
+
+function getScopedAgentPlanCountEdit(text: string): number {
+  const compactText = text.replace(/\s+/g, "");
+  const patterns = [
+    /(?:改成|改为|变成|调整为|保留|留|只留|只要|要|做|来)([0-9一二两三四五六七八九十]+)(?:张|组|个)/,
+    /([0-9一二两三四五六七八九十]+)(?:张|组|个)(?:就够|即可|够了|就行)/,
+  ];
+  for (const pattern of patterns) {
+    const count = parseAgentPlanEditCount(compactText.match(pattern)?.[1]);
+    if (count > 0 && count <= 20) return count;
+  }
+  return 0;
+}
+
+function getScopedAgentPlanCopyMode(text: string): "burn_in" | "layout_layer" | null {
+  const compactText = text.replace(/\s+/g, "");
+  const wantsNoBurn =
+    /(不要|别|无需|不需要)(文案|文字|字幕|字|烧字|出字|带字|进图)/.test(compactText) ||
+    /(不烧字|不烧进|不进图|图层|后期改字|可编辑文字|可编辑文案)/.test(compactText);
+  if (wantsNoBurn) return "layout_layer";
+  const wantsBurn = /(烧字|烧进|进图|带字|出字|把文案写进图|文字进图|文案进图)/.test(compactText);
+  return wantsBurn ? "burn_in" : null;
+}
+
+function getScopedAgentPlanFreeformInstruction(text: string, group: AgentPlanGroup): string {
+  const cleaned = text
+    .replace(/调整[「"][^」"]+[」"][:：]?/g, "")
+    .replace(new RegExp(escapeRegExp(group.title), "g"), "")
+    .replace(/^(这组|这一组|这个图组|本组|当前组|该组|整组)[:：,，]*/g, "")
+    .trim();
+  if (cleaned.length < 2 || cleaned.length > 80) return "";
+  if (/^(少|减少|减掉|删掉|去掉|加|增加|新增|多|再来|改成|改为|变成|调整为)/.test(cleaned)) return "";
+  return cleaned;
+}
+
+function adjustScopedAgentPlanItemsToCount(
+  items: WorkflowPlanPreviewItem[],
+  group: AgentPlanGroup,
+  count: number
+): WorkflowPlanPreviewItem[] {
+  const matching = items.filter((item) => agentPlanPreviewItemMatchesScopeGroup(item, group));
+  if (matching.length === 0) return items;
+  const others = items.filter((item) => !agentPlanPreviewItemMatchesScopeGroup(item, group));
+  const adjusted = Array.from({ length: count }, (_, index) =>
+    cloneAgentPlanPreviewItem(matching[Math.min(index, matching.length - 1)], index)
+  );
+  return restoreAgentPlanOrder(items, others, matching[0], adjusted);
+}
+
+function adjustScopedAgentPlanMatrixToCount(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  group: AgentPlanGroup,
+  count: number
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  const matching = items.filter((item) => agentPlanMatrixItemMatchesScopeGroup(item, group));
+  if (matching.length === 0) return items;
+  const others = items.filter((item) => !agentPlanMatrixItemMatchesScopeGroup(item, group));
+  const adjusted = Array.from({ length: count }, (_, index) =>
+    cloneAgentPlanMatrixItem(matching[Math.min(index, matching.length - 1)], index)
+  );
+  return restoreAgentPlanOrder(items, others, matching[0], adjusted);
 }
 
 function applyAgentNamedScenePlanEdits({
@@ -17142,7 +17358,12 @@ function getAgentNamedSceneSlotId(label: string): string {
   return `scene_${key || "named"}`;
 }
 
-function buildAgentPlanDiff(changes: string[], beforeCount: number, afterCount: number): AgentPlanDiff {
+function buildAgentPlanDiff(
+  changes: string[],
+  beforeCount: number,
+  afterCount: number,
+  scopeGroup?: AgentPlanGroup | null
+): AgentPlanDiff {
   const additions: string[] = [];
   const removals: string[] = [];
   const countChanges: string[] = [];
@@ -17167,8 +17388,12 @@ function buildAgentPlanDiff(changes: string[], beforeCount: number, afterCount: 
     summary: beforeCount === afterCount
       ? `总张数保持 ${afterCount} 张。`
       : `计划从 ${beforeCount} 张调整为 ${afterCount} 张。`,
-    scopeSummary: buildAgentPlanDiffScopeSummary({ additions, removals, countChanges, copyChanges, otherChanges }),
-    preservedSummary: "未提到的图组、比例和参考图角色保持不变。",
+    scopeSummary: scopeGroup
+      ? `只调整「${scopeGroup.title}」这一组。`
+      : buildAgentPlanDiffScopeSummary({ additions, removals, countChanges, copyChanges, otherChanges }),
+    preservedSummary: scopeGroup
+      ? "其他图组、比例和参考图角色保持不变。"
+      : "未提到的图组、比例和参考图角色保持不变。",
     nextAction: buildAgentPlanDiffNextAction({ additions, removals, countChanges, copyChanges, otherChanges }),
     additions,
     removals,
@@ -17222,10 +17447,12 @@ function applyAgentNaturalLanguagePlanEditFallbackOnly({
   preview,
   draft,
   userBrief,
+  scopeGroup,
 }: {
   preview: WorkflowPlanPreview;
   draft: WorkflowComposeDraft | null;
   userBrief: string;
+  scopeGroup?: AgentPlanGroup | null;
 }): {
   preview: WorkflowPlanPreview;
   draft: WorkflowComposeDraft | null;
@@ -17236,12 +17463,20 @@ function applyAgentNaturalLanguagePlanEditFallbackOnly({
   const text = normalizeAgentPlanEditText(userBrief);
   const baseMatrix = [...(preview.agentPlan?.generationMatrix ?? [])];
   const editsUseMatrix = baseMatrix.length > 0;
-  const fallbackEdit = applyAgentPlanEditFallback({
-    text,
-    items: [...preview.items],
-    matrix: baseMatrix,
-    editsUseMatrix,
-  });
+  const fallbackEdit = scopeGroup
+    ? applyAgentScopedPlanEdit({
+        text,
+        items: [...preview.items],
+        matrix: baseMatrix,
+        editsUseMatrix,
+        group: scopeGroup,
+      }) ?? { items: [...preview.items], matrix: baseMatrix, changes: [] }
+    : applyAgentPlanEditFallback({
+        text,
+        items: [...preview.items],
+        matrix: baseMatrix,
+        editsUseMatrix,
+      });
   if (fallbackEdit.changes.length === 0) {
     return { preview, draft, changed: false, message: "" };
   }
@@ -17288,7 +17523,7 @@ function applyAgentNaturalLanguagePlanEditFallbackOnly({
     draft: draft ? applyEditedPlanItemsToWorkflowDraft(draft, normalizedItems, normalizedMatrix) : null,
     changed: true,
     message: `已按你的话调整计划：${fallbackEdit.changes.join("；")}。`,
-    diff: buildAgentPlanDiff(fallbackEdit.changes, preview.estimatedCount, normalizedItems.length),
+    diff: buildAgentPlanDiff(fallbackEdit.changes, preview.estimatedCount, normalizedItems.length, scopeGroup),
   };
 }
 

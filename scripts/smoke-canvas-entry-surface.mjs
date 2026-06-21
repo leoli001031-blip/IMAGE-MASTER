@@ -223,6 +223,31 @@ assert.match(
 );
 assert.match(
   source,
+  /onEditWorkflowPlan: \(preview: WorkflowPlanPreview, scopeGroup\?: AgentPlanGroup \| null\) => void;/,
+  "Agent plan editing should accept an optional scoped plan group"
+);
+assert.match(
+  source,
+  /if \(workflowPlanPreview && focusedPlanGroup && composeBrief\.trim\(\) && !hasEditTarget\) \{[\s\S]*onEditWorkflowPlan\(workflowPlanPreview, focusedPlanGroup\)/,
+  "submitting while a plan group is focused should pass that group into plan editing"
+);
+assert.match(
+  source,
+  /function applyAgentScopedPlanEdit[\s\S]*agentPlanMatrixItemMatchesScopeGroup[\s\S]*agentPlanPreviewItemMatchesScopeGroup[\s\S]*changes\.push\(`「\$\{groupLabel\}」/,
+  "focused plan-group edits should use exact group scope instead of broad target keywords"
+);
+assert.match(
+  source,
+  /diff: buildAgentPlanDiff\(changes, originalCount, normalizedItems\.length, scopeGroup\)/,
+  "scoped plan edits should keep scope information in the visible diff"
+);
+assert.match(
+  source,
+  /scopeGroup[\s\S]*`只调整「\$\{scopeGroup\.title\}」这一组。`[\s\S]*其他图组、比例和参考图角色保持不变。/,
+  "scoped plan diff should tell users that only the selected group changed"
+);
+assert.match(
+  source,
   /const handleRunAgentResultGroupRevision = async[\s\S]*source: "agent-result-group-revision"[\s\S]*assetInvocationPlanner: \{[\s\S]*mode: "agent_group_revision_v1"[\s\S]*revisionGroup:/,
   "group edits should create traceable group revision jobs that preserve source context"
 );
@@ -253,7 +278,7 @@ assert.match(
 );
 assert.match(
   source,
-  /preservedSummary: "未提到的图组、比例和参考图角色保持不变。"/,
+  /preservedSummary: scopeGroup[\s\S]*其他图组、比例和参考图角色保持不变。[\s\S]*未提到的图组、比例和参考图角色保持不变。/,
   "plan diff should explicitly tell users what remains unchanged"
 );
 assert.match(
