@@ -15,6 +15,7 @@ export interface PendingResultGroupEditTarget {
   count: number;
   ratios?: string[];
   artifactIds?: string[];
+  jobIds?: string[];
   artifactTitles?: string[];
   providerRoles?: string[];
   promptOnlyRoles?: string[];
@@ -150,6 +151,7 @@ function normalizePendingResultGroupEditTarget(value: unknown): PendingResultGro
     count,
     ratios: compactStringArray(value.ratios),
     artifactIds: compactStringArray(value.artifactIds),
+    jobIds: compactStringArray(value.jobIds),
     artifactTitles: compactStringArray(value.artifactTitles),
     providerRoles: compactStringArray(value.providerRoles),
     promptOnlyRoles: compactStringArray(value.promptOnlyRoles),

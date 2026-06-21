@@ -158,13 +158,23 @@ assert.match(
   "result page group edits should hand off scoped group context to the canvas Agent"
 );
 assert.match(
+  resultPageSource,
+  /function buildResultGroupEditTarget[\s\S]*artifactIds:[\s\S]*jobIds:/,
+  "result page group edit handoff should include artifact ids and job ids"
+);
+assert.match(
   workbenchSource,
   /takePendingResultEditTarget\(\)[\s\S]*setAgentImageEditTarget\(target\)[\s\S]*已从结果页带入/,
   "canvas Agent should restore a pending result-page edit target"
 );
 assert.match(
   workbenchSource,
-  /takePendingResultGroupEditTarget\(\)[\s\S]*setFocusedPlanGroup\(\{[\s\S]*artifactIds: target\.artifactIds \?\? \[\][\s\S]*已从结果页带入/,
+  /focusedGroupArtifacts[\s\S]*focusedPlanGroup\?\.artifactIds[\s\S]*focusedPlanGroup\?\.jobIds[\s\S]*ids\.has\(artifact\.id\)[\s\S]*jobIds\.has\(artifact\.jobId\)/,
+  "canvas Agent should match focused result groups by artifact id or job id"
+);
+assert.match(
+  workbenchSource,
+  /takePendingResultGroupEditTarget\(\)[\s\S]*setFocusedPlanGroup\(\{[\s\S]*artifactIds: target\.artifactIds \?\? \[\][\s\S]*jobIds: target\.jobIds \?\? \[\][\s\S]*已从结果页带入/,
   "canvas Agent should restore a pending result-page group edit target"
 );
 assert.match(
@@ -184,7 +194,7 @@ assert.match(
 );
 assert.match(
   resultEditTargetStorageSource,
-  /PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY[\s\S]*writePendingResultGroupEditTarget[\s\S]*takePendingResultGroupEditTarget[\s\S]*normalizePendingResultGroupEditTarget/,
+  /PENDING_RESULT_GROUP_EDIT_TARGET_STORAGE_KEY[\s\S]*writePendingResultGroupEditTarget[\s\S]*takePendingResultGroupEditTarget[\s\S]*normalizePendingResultGroupEditTarget[\s\S]*jobIds: compactStringArray\(value\.jobIds\)/,
   "result-page group edit handoff should store compact scoped group context"
 );
 

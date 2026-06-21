@@ -1053,6 +1053,7 @@ interface AgentPlanGroup {
   promptOnlyRoles: string[];
   assetTitles: string[];
   artifactIds?: string[];
+  jobIds?: string[];
   status: "ready" | "blocked";
   summary?: string;
   reason?: string;
@@ -8625,9 +8626,12 @@ function CanvasAgentPanel({
   const hasFocusedGroupContext = Boolean(focusedPlanGroup && !hasEditTarget);
   const focusedGroupArtifacts = useMemo(() => {
     const ids = new Set(focusedPlanGroup?.artifactIds ?? []);
-    if (ids.size === 0) return [];
-    return visibleArtifacts.filter((artifact) => ids.has(artifact.id));
-  }, [focusedPlanGroup?.artifactIds, visibleArtifacts]);
+    const jobIds = new Set(focusedPlanGroup?.jobIds ?? []);
+    if (ids.size === 0 && jobIds.size === 0) return [];
+    return visibleArtifacts.filter((artifact) =>
+      ids.has(artifact.id) || (artifact.jobId ? jobIds.has(artifact.jobId) : false)
+    );
+  }, [focusedPlanGroup?.artifactIds, focusedPlanGroup?.jobIds, visibleArtifacts]);
   const isEditingVisiblePlan = Boolean(workflowPlanPreview && hasComposeBrief && !hasEditTarget);
   const hasActiveGenerationFrame = primaryMode === "plan_frame" || primaryMode === "generate_frame";
   const willCreateGenerationFrame = primaryMode === "create_frame";
@@ -8980,6 +8984,7 @@ function CanvasAgentPanel({
       promptOnlyRoles: target.promptOnlyRoles ?? [],
       assetTitles: target.artifactTitles ?? [],
       artifactIds: target.artifactIds ?? [],
+      jobIds: target.jobIds ?? [],
       status: "ready",
       summary: target.summary || "已从结果页带入，后续修改只影响这一组。",
       reason: "这是结果页中的一个成片分组，适合批量换姿势、换场景或调整文案策略。",
@@ -9002,6 +9007,7 @@ function CanvasAgentPanel({
         : 1;
       const ratios = getStringArray(detail.ratios);
       const artifactIds = getStringArray(detail.artifactIds);
+      const jobIds = getStringArray(detail.jobIds);
       setFocusedPlanGroup({
         id: `artifact-group:${title}`,
         title,
@@ -9012,6 +9018,7 @@ function CanvasAgentPanel({
         promptOnlyRoles: getStringArray(detail.promptOnlyRoles),
         assetTitles: getStringArray(detail.artifactTitles),
         artifactIds,
+        jobIds,
         status: "ready",
         summary: "已生成结果分组，后续修改只影响这一组。",
         reason: "这是成片墙中的一个结果分组，适合批量换姿势、换场景或重做风格。",

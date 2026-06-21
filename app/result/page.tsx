@@ -852,6 +852,7 @@ function buildResultGroupEditTarget(groupTitle: string, images: GeneratedImage[]
     count: sourceImages.length || 1,
     ratios: uniqueResultStrings(sourceImages.flatMap(getResultImageRatio)),
     artifactIds: uniqueResultStrings(sourceImages.flatMap((image) => getImageArtifactId(image) || [])),
+    jobIds: uniqueResultStrings(sourceImages.flatMap((image) => getImageJobId(image) || [])),
     artifactTitles: uniqueResultStrings(sourceImages.map((image) => image.title || image.copyText || image.type)),
     providerRoles: uniqueResultStrings(sourceImages.flatMap(getResultImageProviderRoles)),
     promptOnlyRoles: uniqueResultStrings(sourceImages.flatMap(getResultImagePromptOnlyRoles)),
