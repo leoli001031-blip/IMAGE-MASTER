@@ -437,6 +437,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /可以整组保留、标重做[\s\S]*actions: \["group_edit", "group_redo", "approve", "mark_needs_redo"\][\s\S]*可以整组标重做[\s\S]*actions: hasRisk[\s\S]*\["group_edit", "group_redo", "mark_needs_redo", "reject"\][\s\S]*\["group_edit", "group_redo", "approve", "mark_needs_redo"\]/,
+  "Agent group suggestions should expose executable group keep, redo, and reject review-state actions"
+);
+assert.match(
+  workbenchSource,
   /function getAgentActionableGroupSuggestionArtifacts[\s\S]*reviewStatus !== "approved" && reviewStatus !== "rejected"/,
   "Agent group suggestions should skip already kept or rejected images"
 );

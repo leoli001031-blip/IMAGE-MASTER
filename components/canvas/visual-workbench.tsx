@@ -12189,11 +12189,11 @@ function buildAgentExecutableGroupSuggestion(
     return {
       id: `group:${explicitGroup.group.title}`,
       title: `调整「${explicitGroup.group.title}」这组`,
-      body: `这组还有 ${explicitGroup.artifacts.length} 张待处理。可以只重做这组待处理图片，或让 Agent 换姿势、换场景、调整烧字策略。`,
+      body: `这组还有 ${explicitGroup.artifacts.length} 张待处理。可以整组保留、标重做、只重做待处理图片，或让 Agent 换姿势、换场景、调整烧字策略。`,
       groupTitle: explicitGroup.group.title,
       artifactIds: explicitGroup.artifacts.map((artifact) => artifact.id),
       editBrief: `调整「${explicitGroup.group.title}」：只改这一组待处理图片，其他已保留图片不变。`,
-      actions: ["group_edit", "group_redo"],
+      actions: ["group_edit", "group_redo", "approve", "mark_needs_redo"],
     };
   }
 
@@ -12217,13 +12217,15 @@ function buildAgentExecutableGroupSuggestion(
     id: `group:${groupTitle}:${groupArtifacts.map((artifact) => artifact.id).join("-")}`,
     title: `检查「${groupTitle}」这一组`,
     body: hasRisk
-      ? `这组里有图片被标记为风险或建议重做。可以只调整这组，不影响其他图。`
-      : `这组有 ${groupArtifacts.length} 张，适合批量换动作、换场景或统一文案策略。`,
+      ? `这组里有图片被标记为风险或建议重做。可以整组标重做，也可以只调整这组，不影响其他图。`
+      : `这组有 ${groupArtifacts.length} 张，可以整组保留，也适合批量换动作、换场景或统一文案策略。`,
     tone: hasRisk ? "warn" : "default",
     groupTitle,
     artifactIds: groupArtifacts.map((artifact) => artifact.id),
     editBrief: `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`,
-    actions: ["group_edit", "group_redo"],
+    actions: hasRisk
+      ? ["group_edit", "group_redo", "mark_needs_redo", "reject"]
+      : ["group_edit", "group_redo", "approve", "mark_needs_redo"],
   };
 }
 
