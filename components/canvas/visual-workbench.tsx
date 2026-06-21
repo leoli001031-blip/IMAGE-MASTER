@@ -2767,16 +2767,20 @@ export function VisualWorkbench() {
     const brief = userBrief.trim();
     const targets = groupArtifacts
       .filter((artifact) => artifact.url)
-      .map((artifact): AgentImageEditTarget => ({
-        url: artifact.url,
-        title: artifact.title,
-        artifactId: artifact.id,
-        jobId: artifact.jobId,
-        nodeId: artifact.nodeId,
-        status: artifact.status,
-        prompt: artifact.prompt,
-        metadata: artifact.metadata,
-      }));
+      .map((artifact): AgentImageEditTarget => {
+        const job = artifact.jobId ? jobs.find((item) => item.id === artifact.jobId) : undefined;
+        const metadata = mergeGenerationOutputPreviewMetadata({ artifact, job });
+        return {
+          url: artifact.url,
+          title: artifact.title,
+          artifactId: artifact.id,
+          jobId: artifact.jobId,
+          nodeId: artifact.nodeId,
+          status: artifact.status,
+          prompt: getGenerationOutputPreviewPrompt({ artifact, job, metadata }),
+          metadata,
+        };
+      });
 
     if (!brief) {
       setComposeMessage("说一下这组要怎么改");

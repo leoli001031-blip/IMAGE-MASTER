@@ -124,6 +124,12 @@ assert.match(
 
 assert.match(
   source,
+  /const targets = groupArtifacts[\s\S]*const job = artifact\.jobId \? jobs\.find[\s\S]*const metadata = mergeGenerationOutputPreviewMetadata\(\{ artifact, job \}\)[\s\S]*prompt: getGenerationOutputPreviewPrompt\(\{ artifact, job, metadata \}\)[\s\S]*metadata,/,
+  "group image revision targets should merge artifact and job metadata before rebuilding prompts and references"
+);
+
+assert.match(
+  source,
   /function getAgentRevisionPurposeText[\s\S]*planItemTitle[\s\S]*planItemType[\s\S]*exportSpecId[\s\S]*function getAgentRevisionPurposeTypeLabel/,
   "revision context should derive a user-facing purpose from saved generation metadata"
 );
