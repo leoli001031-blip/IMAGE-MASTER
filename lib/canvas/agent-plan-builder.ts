@@ -482,13 +482,17 @@ function normalizeLlmAgentPlan(
       ? llmCompositionMode
       : deterministicPlan.compositionMode;
   const knownAssetGroupIds = new Set(deterministicPlan.assetGroups.map((group) => group.id));
-  const llmMatrix = protectLlmMatrixReferenceRouting(
-    normalizeLlmMatrix(
-    value.generationMatrix,
-    deterministicPlan,
-    mergedSkillIds,
-    knownAssetGroupIds,
-    context
+  const llmMatrix = restoreDeterministicProviderRoleGuarantees(
+    protectLlmMatrixReferenceRouting(
+      normalizeLlmMatrix(
+        value.generationMatrix,
+        deterministicPlan,
+        mergedSkillIds,
+        knownAssetGroupIds,
+        context
+      ),
+      deterministicPlan,
+      context
     ),
     deterministicPlan,
     context
@@ -855,18 +859,24 @@ function buildGenerationMatrix({
     const itemText = `${requestIntentText} ${itemScopedText} ${item.prompt}`;
     const explicitRequestRouting = getExplicitRequestItemRouting(context.request, item, index);
     const requestIntentReferenceRoles = inferRequestReferenceRolesForMatrixItem(item, itemScopedText);
-    const explicitReferenceRoles = uniqueRoles([
+    const explicitItemReferenceRoles = uniqueRoles([
       ...normalizeRoles(item.referenceRoles),
       ...explicitRequestRouting.referenceRoles,
       ...requestIntentReferenceRoles,
+    ]);
+    const explicitRequestRoleBoundary = uniqueRoles([
+      ...explicitRequestRouting.referenceRoles,
+      ...explicitRequestRouting.providerReferenceRoles,
     ]);
     const inferredReferenceRoles = normalizeRoles(outputSlot
       ? inferSlotReferenceRoles(item, skill)
       : assetGroups.filter((group) => group.required).map((group) => group.role));
     const intentReferenceRoles = normalizeReferenceRolesForItemIntent(
       item,
-      explicitReferenceRoles.length
-        ? uniqueRoles([...inferredReferenceRoles, ...explicitReferenceRoles])
+      explicitRequestRoleBoundary.length
+        ? explicitRequestRoleBoundary
+        : explicitItemReferenceRoles.length
+        ? uniqueRoles([...inferredReferenceRoles, ...explicitItemReferenceRoles])
         : inferredReferenceRoles,
       itemScopedText
     );
@@ -1078,15 +1088,29 @@ function normalizeLlmMatrix(
     ])
   );
 
-  return deterministicPlan.generationMatrix.map((fallback) => {
+  return deterministicPlan.generationMatrix.map((fallback, index) => {
     const record = value.find((entry) => isRecord(entry) && getString(entry.itemId) === fallback.itemId);
+    const explicitRouting = getExplicitRequestRoutingForMatrixItem(context, fallback.itemId, index);
+    const explicitRoleBoundary = uniqueRoles([
+      ...fallback.referenceRoles,
+      ...explicitRouting.referenceRoles,
+      ...explicitRouting.providerReferenceRoles,
+    ]);
     if (!isRecord(record)) {
+      const referenceRoles = applyExplicitReferenceRoleBoundary(
+        fallback.referenceRoles,
+        explicitRoleBoundary
+      );
       return {
         ...fallback,
+        referenceRoles,
         providerReferenceRoles: normalizeProviderReferenceRolesForItem({
           item: fallback,
-          referenceRoles: fallback.referenceRoles,
-          providerReferenceRoles: fallback.providerReferenceRoles,
+          referenceRoles,
+          providerReferenceRoles: uniqueRoles([
+            ...fallback.providerReferenceRoles,
+            ...explicitRouting.providerReferenceRoles,
+          ]),
           assetGroupIds: fallback.assetGroupIds,
           assetGroups: deterministicPlan.assetGroups,
         }),
@@ -1105,8 +1129,12 @@ function normalizeLlmMatrix(
       normalizedReferenceRoles,
       itemTextById.get(fallback.itemId)
     );
+    const boundedReferenceRoles = applyExplicitReferenceRoleBoundary(
+      effectiveReferenceRoles,
+      explicitRoleBoundary
+    );
     const providerReferenceRoles = normalizeRoles(getStringArray(record.providerReferenceRoles))
-      .filter((role) => effectiveReferenceRoles.includes(role));
+      .filter((role) => boundedReferenceRoles.includes(role));
     const skillId = getString(record.skillId);
     const outputSlotId = getOptionalString(record.outputSlotId) ?? fallback.outputSlotId;
     const assetGroupIds = getStringArray(record.assetGroupIds)
@@ -1114,7 +1142,7 @@ function normalizeLlmMatrix(
     const completeAssetGroupIds = completeAssetGroupIdsForRoles({
       selectedIds: assetGroupIds,
       fallbackIds: fallback.assetGroupIds,
-      referenceRoles: effectiveReferenceRoles,
+      referenceRoles: boundedReferenceRoles,
       assetGroups: deterministicPlan.assetGroups,
       itemText: itemTextById.get(fallback.itemId) ?? `${fallback.title} ${fallback.type}`,
     });
@@ -1123,10 +1151,11 @@ function normalizeLlmMatrix(
     const nextAssetGroupIds = completeAssetGroupIds;
     const nextProviderReferenceRoles = normalizeProviderReferenceRolesForItem({
       item: fallback,
-      referenceRoles: effectiveReferenceRoles,
+      referenceRoles: boundedReferenceRoles,
       providerReferenceRoles: uniqueRoles([
         ...fallback.providerReferenceRoles,
         ...providerReferenceRoles,
+        ...explicitRouting.providerReferenceRoles,
       ]),
       assetGroupIds: nextAssetGroupIds,
       assetGroups: deterministicPlan.assetGroups,
@@ -1136,7 +1165,7 @@ function normalizeLlmMatrix(
       ...base,
       skillId: skillId && selectedSkillIds.includes(skillId) ? skillId : fallback.skillId,
       outputSlotId,
-      referenceRoles: effectiveReferenceRoles,
+      referenceRoles: boundedReferenceRoles,
       providerReferenceRoles: nextProviderReferenceRoles,
       assetGroupIds: nextAssetGroupIds,
       summary,
@@ -1156,9 +1185,15 @@ function protectLlmMatrixReferenceRouting(
       `${item.title} ${item.type} ${item.prompt} ${item.copyText ?? ""}`,
     ])
   );
-  return matrix.map((item) => {
+  return matrix.map((item, index) => {
     const fallback = fallbackById.get(item.itemId);
     if (!fallback) return item;
+    const explicitRouting = getExplicitRequestRoutingForMatrixItem(context, item.itemId, index);
+    const explicitRoleBoundary = uniqueRoles([
+      ...fallback.referenceRoles,
+      ...explicitRouting.referenceRoles,
+      ...explicitRouting.providerReferenceRoles,
+    ]);
     const itemText = [
       item.title,
       item.type,
@@ -1166,7 +1201,10 @@ function protectLlmMatrixReferenceRouting(
       fallback.summary ?? "",
       sourceItemTextById.get(item.itemId) ?? "",
     ].join(" ");
-    const referenceRoles = preserveExplicitReferenceRoles(fallback, item.referenceRoles, itemText);
+    const referenceRoles = applyExplicitReferenceRoleBoundary(
+      preserveExplicitReferenceRoles(fallback, item.referenceRoles, itemText),
+      explicitRoleBoundary
+    );
     const assetGroupIds = completeAssetGroupIdsForRoles({
       selectedIds: item.assetGroupIds,
       fallbackIds: fallback.assetGroupIds,
@@ -1184,6 +1222,7 @@ function protectLlmMatrixReferenceRouting(
       providerReferenceRoles: uniqueRoles([
         ...fallback.providerReferenceRoles,
         ...item.providerReferenceRoles,
+        ...explicitRouting.providerReferenceRoles,
       ]),
       assetGroupIds,
       assetGroups: deterministicPlan.assetGroups,
@@ -1195,6 +1234,101 @@ function protectLlmMatrixReferenceRouting(
       assetGroupIds,
     };
   });
+}
+
+function restoreDeterministicProviderRoleGuarantees(
+  matrix: AgentPlanGenerationMatrixItem[],
+  deterministicPlan: AgentPlan,
+  context: NormalizedAgentPlanContext
+): AgentPlanGenerationMatrixItem[] {
+  const fallbackById = new Map(deterministicPlan.generationMatrix.map((item) => [item.itemId, item]));
+  const sourceItemTextById = new Map(
+    (context.plan?.items ?? []).map((item) => [
+      item.itemId,
+      `${item.title} ${item.type} ${item.prompt} ${item.copyText ?? ""}`,
+    ])
+  );
+
+  return matrix.map((item) => {
+    const fallback = fallbackById.get(item.itemId);
+    if (!fallback || fallback.providerReferenceRoles.length === 0) return item;
+    const fallbackProviderRoles = fallback.providerReferenceRoles.filter((role) =>
+      shouldRestoreDeterministicProviderRole(role, item, fallback)
+    );
+    if (fallbackProviderRoles.length === 0) return item;
+
+    const referenceRoles = uniqueRoles([
+      ...item.referenceRoles,
+      ...fallbackProviderRoles,
+    ]);
+    const assetGroupIds = completeAssetGroupIdsForRoles({
+      selectedIds: item.assetGroupIds,
+      fallbackIds: fallback.assetGroupIds,
+      referenceRoles,
+      assetGroups: deterministicPlan.assetGroups,
+      itemText: sourceItemTextById.get(item.itemId) ?? `${item.title} ${item.type}`,
+    });
+    const providerReferenceRoles = normalizeProviderReferenceRolesForItem({
+      item: {
+        ...item,
+        referenceRoles,
+        assetGroupIds,
+      },
+      referenceRoles,
+      providerReferenceRoles: uniqueRoles([
+        ...item.providerReferenceRoles,
+        ...fallbackProviderRoles,
+      ]),
+      assetGroupIds,
+      assetGroups: deterministicPlan.assetGroups,
+    });
+
+    return {
+      ...item,
+      referenceRoles,
+      providerReferenceRoles,
+      assetGroupIds,
+    };
+  });
+}
+
+function shouldRestoreDeterministicProviderRole(
+  role: CanvasReferenceRole,
+  item: AgentPlanGenerationMatrixItem,
+  fallback: AgentPlanGenerationMatrixItem
+): boolean {
+  if (role === "model") {
+    const referenceRoles = uniqueRoles([...item.referenceRoles, ...fallback.referenceRoles]);
+    return shouldForceModelProviderReference(
+      {
+        ...item,
+        referenceRoles,
+        summary: `${item.summary ?? ""} ${fallback.summary ?? ""}`,
+      },
+      referenceRoles
+    );
+  }
+  return true;
+}
+
+function getExplicitRequestRoutingForMatrixItem(
+  context: NormalizedAgentPlanContext,
+  itemId: string,
+  index: number
+): { referenceRoles: CanvasReferenceRole[]; providerReferenceRoles: CanvasReferenceRole[] } {
+  const items = context.plan?.items ?? [];
+  const sourceItem = items.find((item) => item.itemId === itemId) ?? items[index];
+  if (!sourceItem) return { referenceRoles: [], providerReferenceRoles: [] };
+  return getExplicitRequestItemRouting(context.request, sourceItem, index);
+}
+
+function applyExplicitReferenceRoleBoundary(
+  roles: CanvasReferenceRole[],
+  explicitRoleBoundary: CanvasReferenceRole[]
+): CanvasReferenceRole[] {
+  if (explicitRoleBoundary.length === 0) return roles;
+  const filtered = roles.filter((role) => explicitRoleBoundary.includes(role));
+  return filtered.length ? uniqueRoles(filtered) : roles;
 }
 
 function normalizeProviderReferenceRolesForItem({

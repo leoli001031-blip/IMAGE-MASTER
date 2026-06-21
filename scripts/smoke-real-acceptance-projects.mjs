@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { stopSmokeServer } from "./smoke-runtime.mjs";
+import { restoreSourceFiles, snapshotSourceFiles, stopSmokeServer } from "./smoke-runtime.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -12,6 +12,10 @@ const port = Number(args.port || process.env.REAL_ACCEPTANCE_PORT || 3577);
 const externalBaseUrl = args.baseUrl || process.env.REAL_ACCEPTANCE_BASE_URL;
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${port}`;
 const shouldSpawnServer = !externalBaseUrl;
+const distDir = process.env.NEXT_DIST_DIR || `.next-real-acceptance-${stamp}`;
+const sourceFileSnapshots = shouldSpawnServer
+  ? snapshotSourceFiles(["tsconfig.json", "next-env.d.ts"])
+  : [];
 const runRealProvider = args.real === true;
 const expectedConfirmationError = args["expect-confirmation-error"] === true;
 const confirmedRealProviderCalls = normalizeProviderCallConfirmation(
@@ -36,7 +40,7 @@ if (shouldSpawnServer) {
       IMAGE_MASTER_JOB_CONCURRENCY: process.env.REAL_ACCEPTANCE_JOB_CONCURRENCY || "6",
       IMAGE_MASTER_JOB_LEASE_MS: process.env.IMAGE_MASTER_JOB_LEASE_MS || "900000",
       IMAGE_MASTER_QUEUE_OWNER: `real-acceptance-${Date.now()}`,
-      NEXT_DIST_DIR: process.env.NEXT_DIST_DIR || `.next-real-acceptance-${stamp}`,
+      NEXT_DIST_DIR: distDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -121,6 +125,10 @@ try {
   process.exitCode = 1;
 } finally {
   await stopSmokeServer(server);
+  if (shouldSpawnServer && process.env.REAL_ACCEPTANCE_KEEP_DIST !== "1") {
+    fs.rmSync(distDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  }
+  restoreSourceFiles(sourceFileSnapshots);
 }
 
 async function runProjectPlan(project) {
@@ -322,6 +330,11 @@ function buildProductOnlyProject() {
       ...expectAll(matrix, (entry) => entry.providerReferenceRoles.includes("product"), "all shots should provider-lock product"),
       ...expectNone(matrix, (entry) => entry.providerReferenceRoles.includes("model"), "product-only shots should not provider-lock model"),
       ...expectAtLeast(matrix, (entry) => entry.copyMode === "burn_in", 4, "product-only set should include burn-in copy posters/features"),
+      ...expectNone(
+        matrix.filter((entry) => entry.itemId === "clean_no_text"),
+        (entry) => entry.copyMode === "burn_in" || entry.referenceRoles.includes("copy"),
+        "explicit no-text product shots should stay copy-free"
+      ),
     ],
   };
 }
