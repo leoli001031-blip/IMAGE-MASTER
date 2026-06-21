@@ -3119,7 +3119,7 @@ export function VisualWorkbench() {
       }
 
       if (pendingAgentSamplePlan) {
-        setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、主图改 4:5、加商场场景。");
+        setComposeMessage("这句计划修改我还没理解。可以直接说：整套只要 6 张、删掉某组、详情页烧字、主图改 4:5。");
         return;
       }
 
@@ -3197,7 +3197,7 @@ export function VisualWorkbench() {
     }
 
     if (pendingAgentSamplePlan) {
-      setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、主图改 4:5、加商场场景。");
+      setComposeMessage("这句计划修改我还没理解。可以直接说：整套只要 6 张、删掉某组、详情页烧字、主图改 4:5。");
       return;
     }
 
@@ -9132,7 +9132,7 @@ function CanvasAgentPanel({
     completionSummary,
   });
   const planInputPlaceholder = workflowPlanPreview
-    ? "直接说怎么改计划，比如：模特图少两张，详情页要烧字，主图改 4:5。"
+    ? "直接说怎么改计划，比如：整套只要 6 张，模特图少两张，主图改 4:5。"
     : editTarget
       ? "比如：把背景换成室外街拍，人物表情更自然，保留产品和构图。"
       : focusedPlanGroup
@@ -10223,7 +10223,7 @@ function AgentPlanBoard({
         )}
       </div>
       <div className="mt-2 rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
-        想改就直接说：这组少两张、不要封面、文案烧进详情页、主图改 4:5。
+        想改就直接说：整套只要 6 张、这组少两张、不要封面、主图改 4:5。
       </div>
     </div>
   );
@@ -17896,6 +17896,16 @@ function applyAgentNaturalLanguagePlanEdit({
       }
     }
 
+    const globalTotalCountEdit = getAgentPlanGlobalTotalCountEdit(text);
+    if (globalTotalCountEdit) {
+      if (editsUseMatrix) {
+        nextMatrix = adjustAgentPlanMatrixToTotalCount(nextMatrix, globalTotalCountEdit.count);
+      } else {
+        nextItems = adjustAgentPlanItemsToTotalCount(nextItems, globalTotalCountEdit.count);
+      }
+      changes.push(`整套计划改为 ${globalTotalCountEdit.count} 张`);
+    }
+
     const copyEdit = getAgentPlanCopyEdit(text);
     if (copyEdit) {
       nextMatrix = nextMatrix.map((item) =>
@@ -18862,6 +18872,23 @@ function isSoftReduceAgentPlanEdit(text: string): boolean {
   return /(少一点|少一些|减少一点|少做一点)/.test(text.replace(/\s+/g, ""));
 }
 
+function getAgentPlanGlobalTotalCountEdit(text: string): { count: number } | null {
+  const compactText = text.replace(/\s+/g, "");
+  const hasGlobalScope = /(整套|全部|所有|总共|一共|合计|整体|全局|这套|这一套|总张数|总数)/.test(compactText);
+  if (!hasGlobalScope) return null;
+
+  const patterns = [
+    /(?:整套|全部|所有|总共|一共|合计|整体|全局|这套|这一套|总张数|总数)(?:计划|图组|图片|图)?(?:改成|改为|变成|调整为|只要|只留|保留|留|做|来)?([0-9一二两三四五六七八九十]+)(?:张|个|组)/,
+    /(?:只要|只留|保留|留|改成|改为|变成|调整为)([0-9一二两三四五六七八九十]+)(?:张|个|组)(?:就够|即可|就行|够了)?(?:整套|全部|所有|总共|一共|合计|整体|全局|这套|这一套)?/,
+    /([0-9一二两三四五六七八九十]+)(?:张|个|组)(?:就够|即可|就行|够了)(?:整套|全部|所有|总共|一共|合计|整体|全局|这套|这一套)?/,
+  ];
+  for (const pattern of patterns) {
+    const count = parseAgentPlanEditCount(compactText.match(pattern)?.[1]);
+    if (count > 0 && count <= maxAgentSampleOutputCount) return { count };
+  }
+  return null;
+}
+
 function getAgentPlanCopyEdit(text: string): { mode: "burn_in" | "layout_layer"; targets: AgentPlanEditTarget[] } | null {
   const compactText = text.replace(/\s+/g, "");
   const wantsNoBurn = hasLocalKeywordIntent(text, ["烧字", "烧进", "进图", "带字", "出字"], ["不", "别", "不要", "无需", "不需要"]);
@@ -19048,6 +19075,36 @@ function createAgentPlanItemsForNewTarget({
       summary: item.purpose,
     })),
   };
+}
+
+function adjustAgentPlanItemsToTotalCount(
+  items: WorkflowPlanPreviewItem[],
+  count: number
+): WorkflowPlanPreviewItem[] {
+  if (items.length === 0 || count <= 0) return items;
+  if (count <= items.length) return items.slice(0, count);
+  const anchor = items[items.length - 1];
+  return [
+    ...items,
+    ...Array.from({ length: count - items.length }, (_, index) =>
+      cloneAgentPlanPreviewItem(anchor, items.length + index)
+    ),
+  ];
+}
+
+function adjustAgentPlanMatrixToTotalCount(
+  items: WorkflowPlanPreviewAgentMatrixItem[],
+  count: number
+): WorkflowPlanPreviewAgentMatrixItem[] {
+  if (items.length === 0 || count <= 0) return items;
+  if (count <= items.length) return items.slice(0, count);
+  const anchor = items[items.length - 1];
+  return [
+    ...items,
+    ...Array.from({ length: count - items.length }, (_, index) =>
+      cloneAgentPlanMatrixItem(anchor, items.length + index)
+    ),
+  ];
 }
 
 function getAgentPlanNewTargetTitle(target: AgentPlanEditTarget): string {

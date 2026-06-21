@@ -713,6 +713,21 @@ assert.match(
 );
 assert.match(
   source,
+  /function getAgentPlanGlobalTotalCountEdit[\s\S]*hasGlobalScope[\s\S]*整套[\s\S]*总张数[\s\S]*return null/,
+  "plan edits should understand explicit global total count changes such as 整套只要 6 张"
+);
+assert.match(
+  source,
+  /const globalTotalCountEdit = getAgentPlanGlobalTotalCountEdit\(text\)[\s\S]*adjustAgentPlanMatrixToTotalCount[\s\S]*整套计划改为/,
+  "global total count edits should adjust the whole visible plan instead of a single target group"
+);
+assert.match(
+  source,
+  /function adjustAgentPlanItemsToTotalCount[\s\S]*items\.slice\(0, count\)[\s\S]*cloneAgentPlanPreviewItem/,
+  "global total count edits should safely trim or clone preview items"
+);
+assert.match(
+  source,
   /function getAgentPlanRatioEdit[\s\S]*getAgentPlanRatioValue\(text\)[\s\S]*targets\.length === 0 && !isExplicitGlobalRatioIntent/,
   "plan edits should understand targeted ratio changes such as 主图改成 4:5 without making accidental global edits"
 );
