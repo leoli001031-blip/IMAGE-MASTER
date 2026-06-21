@@ -8854,7 +8854,7 @@ function CanvasAgentPanel({
     };
     window.addEventListener("image-master:artifact-group-edit", handleArtifactGroupEdit);
     return () => window.removeEventListener("image-master:artifact-group-edit", handleArtifactGroupEdit);
-  }, [composeBrief, onCollapsedChange, onComposeBriefChange]);
+  }, [composeBrief, onCollapsedChange, onComposeBriefChange, onHighlightArtifactGroup]);
 
   const handleAgentReviewSuggestionAction = useCallback((suggestion: AgentExecutableReviewSuggestion, action: AgentReviewSuggestionAction) => {
     const artifact = suggestion.artifactId
@@ -8985,26 +8985,7 @@ function CanvasAgentPanel({
       return;
     }
 
-    if (action === "group_redo") {
-      window.dispatchEvent(
-        new CustomEvent("image-master:artifact-group-retry", {
-          detail: {
-            group: groupTitle,
-            count: groupArtifacts.length || group?.count || groupArtifactIds.length,
-            ratios: group?.ratios ?? [],
-            artifactIds: groupArtifactIds,
-            artifactTitles: groupArtifacts.map((item) => item.title),
-            providerRoles: group?.providerRoles ?? [],
-            promptOnlyRoles: group?.promptOnlyRoles ?? [],
-            copyModes: group?.copyModes ?? [],
-          },
-        })
-      );
-      recordAction(`已按原上下文重做「${groupTitle}」这一组；其他图片不会被重写。`);
-      return;
-    }
-
-    if (action === "group_edit") {
+    const selectGroupForEdit = (text: string, brief?: string) => {
       const nextGroup = group ?? {
         id: `artifact-group:${groupTitle}`,
         title: groupTitle,
@@ -9022,11 +9003,42 @@ function CanvasAgentPanel({
       };
       setFocusedPlanGroup(nextGroup);
       onHighlightArtifactGroup(groupTitle);
-      onComposeBriefChange(suggestion.editBrief || `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`);
+      onComposeBriefChange(brief || suggestion.editBrief || `调整「${groupTitle}」：只改这一组，其他已保留图片不变。`);
       onCollapsedChange(false);
-      recordAction(`已选中「${groupTitle}」这一组；接下来只调整这组。`);
+      recordAction(text);
+    };
+
+    if (action === "group_redo") {
+      const retryableGroupArtifacts = groupArtifacts.filter((item) => item.jobId);
+      if (retryableGroupArtifacts.length === 0) {
+        selectGroupForEdit(
+          `「${groupTitle}」没有可直接重跑的任务；已切到调整这组，后续只会改这一组。`,
+          `调整「${groupTitle}」：这组没有可直接重跑的任务，请按原用途重做这一组；其他已保留图片不变。`
+        );
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("image-master:artifact-group-retry", {
+          detail: {
+            group: groupTitle,
+            count: retryableGroupArtifacts.length,
+            ratios: group?.ratios ?? [],
+            artifactIds: retryableGroupArtifacts.map((item) => item.id),
+            artifactTitles: retryableGroupArtifacts.map((item) => item.title),
+            providerRoles: group?.providerRoles ?? [],
+            promptOnlyRoles: group?.promptOnlyRoles ?? [],
+            copyModes: group?.copyModes ?? [],
+          },
+        })
+      );
+      recordAction(`已按原上下文重做「${groupTitle}」这一组；其他图片不会被重写。`);
+      return;
     }
-  }, [onCollapsedChange, onComposeBriefChange, planGroups, rememberAgentEvent, visibleArtifacts]);
+
+    if (action === "group_edit") {
+      selectGroupForEdit(`已选中「${groupTitle}」这一组；接下来只调整这组。`);
+    }
+  }, [onCollapsedChange, onComposeBriefChange, onHighlightArtifactGroup, planGroups, rememberAgentEvent, visibleArtifacts]);
 
   useEffect(() => {
     if (!hasEditTarget || workflowPlanPreview || collapsed) return;

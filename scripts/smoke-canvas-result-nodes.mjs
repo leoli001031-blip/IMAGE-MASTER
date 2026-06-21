@@ -317,8 +317,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /<CanvasAgentPanel[\s\S]*onHighlightArtifactGroup=\{setHighlightedArtifactGroupTitle\}[\s\S]*handleArtifactGroupEdit[\s\S]*onHighlightArtifactGroup\(title\)[\s\S]*action === "group_edit"[\s\S]*onHighlightArtifactGroup\(groupTitle\)/,
+  /<CanvasAgentPanel[\s\S]*onHighlightArtifactGroup=\{setHighlightedArtifactGroupTitle\}[\s\S]*handleArtifactGroupEdit[\s\S]*onHighlightArtifactGroup\(title\)/,
   "group adjust actions should briefly highlight the affected result group"
+);
+assert.match(
+  workbenchSource,
+  /const selectGroupForEdit[\s\S]*onHighlightArtifactGroup\(groupTitle\)[\s\S]*action === "group_edit"[\s\S]*selectGroupForEdit/,
+  "Agent group edit suggestions should reuse the scoped group-edit path and highlight the affected group"
 );
 assert.match(
   workbenchSource,
@@ -344,6 +349,11 @@ assert.match(
   workbenchSource,
   /handleAgentReviewSuggestionAction[\s\S]*image-master:generation-frame-output-open[\s\S]*image-master:generation-frame-output-retry[\s\S]*image-master:generation-frame-output-edit[\s\S]*image-master:artifact-group-retry/,
   "Agent review suggestion cards should execute detail, single redo, single edit, and group redo actions"
+);
+assert.match(
+  workbenchSource,
+  /action === "group_redo"[\s\S]*retryableGroupArtifacts[\s\S]*length === 0[\s\S]*selectGroupForEdit[\s\S]*没有可直接重跑的任务[\s\S]*artifactIds: retryableGroupArtifacts\.map/,
+  "Agent group redo suggestions should fall back to scoped group editing when no retryable jobs exist"
 );
 assert.match(
   workbenchSource,
