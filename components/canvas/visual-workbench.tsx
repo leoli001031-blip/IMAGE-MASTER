@@ -3009,14 +3009,17 @@ export function VisualWorkbench() {
         if (updatedArtifact) reviewedArtifacts.push(updatedArtifact);
       }
       const riskCount = reviewedArtifacts.filter(isArtifactVisualQaRisk).length;
+      const failedQaCount = qaArtifacts.length - reviewedArtifacts.length;
       if (riskCount > 0) {
         setResultReviewFilter("qa_risk");
         setHighlightedResultReviewFilter("qa_risk");
       }
       setComposeMessage(
         riskCount > 0
-          ? `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，其中 ${riskCount} 张有风险，已切到 QA 风险筛选。`
-          : `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，未发现明显风险。`
+          ? `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，其中 ${riskCount} 张有风险${failedQaCount > 0 ? `，${failedQaCount} 张未完成` : ""}，已切到 QA 风险筛选。`
+          : failedQaCount > 0
+            ? `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，${failedQaCount} 张未完成，请稍后重试。`
+            : `已完成「${group.title}」这一组 ${reviewedArtifacts.length}/${qaArtifacts.length} 张图的视觉 QA，未发现明显风险。`
       );
       return;
     }
@@ -3397,14 +3400,17 @@ export function VisualWorkbench() {
         if (updatedArtifact) reviewedArtifacts.push(updatedArtifact);
       }
       const riskCount = reviewedArtifacts.filter(isArtifactVisualQaRisk).length;
+      const failedQaCount = qaArtifacts.length - reviewedArtifacts.length;
       if (riskCount > 0) {
         setResultReviewFilter("qa_risk");
         setHighlightedResultReviewFilter("qa_risk");
       }
       setComposeMessage(
         riskCount > 0
-          ? `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，其中 ${riskCount} 张有风险，已切到 QA 风险筛选。`
-          : `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，未发现明显风险。`
+          ? `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，其中 ${riskCount} 张有风险${failedQaCount > 0 ? `，${failedQaCount} 张未完成` : ""}，已切到 QA 风险筛选。`
+          : failedQaCount > 0
+            ? `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，${failedQaCount} 张未完成，请稍后重试。`
+            : `已完成 ${reviewedArtifacts.length}/${qaArtifacts.length} 张${scopeLabel}的视觉 QA，未发现明显风险。`
       );
       return true;
     }

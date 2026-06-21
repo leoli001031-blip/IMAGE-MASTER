@@ -527,8 +527,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*reviewedArtifacts: PersistedGeneratedArtifact\[\] = \[\][\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*riskCount = reviewedArtifacts\.filter\(isArtifactVisualQaRisk\)\.length[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已切到 QA 风险筛选[\s\S]*未发现明显风险[\s\S]*return[\s\S]*getAgentResultGroupSaveAsAssetIntent\(brief\)/,
-  "focused result-group chat should run visual QA, summarize risk, and switch to QA-risk filtering before falling through to picking or revision jobs"
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupVisualQaIntent\(brief\)[\s\S]*qaArtifacts = sourceArtifacts\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*reviewedArtifacts: PersistedGeneratedArtifact\[\] = \[\][\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*riskCount = reviewedArtifacts\.filter\(isArtifactVisualQaRisk\)\.length[\s\S]*failedQaCount = qaArtifacts\.length - reviewedArtifacts\.length[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已切到 QA 风险筛选[\s\S]*张未完成，请稍后重试[\s\S]*未发现明显风险[\s\S]*return[\s\S]*getAgentResultGroupSaveAsAssetIntent\(brief\)/,
+  "focused result-group chat should run visual QA, summarize risk or partial failure, and switch to QA-risk filtering before falling through to picking or revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -658,8 +658,8 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleApplyGlobalResultReviewCommand[\s\S]*hasVisualQaIntent = hasAgentGlobalResultReviewVisualQaIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*qaArtifacts = targets\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*reviewedArtifacts: PersistedGeneratedArtifact\[\] = \[\][\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*riskCount = reviewedArtifacts\.filter\(isArtifactVisualQaRisk\)\.length[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已切到 QA 风险筛选[\s\S]*未发现明显风险[\s\S]*return true[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)/,
-  "global result review commands should run visual QA, summarize risk, and switch scoped result-wall targets to QA-risk filtering before open-folder, save, retry, or status commands"
+  /handleApplyGlobalResultReviewCommand[\s\S]*hasVisualQaIntent = hasAgentGlobalResultReviewVisualQaIntent\(brief\)[\s\S]*getAgentGlobalResultReviewTargets\(brief, visibleArtifacts, resultReviewFilter\)[\s\S]*qaArtifacts = targets\.filter[\s\S]*!isAgentArtifactFailed\(artifact\)[\s\S]*reviewedArtifacts: PersistedGeneratedArtifact\[\] = \[\][\s\S]*updatedArtifact = await handleRunArtifactVisualQa\(artifact\.id\)[\s\S]*riskCount = reviewedArtifacts\.filter\(isArtifactVisualQaRisk\)\.length[\s\S]*failedQaCount = qaArtifacts\.length - reviewedArtifacts\.length[\s\S]*setResultReviewFilter\("qa_risk"\)[\s\S]*已切到 QA 风险筛选[\s\S]*张未完成，请稍后重试[\s\S]*未发现明显风险[\s\S]*return true[\s\S]*hasOpenFolderIntent = hasAgentGlobalResultReviewOpenFolderIntent\(brief\)/,
+  "global result review commands should run visual QA, summarize risk or partial failure, and switch scoped result-wall targets to QA-risk filtering before open-folder, save, retry, or status commands"
 );
 assert.match(
   workbenchSource,
