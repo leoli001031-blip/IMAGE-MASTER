@@ -9006,6 +9006,28 @@ function CanvasAgentPanel({
         recordAction(`已按原参考图、比例和图组用途重做「${artifact?.title || suggestion.title}」。`);
         return;
       }
+      if (artifact?.url) {
+        window.dispatchEvent(
+          new CustomEvent("image-master:generation-frame-output-edit", {
+            detail: {
+              artifactId: artifact.id,
+              jobId: artifact.jobId,
+              nodeId: artifact.nodeId,
+              title: artifact.title,
+              url: artifact.url,
+              status: artifact.status,
+              note: "这张图没有可直接重跑的任务，已切到让 Agent 改这张",
+            },
+          })
+        );
+        window.setTimeout(() => {
+          onComposeBriefChange(
+            suggestion.editBrief || `重做「${artifact.title}」：只改这张，保留原参考图、比例和用途。`
+          );
+        }, 0);
+        recordAction(`这张图没有可直接重跑的任务；已选中「${artifact.title}」，接下来只修改这张。`);
+        return;
+      }
       onComposeBriefChange(suggestion.editBrief || `重做「${suggestion.title}」：只改这张，保留原参考图、比例和用途。`);
       recordAction(`已切到自然语言修改；只会处理「${suggestion.title}」。`);
       return;
