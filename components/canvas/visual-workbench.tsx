@@ -3049,6 +3049,38 @@ export function VisualWorkbench() {
     setComposingWorkflow(false);
   };
 
+  const handleApplyGlobalResultReviewCommand = async (userBrief: string): Promise<boolean> => {
+    const brief = userBrief.trim();
+    const reviewStatus = getAgentResultReviewStatusIntent(brief);
+    const hasScopeIntent = hasAgentGlobalResultReviewScopeIntent(brief);
+    const targets = getAgentGlobalResultReviewTargets(brief, visibleArtifacts);
+    if (!reviewStatus || !hasScopeIntent) return false;
+    const scopeLabel = getAgentGlobalResultReviewScopeLabel(brief);
+    if (targets.length === 0) {
+      setAgentLastUserBrief(brief);
+      setComposeMessage(`当前结果墙里没有找到可处理的${scopeLabel}。`);
+      return true;
+    }
+
+    const targetIds = targets.map((artifact) => artifact.id);
+    const filter = getResultReviewFilterForArtifactReviewStatus(reviewStatus);
+    if (filter) {
+      setResultReviewFilter(filter);
+      setHighlightedResultReviewFilter(filter);
+    }
+    await handleSetArtifactGroupReviewStatus(
+      targetIds,
+      reviewStatus,
+      `Agent 自然语言批量挑图：${brief}`
+    );
+    setAgentLastUserBrief(brief);
+    setComposeMessage(
+      `已把 ${targetIds.length} 张${scopeLabel}标记为${getArtifactReviewStatusLabel(reviewStatus)}；只影响当前结果墙。`
+    );
+    setComposeBrief("");
+    return true;
+  };
+
   const handleComposeWorkflow = async () => {
     if (agentImageEditTarget) {
       await handleRunAgentImageRevision();
@@ -6215,6 +6247,7 @@ export function VisualWorkbench() {
         onComposeWorkflow={handleComposeWorkflow}
         onEditWorkflowPlan={handleEditWorkflowPlanFromAgent}
         onApplyResultGroupEdit={handleRunAgentResultGroupRevision}
+        onApplyResultReviewCommand={handleApplyGlobalResultReviewCommand}
         onApplyWorkflowPlan={handleApplyWorkflowPlan}
         onDismissWorkflowPlan={handleDismissWorkflowPlan}
         onClearEditTarget={handleClearAgentImageEditTarget}
@@ -8754,6 +8787,7 @@ function CanvasAgentPanel({
   onComposeWorkflow,
   onEditWorkflowPlan,
   onApplyResultGroupEdit,
+  onApplyResultReviewCommand,
   onApplyWorkflowPlan,
   onDismissWorkflowPlan,
   onClearEditTarget,
@@ -8792,6 +8826,7 @@ function CanvasAgentPanel({
     brief: string,
     artifacts: PersistedGeneratedArtifact[]
   ) => void;
+  onApplyResultReviewCommand: (brief: string) => Promise<boolean>;
   onApplyWorkflowPlan: () => void;
   onDismissWorkflowPlan: () => void;
   onClearEditTarget: () => void;
@@ -8868,7 +8903,11 @@ function CanvasAgentPanel({
     : hasActiveGenerationFrame || willCreateGenerationFrame
     ? onComposeWorkflow
       : onComposeWorkflow;
-  const handlePrimaryAction = () => {
+  const handlePrimaryAction = async () => {
+    if (canShowResultReviewAssistant && composeBrief.trim() && !focusedPlanGroup && !workflowPlanPreview && !hasEditTarget) {
+      const handled = await onApplyResultReviewCommand(composeBrief);
+      if (handled) return;
+    }
     if (workflowPlanPreview && focusedPlanGroup && composeBrief.trim() && !hasEditTarget) {
       onEditWorkflowPlan(workflowPlanPreview, focusedPlanGroup);
       return;
@@ -11264,11 +11303,53 @@ function getAgentResultReviewStatusIntent(text: string): ArtifactReviewStatus | 
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return null;
   if (getAgentResultGroupKeepCountIntent(text)) return null;
-  if (/(恢复|改回|设为|标为)?待检查|取消标记|取消状态/.test(compactText)) return "pending";
-  if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(compactText)) return "needs_redo";
+  if (/(恢复|改回|设为|标为|标记?)(待检查)|取消标记|取消状态/.test(compactText)) return "pending";
   if (/(淘汰|不要这组|不用这组|不留这组|弃用|废掉|拒绝|打掉)/.test(compactText)) return "rejected";
-  if (/(保留|留下|留着|可用|通过|要这组|这组可以|先留|先收|选中)/i.test(compactText)) return "approved";
+  const approvedActionText = compactText.replace(/已保留(都|图|结果|的)?/g, "");
+  if (/(保留|留下|留着|可用|通过|要这组|这组可以|先留|先收|选中)/i.test(approvedActionText)) return "approved";
+  if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(compactText)) return "needs_redo";
   return null;
+}
+
+function getAgentGlobalResultReviewTargets(
+  text: string,
+  artifacts: PersistedGeneratedArtifact[]
+): PersistedGeneratedArtifact[] {
+  const compactText = text.replace(/\s+/g, "");
+  if (artifacts.length === 0 || !compactText) return [];
+  if (/(失败|不可用|报错|出错)/.test(compactText)) {
+    return artifacts.filter((artifact) => isAgentArtifactFailed(artifact));
+  }
+  const targetsRedoScope = /(待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项)/.test(compactText);
+  const targetsPendingScope = /(待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的))/.test(compactText);
+  const targetsApprovedScope = /(已保留(都|图|结果|的)|可用图|通过图|保留图)/.test(compactText);
+  if (targetsRedoScope) {
+    return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "needs_redo");
+  }
+  if (targetsPendingScope) {
+    return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "pending");
+  }
+  if (targetsApprovedScope) {
+    return artifacts.filter((artifact) => getArtifactReviewStatus(artifact) === "approved");
+  }
+  if (/(全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText)) {
+    return artifacts;
+  }
+  return [];
+}
+
+function hasAgentGlobalResultReviewScopeIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  return /(失败|不可用|报错|出错|待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项|待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的)|已保留(都|图|结果|的)|可用图|通过图|保留图|全部|全都|所有|整套|这一套|这套|这些|结果墙|所有结果|全部结果)/.test(compactText);
+}
+
+function getAgentGlobalResultReviewScopeLabel(text: string): string {
+  const compactText = text.replace(/\s+/g, "");
+  if (/(失败|不可用|报错|出错)/.test(compactText)) return "失败结果";
+  if (/(待重做(都|图|结果|项|的)|建议重做(都|图|结果|的)|重做项)/.test(compactText)) return "待重做结果";
+  if (/(待检查(都|图|结果|的)|未检查(都|图|结果|的)|没检查(都|图|结果|的))/.test(compactText)) return "待检查结果";
+  if (/(已保留(都|图|结果|的)|可用图|通过图|保留图)/.test(compactText)) return "已保留结果";
+  return "当前结果";
 }
 
 function getAgentResultGroupKeepCountIntent(text: string): number | null {

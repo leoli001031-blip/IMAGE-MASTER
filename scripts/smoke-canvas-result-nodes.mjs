@@ -452,8 +452,28 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /approvedActionText = compactText\.replace\(\/已保留[\s\S]*return "approved"[\s\S]*return "needs_redo"/,
+  "result review status parsing should treat approved/redo words as actions, not confuse scoped subsets like 已保留图 or 待重做图"
+);
+assert.match(
+  workbenchSource,
   /function getAgentResultGroupKeepCountIntent[\s\S]*只保留[\s\S]*parseAgentPlanEditCount[\s\S]*function selectAgentResultGroupKeepArtifacts[\s\S]*getAgentResultGroupKeepRank[\s\S]*status === "approved"[\s\S]*isArtifactVisualQaRisk/,
   "only-keep-N group picking should prefer already kept and lower-risk images"
+);
+assert.match(
+  workbenchSource,
+  /handleApplyGlobalResultReviewCommand[\s\S]*reviewStatus = getAgentResultReviewStatusIntent\(brief\)[\s\S]*hasScopeIntent = hasAgentGlobalResultReviewScopeIntent\(brief\)[\s\S]*当前结果墙里没有找到可处理的\$\{scopeLabel\}[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*只影响当前结果墙/,
+  "global result review commands should mark scoped result subsets without falling through to planning"
+);
+assert.match(
+  workbenchSource,
+  /handlePrimaryAction = async[\s\S]*canShowResultReviewAssistant[\s\S]*onApplyResultReviewCommand\(composeBrief\)[\s\S]*if \(handled\) return[\s\S]*workflowPlanPreview && focusedPlanGroup/,
+  "Agent primary action should try global result review commands before plan or generation actions"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentGlobalResultReviewTargets[\s\S]*targetsRedoScope = \/\(待重做\(都\|图\|结果\|项\|的\)[\s\S]*targetsPendingScope[\s\S]*targetsApprovedScope[\s\S]*return artifacts[\s\S]*function hasAgentGlobalResultReviewScopeIntent/,
+  "global result review commands should separate target scopes like 待重做图 from actions like 全部标待重做"
 );
 assert.match(
   workbenchSource,
