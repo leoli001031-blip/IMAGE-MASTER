@@ -302,8 +302,13 @@ assert.match(
 );
 assert.match(
   outputPreviewModalSource,
-  /reviewStatus[\s\S]*onSetReviewStatus[\s\S]*保留[\s\S]*onSetReviewStatus\("pending"\)[\s\S]*待检[\s\S]*重做[\s\S]*淘汰/,
-  "image detail preview should let users mark or reset review state from the large-image view"
+  /reviewStatus[\s\S]*onSetReviewStatus[\s\S]*保留[\s\S]*onSetReviewStatus\("pending"\)[\s\S]*待检[\s\S]*onSetReviewStatus\("needs_redo"\)[\s\S]*待重做[\s\S]*淘汰/,
+  "image detail preview should let users mark or reset review state without confusing it with immediate retry"
+);
+assert.match(
+  outputPreviewModalSource,
+  /const retryTitle = item\.jobId[\s\S]*立即重做当前图[\s\S]*没有直接重跑任务时让 Agent 改这张[\s\S]*onClick=\{onRetry\}[\s\S]*重做/,
+  "image detail preview should label immediate retry separately from the needs-redo review state"
 );
 assert.match(
   outputPreviewModalSource,

@@ -137,7 +137,7 @@ export function OutputPreviewModal({
   const outputRatioLabel = getOutputPreviewRatioLabel(item.metadata ?? {});
   const canRetryOrEdit = Boolean(item.jobId || item.url);
   const retryTitle = item.jobId
-    ? "重做当前图"
+    ? "立即重做当前图"
     : item.url
       ? "没有直接重跑任务时让 Agent 改这张"
       : "当前图没有可重做任务";
@@ -234,10 +234,10 @@ export function OutputPreviewModal({
                   className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 text-xs font-medium text-amber-700 transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-45"
                   disabled={!item.artifactId || reviewStatus === "failed"}
                   onClick={() => onSetReviewStatus("needs_redo")}
-                  title="标记这张建议重做"
+                  title="标记这张待重做，不会立即生成"
                 >
                   <RefreshCw className="h-3 w-3" />
-                  重做
+                  待重做
                 </button>
                 <button
                   type="button"
