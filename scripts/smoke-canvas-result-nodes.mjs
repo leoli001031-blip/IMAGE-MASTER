@@ -472,6 +472,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /const newVersion = indexedArtifacts\.find[\s\S]*getAgentArtifactVersionSourceLabel\(artifact\)[\s\S]*回看新版本[\s\S]*重做后的新版本[\s\S]*\["open", "edit", "save", "approve", "mark_needs_redo"\][\s\S]*只修改这张新版本/,
+  "Agent review suggestions should surface rerun or revision outputs as executable new-version review tasks"
+);
+assert.match(
+  workbenchSource,
   /action === "edit" \|\| action === "copy"[\s\S]*这张文案短一点[\s\S]*只改这张的画面文案[\s\S]*function getAgentReviewSuggestionActionLabel\(action: AgentReviewSuggestionAction\)[\s\S]*if \(action === "copy"\) return "改文案";/,
   "Agent review copy suggestions should become scoped copy-edit actions with clear feedback"
 );

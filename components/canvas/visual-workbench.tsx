@@ -13580,6 +13580,24 @@ function buildAgentExecutableReviewSuggestions({
     ));
   }
 
+  const newVersion = indexedArtifacts.find(({ artifact }) =>
+    getArtifactReviewStatus(artifact) === "pending" &&
+    !isAgentArtifactFailed(artifact) &&
+    Boolean(getAgentArtifactVersionSourceLabel(artifact))
+  );
+  if (newVersion) {
+    add(buildArtifactSuggestion(
+      newVersion.artifact,
+      newVersion.index,
+      "new-version",
+      "回看新版本",
+      "这张是重做后的新版本，建议先点开和上一版对比；确认可用后存为资产或保留，不满意就只改这张。",
+      ["open", "edit", "save", "approve", "mark_needs_redo"],
+      "default",
+      "只修改这张新版本：保留原参考图、比例和图组用途，只修上一版仍然存在的问题。"
+    ));
+  }
+
   const burnInPoster = indexedArtifacts.find(({ artifact }) =>
     getArtifactReviewStatus(artifact) === "pending" &&
     getOutputPreviewCopyRenderPolicy(artifact.metadata ?? {})?.mode === "burn_in" &&
