@@ -2765,6 +2765,28 @@ export function VisualWorkbench() {
       setComposeMessage(`正在用 Agent 审核「${target.title}」，完成后会同步到详情和 QA 风险筛选。`);
       return;
     }
+    if (getAgentImageRetryIntent(brief)) {
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-retry", {
+          detail: {
+            nodeId: target.nodeId,
+            outputId: target.outputId,
+            artifactId: target.artifactId,
+            jobId: target.jobId,
+            url: target.url,
+            title: target.title,
+            status: target.status,
+            prompt: target.prompt,
+            metadata: target.metadata,
+            group: getAgentImageTargetGroupTitle(target),
+          },
+        })
+      );
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(`正在按原上下文重做「${target.title}」。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (keepCountIntent === 1 && target.artifactId) {
@@ -12118,6 +12140,20 @@ function getAgentImageVisualQaIntent(text: string): boolean {
   if (!compactText) return false;
   if (/(待检查|未检查|没检查|标记|状态|设为|改成|改为|回到|恢复)/.test(compactText)) return false;
   return /(?:(跑|做|执行|开始|重新|再|帮我)?(视觉)?(qa|质检|审核))(这张|当前)?(图|图片|结果)?|(?:检查)(这张|当前)(图|图片|结果)?|(?:这张|当前)(图|图片|结果)?(检查|质检|审核)|(?:商品|模特|光影|文案)(一致性|安全区)?(检查|质检|审核)/i.test(compactText);
+}
+
+function getAgentImageRetryIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  if (/(标记|标为|标成|设为|改成|改为|建议重做|待重做|需要重做|该重做|得重做|状态)/.test(compactText)) return false;
+  return /(?:这张|当前)(图|图片|结果)?(重做|重跑|重试|重新生成|重新跑|再生成|再跑)|(?:重做|重跑|重试|重新生成|重新跑|再生成|再跑)(这张|当前)(图|图片|结果)?|(?:执行|开始|马上|直接)(这张|当前)?(图|图片|结果)?(重做|重跑|重试)/.test(compactText);
+}
+
+function getAgentImageTargetGroupTitle(target: AgentImageEditTarget): string | undefined {
+  return getStringValue(target.metadata?.resultGroupTitle) ||
+    getStringValue(target.metadata?.rerunGroupTitle) ||
+    getStringValue(target.metadata?.layoutGroupTitle) ||
+    undefined;
 }
 
 function downloadAgentImageTarget(url: string, title: string): void {

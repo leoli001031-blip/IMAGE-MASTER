@@ -507,8 +507,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*getAgentImageVisualQaIntent\(brief\)[\s\S]*!target\.artifactId[\s\S]*还没有可质检的产物记录[\s\S]*handleRunArtifactVisualQa\(target\.artifactId\)[\s\S]*正在用 Agent 审核「\$\{target\.title\}」[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageVisualQaIntent\(brief\)[\s\S]*!target\.artifactId[\s\S]*还没有可质检的产物记录[\s\S]*handleRunArtifactVisualQa\(target\.artifactId\)[\s\S]*正在用 Agent 审核「\$\{target\.title\}」[\s\S]*return[\s\S]*getAgentImageRetryIntent\(brief\)/,
   "focused single-image chat should run visual QA for the selected artifact before falling through to revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageRetryIntent\(brief\)[\s\S]*image-master:generation-frame-output-retry[\s\S]*group: getAgentImageTargetGroupTitle\(target\)[\s\S]*正在按原上下文重做「\$\{target\.title\}」[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused single-image chat should execute direct single-image retry before falling through to review-state marking or revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -600,6 +605,16 @@ assert.match(
   workbenchSource,
   /function getAgentImageVisualQaIntent[\s\S]*待检查\|未检查\|没检查\|标记\|状态[\s\S]*return false[\s\S]*qa\|质检\|审核[\s\S]*检查\)\(这张\|当前\)/i,
   "single-image visual QA intent should avoid review-state wording and require explicit QA or check wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageRetryIntent[\s\S]*标记\|标为\|标成\|设为[\s\S]*建议重做\|待重做\|需要重做[\s\S]*return false[\s\S]*这张\|当前[\s\S]*重做\|重跑\|重试\|重新生成/,
+  "single-image direct retry intent should require execution wording while excluding review-state marking language"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageTargetGroupTitle[\s\S]*resultGroupTitle[\s\S]*rerunGroupTitle[\s\S]*layoutGroupTitle/,
+  "single-image direct retry should preserve the selected result group when available"
 );
 assert.match(
   workbenchSource,
