@@ -713,6 +713,26 @@ assert.match(
 );
 assert.match(
   source,
+  /function getAgentPlanRatioEdit[\s\S]*getAgentPlanRatioValue\(text\)[\s\S]*targets\.length === 0 && !isExplicitGlobalRatioIntent/,
+  "plan edits should understand targeted ratio changes such as 主图改成 4:5 without making accidental global edits"
+);
+assert.match(
+  source,
+  /function getAgentPlanRatioValue[\s\S]*\[:：\][\s\S]*横版[\s\S]*竖版[\s\S]*方图/,
+  "plan edits should normalize explicit ratios and common horizontal, vertical, and square wording"
+);
+assert.match(
+  source,
+  /const ratio = getAgentPlanRatioValue\(text\)[\s\S]*agentPlanMatrixItemMatchesScopeGroup\(item, group\) \? \{ \.\.\.item, ratio \}/,
+  "scoped plan-group edits should apply ratio changes only to the focused group"
+);
+assert.match(
+  source,
+  /label: "比例"[\s\S]*values: diff\.ratioChanges/,
+  "visible plan diff should show ratio changes as their own category"
+);
+assert.match(
+  source,
   /id: "closing"[\s\S]*label: "收尾图"[\s\S]*keywords: \["收尾", "closing", "转化尾图"\][\s\S]*id: "poster"[\s\S]*keywords: \["海报", "卖点", "封面"/,
   "plan edits should treat 收尾图 as its own target instead of deleting all poster or selling-point images"
 );

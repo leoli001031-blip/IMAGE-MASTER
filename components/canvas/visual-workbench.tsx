@@ -1070,6 +1070,7 @@ interface AgentPlanDiff {
   additions: string[];
   removals: string[];
   countChanges: string[];
+  ratioChanges: string[];
   copyChanges: string[];
   otherChanges: string[];
 }
@@ -3118,7 +3119,7 @@ export function VisualWorkbench() {
       }
 
       if (pendingAgentSamplePlan) {
-        setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、横版不要字、加商场场景。");
+        setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、主图改 4:5、加商场场景。");
         return;
       }
 
@@ -3196,7 +3197,7 @@ export function VisualWorkbench() {
     }
 
     if (pendingAgentSamplePlan) {
-      setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、横版不要字、加商场场景。");
+      setComposeMessage("这句计划修改我还没理解。可以直接说：少两张、删掉某组、详情页烧字、主图改 4:5、加商场场景。");
       return;
     }
 
@@ -9131,7 +9132,7 @@ function CanvasAgentPanel({
     completionSummary,
   });
   const planInputPlaceholder = workflowPlanPreview
-    ? "直接说怎么改计划，比如：模特图少两张，详情页要烧字，加两张商场场景。"
+    ? "直接说怎么改计划，比如：模特图少两张，详情页要烧字，主图改 4:5。"
     : editTarget
       ? "比如：把背景换成室外街拍，人物表情更自然，保留产品和构图。"
       : focusedPlanGroup
@@ -10222,7 +10223,7 @@ function AgentPlanBoard({
         )}
       </div>
       <div className="mt-2 rounded-md bg-warm-bg px-2.5 py-2 text-[11px] leading-4 text-warm-muted">
-        想改就直接说：这组少两张、不要封面、文案烧进详情页、加商场场景。
+        想改就直接说：这组少两张、不要封面、文案烧进详情页、主图改 4:5。
       </div>
     </div>
   );
@@ -10245,6 +10246,7 @@ function AgentPlanDiffCard({
     { label: "新增", values: diff.additions },
     { label: "删除", values: diff.removals },
     { label: "数量", values: diff.countChanges },
+    { label: "比例", values: diff.ratioChanges },
     { label: "文案", values: diff.copyChanges },
     { label: "其他", values: diff.otherChanges },
   ].filter((section) => section.values.length > 0);
@@ -10319,6 +10321,7 @@ function getAgentPlanDiffChangeLines(diff: AgentPlanDiff): string[] {
     ...diff.additions,
     ...diff.removals,
     ...diff.countChanges,
+    ...diff.ratioChanges,
     ...diff.copyChanges,
     ...diff.otherChanges,
   ];
@@ -11445,6 +11448,7 @@ function buildAgentResultGroupRevisionDiff(
     additions: [],
     removals: [],
     countChanges,
+    ratioChanges: [],
     copyChanges,
     otherChanges,
   };
@@ -11566,6 +11570,7 @@ function formatAgentPlanDiffForConversation(diff: AgentPlanDiff): string {
     ...diff.additions,
     ...diff.removals,
     ...diff.countChanges,
+    ...diff.ratioChanges,
     ...diff.copyChanges,
     ...diff.otherChanges,
   ].slice(0, 3);
@@ -17904,6 +17909,24 @@ function applyAgentNaturalLanguagePlanEdit({
       changes.push(copyEdit.mode === "burn_in" ? `${targetLabel}文案改为烧进图` : `${targetLabel}文案改为图层/不进图`);
     }
 
+    const ratioEdit = getAgentPlanRatioEdit(text);
+    if (ratioEdit) {
+      nextMatrix = nextMatrix.map((item) =>
+        ratioEdit.targets.length === 0 || ratioEdit.targets.some((target) => agentPlanMatrixItemMatchesTarget(item, target))
+          ? { ...item, ratio: ratioEdit.ratio }
+          : item
+      );
+      nextItems = nextItems.map((item) =>
+        ratioEdit.targets.length === 0 || ratioEdit.targets.some((target) => agentPlanPreviewItemMatchesTarget(item, target))
+          ? { ...item, ratio: ratioEdit.ratio }
+          : item
+      );
+      const targetLabel = ratioEdit.targets.length > 0
+        ? `${ratioEdit.targets.map((target) => target.label).join("、")} `
+        : "整套 ";
+      changes.push(`${targetLabel}比例改为 ${ratioEdit.ratio}`);
+    }
+
     const contentEdit = getAgentPlanContentEdit(text);
     if (contentEdit && !(contentEdit.target.id === "scene" && namedSceneEdit.handledSceneIncrease)) {
       if (editsUseMatrix) {
@@ -18060,6 +18083,17 @@ function applyAgentScopedPlanEdit({
       agentPlanPreviewItemMatchesScopeGroup(item, group) ? { ...item, copyMode } : item
     );
     changes.push(copyMode === "burn_in" ? `「${groupLabel}」文案改为烧进图` : `「${groupLabel}」文案改为图层/不进图`);
+  }
+
+  const ratio = getAgentPlanRatioValue(text);
+  if (ratio) {
+    nextMatrix = nextMatrix.map((item) =>
+      agentPlanMatrixItemMatchesScopeGroup(item, group) ? { ...item, ratio } : item
+    );
+    nextItems = nextItems.map((item) =>
+      agentPlanPreviewItemMatchesScopeGroup(item, group) ? { ...item, ratio } : item
+    );
+    changes.push(`「${groupLabel}」比例改为 ${ratio}`);
   }
 
   const contentInstruction = extractAgentPlanContentInstruction(text);
@@ -18463,12 +18497,15 @@ function buildAgentPlanDiff(
   const additions: string[] = [];
   const removals: string[] = [];
   const countChanges: string[] = [];
+  const ratioChanges: string[] = [];
   const copyChanges: string[] = [];
   const otherChanges: string[] = [];
 
   for (const change of changes) {
     if (/文案|烧字|进图|图层/.test(change)) {
       copyChanges.push(change);
+    } else if (/比例|横版|竖版|方图|[1-9][0-9]?\s*:\s*[1-9][0-9]?/.test(change)) {
+      ratioChanges.push(change);
     } else if (/删除|去掉|不要|取消|减少|减掉|删掉/.test(change)) {
       removals.push(change);
     } else if (/增加|新增|添加|加/.test(change)) {
@@ -18486,15 +18523,16 @@ function buildAgentPlanDiff(
       : `计划从 ${beforeCount} 张调整为 ${afterCount} 张。`,
     scopeSummary: scopeGroup
       ? `只调整「${scopeGroup.title}」这一组。`
-      : buildAgentPlanDiffScopeSummary({ additions, removals, countChanges, copyChanges, otherChanges }),
+      : buildAgentPlanDiffScopeSummary({ additions, removals, countChanges, ratioChanges, copyChanges, otherChanges }),
     preservedSummary: scopeGroup
       ? "其他图组、比例和参考图角色保持不变。"
       : "未提到的图组、比例和参考图角色保持不变。",
-    nextAction: buildAgentPlanDiffNextAction({ additions, removals, countChanges, copyChanges, otherChanges }),
+    nextAction: buildAgentPlanDiffNextAction({ additions, removals, countChanges, ratioChanges, copyChanges, otherChanges }),
     affectedGroupTitles: getAgentPlanDiffAffectedGroupTitles(changes, scopeGroup),
     additions,
     removals,
     countChanges,
+    ratioChanges,
     copyChanges,
     otherChanges,
   };
@@ -18519,17 +18557,22 @@ function buildAgentPlanDiffScopeSummary({
   additions,
   removals,
   countChanges,
+  ratioChanges,
   copyChanges,
   otherChanges,
-}: Pick<AgentPlanDiff, "additions" | "removals" | "countChanges" | "copyChanges" | "otherChanges">): string {
-  const structuralChangeCount = additions.length + removals.length + countChanges.length + otherChanges.length;
+}: Pick<AgentPlanDiff, "additions" | "removals" | "countChanges" | "ratioChanges" | "copyChanges" | "otherChanges">): string {
+  const structuralChangeCount = additions.length + removals.length + countChanges.length + ratioChanges.length + otherChanges.length;
   if (copyChanges.length > 0 && structuralChangeCount === 0) {
     return "只调整文案策略，图组数量和参考角色不变。";
+  }
+  if (ratioChanges.length > 0 && structuralChangeCount === ratioChanges.length && copyChanges.length === 0) {
+    return "只调整比例，图组数量和参考角色不变。";
   }
   const affected: string[] = [];
   if (additions.length > 0) affected.push("新增图组");
   if (removals.length > 0) affected.push("删除图组");
   if (countChanges.length > 0) affected.push("数量");
+  if (ratioChanges.length > 0) affected.push("比例");
   if (copyChanges.length > 0) affected.push("文案策略");
   if (otherChanges.length > 0) affected.push("点名方向");
   return affected.length > 0
@@ -18541,10 +18584,14 @@ function buildAgentPlanDiffNextAction({
   additions,
   removals,
   countChanges,
+  ratioChanges,
   copyChanges,
-}: Pick<AgentPlanDiff, "additions" | "removals" | "countChanges" | "copyChanges" | "otherChanges">): string {
+}: Pick<AgentPlanDiff, "additions" | "removals" | "countChanges" | "ratioChanges" | "copyChanges" | "otherChanges">): string {
   if (copyChanges.some((change) => /烧字|进图/.test(change))) {
     return "下一步先检查烧字安全区，再执行生成。";
+  }
+  if (ratioChanges.length > 0 && additions.length === 0 && removals.length === 0 && countChanges.length === 0) {
+    return "下一步检查新比例下的构图安全区，再执行生成。";
   }
   if (additions.length > 0) {
     return "下一步确认新增图组是否需要商品、模特或场景参考。";
@@ -18833,6 +18880,31 @@ function getAgentPlanCopyEdit(text: string): { mode: "burn_in" | "layout_layer";
     mode: wantsNoBurn ? "layout_layer" : "burn_in",
     targets: isExplicitGlobalCopyIntent ? [] : targets,
   };
+}
+
+function getAgentPlanRatioEdit(text: string): { ratio: string; targets: AgentPlanEditTarget[] } | null {
+  const ratio = getAgentPlanRatioValue(text);
+  if (!ratio) return null;
+  const compactText = text.replace(/\s+/g, "");
+  const targets = agentPlanEditTargets.filter((target) =>
+    target.keywords.some((keyword) => compactText.includes(keyword.toLowerCase().replace(/\s+/g, "")))
+  );
+  const isExplicitGlobalRatioIntent = /(全部|所有|整套|全局)/.test(compactText);
+  if (targets.length === 0 && !isExplicitGlobalRatioIntent) return null;
+  return {
+    ratio,
+    targets: isExplicitGlobalRatioIntent ? [] : targets,
+  };
+}
+
+function getAgentPlanRatioValue(text: string): string | null {
+  const compactText = text.replace(/\s+/g, "");
+  const ratioMatch = compactText.match(/([1-9][0-9]?)[:：]([1-9][0-9]?)/);
+  if (ratioMatch) return `${ratioMatch[1]}:${ratioMatch[2]}`;
+  if (/(横版|横图|宽图|宽幅|landscape)/i.test(compactText)) return "3:2";
+  if (/(竖版|竖图|竖幅|portrait)/i.test(compactText)) return "4:5";
+  if (/(方图|方版|正方形|square)/i.test(compactText)) return "1:1";
+  return null;
 }
 
 function getAgentPlanContentEdit(text: string): { target: AgentPlanEditTarget; instruction: string } | null {
