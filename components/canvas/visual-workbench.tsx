@@ -7406,6 +7406,8 @@ function withResultReviewFilterContext(
         layoutFilterLabel: getResultReviewFilterLabel(filter),
         layoutFilteredCount: matchedArtifacts.length,
         layoutFilteredTotalCount: artifacts.length || artifactIds.length,
+        layoutFilteredArtifactIds: matchedArtifacts.map((artifact) => artifact.id),
+        layoutFilteredArtifactTitles: matchedArtifacts.map((artifact) => artifact.title),
         layoutFilteredReviewSummary: buildArtifactReviewSummaryParts(matchedArtifacts),
         layoutFilteredVisualQaSummary: buildArtifactVisualQaSummaryParts(matchedArtifacts),
       },

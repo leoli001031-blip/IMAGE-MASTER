@@ -494,13 +494,18 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /withResultReviewFilterContext[\s\S]*layoutFilterActive[\s\S]*layoutFilteredCount[\s\S]*buildArtifactReviewSummaryParts[\s\S]*buildArtifactVisualQaSummaryParts/,
-  "filtered result group headers should receive filtered counts and status summaries"
+  /withResultReviewFilterContext[\s\S]*layoutFilterActive[\s\S]*layoutFilteredCount[\s\S]*layoutFilteredArtifactIds[\s\S]*layoutFilteredArtifactTitles[\s\S]*buildArtifactReviewSummaryParts[\s\S]*buildArtifactVisualQaSummaryParts/,
+  "filtered result group headers should receive filtered counts, artifact ids, titles, and status summaries"
 );
 assert.match(
   workflowNodeSource,
   /layoutFilterActive[\s\S]*筛选后 \$\{filteredCount\} \/ 共 \$\{filteredTotalCount\}/,
   "artifact group headers should display partial filter counts like 筛选后 1 / 共 3"
+);
+assert.match(
+  workflowNodeSource,
+  /layoutFilteredArtifactIds[\s\S]*layoutFilteredArtifactTitles[\s\S]*actionArtifactIds[\s\S]*filterActive[\s\S]*filteredArtifactIds\.length > 0[\s\S]*dispatchArtifactGroupReviewState\(\{[\s\S]*artifactIds: actionArtifactIds[\s\S]*dispatchArtifactGroupRetry\(\{[\s\S]*artifactIds: actionArtifactIds/,
+  "filtered group actions should operate only on visible filtered artifact ids"
 );
 assert.match(
   workbenchSource,

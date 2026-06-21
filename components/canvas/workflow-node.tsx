@@ -878,6 +878,8 @@ function ArtifactGroupHeaderNode({
   const filteredTotalCount = typeof parameters?.layoutFilteredTotalCount === "number" && Number.isFinite(parameters.layoutFilteredTotalCount)
     ? parameters.layoutFilteredTotalCount
     : undefined;
+  const filteredArtifactIds = getStringArrayParameter(parameters?.layoutFilteredArtifactIds);
+  const filteredArtifactTitles = getStringArrayParameter(parameters?.layoutFilteredArtifactTitles);
   const filteredReviewSummary = getStringArrayParameter(parameters?.layoutFilteredReviewSummary);
   const filteredVisualQaSummary = getStringArrayParameter(parameters?.layoutFilteredVisualQaSummary);
   const groupHighlighted = parameters?.layoutGroupHighlighted === true;
@@ -896,6 +898,18 @@ function ArtifactGroupHeaderNode({
   const activeVisualQaSummary = filterActive && filteredVisualQaSummary.length > 0
     ? filteredVisualQaSummary
     : visualQaSummary;
+  const actionArtifactIds = filterActive && filteredArtifactIds.length > 0
+    ? filteredArtifactIds
+    : artifactIds;
+  const actionArtifactTitles = filterActive && filteredArtifactTitles.length > 0
+    ? filteredArtifactTitles
+    : artifactTitles;
+  const actionCount = filterActive && filteredCount !== undefined
+    ? filteredCount
+    : count;
+  const actionScopeText = filterActive && filteredCount !== undefined
+    ? `当前筛选的 ${filteredCount} 张`
+    : "整组";
   const captionParts = [
     countText,
     ratios.length > 0 ? ratios.slice(0, 4).join(" / ") : "",
@@ -905,10 +919,10 @@ function ArtifactGroupHeaderNode({
   const handleEditGroup = () => {
     dispatchArtifactGroupEdit({
       group: data.label,
-      count,
+      count: actionCount,
       ratios,
-      artifactIds,
-      artifactTitles,
+      artifactIds: actionArtifactIds,
+      artifactTitles: actionArtifactTitles,
       providerRoles,
       promptOnlyRoles,
       copyModes,
@@ -942,14 +956,14 @@ function ArtifactGroupHeaderNode({
         onClick={(event) => {
           event.stopPropagation();
           dispatchArtifactGroupReviewState({
-            artifactIds,
+            artifactIds: actionArtifactIds,
             group: data.label,
             status: "approved",
-            note: "用户保留整组",
+            note: filterActive ? "用户保留当前筛选子集" : "用户保留整组",
           });
         }}
         className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[11px] font-medium text-emerald-700 shadow-sm transition hover:border-emerald-300"
-        title={`保留「${data.label}」这一组`}
+        title={`保留「${data.label}」${actionScopeText}`}
       >
         <Check className="h-3 w-3" />
         保留这组
@@ -962,17 +976,17 @@ function ArtifactGroupHeaderNode({
           event.stopPropagation();
           dispatchArtifactGroupRetry({
             group: data.label,
-            count,
+            count: actionCount,
             ratios,
-            artifactIds,
-            artifactTitles,
+            artifactIds: actionArtifactIds,
+            artifactTitles: actionArtifactTitles,
             providerRoles,
             promptOnlyRoles,
             copyModes,
           });
         }}
         className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 text-[11px] font-medium text-amber-700 shadow-sm transition hover:border-amber-300"
-        title={`按原上下文重做「${data.label}」这一组`}
+        title={`按原上下文重做「${data.label}」${actionScopeText}`}
       >
         <RefreshCw className="h-3 w-3" />
         重做这组
@@ -984,14 +998,14 @@ function ArtifactGroupHeaderNode({
         onClick={(event) => {
           event.stopPropagation();
           dispatchArtifactGroupReviewState({
-            artifactIds,
+            artifactIds: actionArtifactIds,
             group: data.label,
             status: "rejected",
-            note: "用户淘汰整组",
+            note: filterActive ? "用户淘汰当前筛选子集" : "用户淘汰整组",
           });
         }}
         className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-zinc-300"
-        title={`淘汰「${data.label}」这一组`}
+        title={`淘汰「${data.label}」${actionScopeText}`}
       >
         <XCircle className="h-3 w-3" />
         淘汰这组
@@ -1005,7 +1019,7 @@ function ArtifactGroupHeaderNode({
           handleEditGroup();
         }}
         className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-warm-line/70 bg-warm-paper px-2 text-[11px] font-medium text-warm-muted shadow-sm transition hover:border-warm-primary/35 hover:text-warm-primary"
-        title={`只调整「${data.label}」这一组`}
+        title={`只调整「${data.label}」${actionScopeText}`}
       >
         <PenLine className="h-3 w-3" />
         调整这组
