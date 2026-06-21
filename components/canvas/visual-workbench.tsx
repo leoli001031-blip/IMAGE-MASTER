@@ -2614,10 +2614,9 @@ export function VisualWorkbench() {
       : draft;
 
     const appliedPlan = workflowPlanPreview;
+    const appliedMessage = buildAgentWorkflowPlanAppliedMessage(appliedPlan, Boolean(existingProductNode));
     applyWorkflowDraftToCanvas(mergedDraft, {
-      message: existingProductNode
-        ? "计划已放好，可以生成样张"
-        : "计划已放好，下一步导入商品图",
+      message: appliedMessage,
       productMessage: existingProductNode
         ? "计划已接入当前商品图，可以生成样张"
         : "计划已放好，先补商品图",
@@ -3646,7 +3645,7 @@ export function VisualWorkbench() {
       setJobMessage(agentPlanText
         ? `已创建 ${createdJobs.length} 张样张任务 · ${agentPlanText}`
         : `已创建 ${createdJobs.length} 张样张任务`);
-      setComposeMessage("样张任务已创建，生成结果会回填到画布");
+      setComposeMessage(buildAgentSampleRunFeedbackMessage(confirmedPlan.preview, createdJobs.length, agentPlanText));
       setWorkflowPlanPreview(null);
       setPendingAgentSamplePlan(null);
       setAppliedWorkflowPlanPreview(confirmedPlan.preview);
@@ -11140,6 +11139,50 @@ function resolveAgentResultGroupArtifacts(
   return artifactPool.filter((artifact) =>
     artifactIds.has(artifact.id) || (artifact.jobId ? jobIds.has(artifact.jobId) : false)
   );
+}
+
+function buildAgentWorkflowPlanAppliedMessage(
+  preview: WorkflowPlanPreview | null,
+  hasProductReference: boolean
+): string {
+  const count = preview?.estimatedCount || preview?.items.length || 0;
+  const groupSummary = formatAgentWorkflowPlanGroupSummary(preview);
+  return [
+    hasProductReference
+      ? "计划已应用到画布，并接入当前商品图。"
+      : "计划已应用到画布；下一步先导入商品图。",
+    count > 0 ? `本轮会做 ${count} 张${groupSummary ? `：${groupSummary}` : ""}。` : "",
+    hasProductReference
+      ? "下一步可以生成样张；结果会自动回填到画布结果墙。"
+      : "补齐商品图后，再让 Agent 生成样张。",
+  ].filter(Boolean).join("\n");
+}
+
+function buildAgentSampleRunFeedbackMessage(
+  preview: WorkflowPlanPreview,
+  createdCount: number,
+  agentPlanText?: string
+): string {
+  const groupSummary = formatAgentWorkflowPlanGroupSummary(preview);
+  return [
+    `已创建 ${createdCount} 张样张任务，正在排队生成。`,
+    groupSummary ? `覆盖图组：${groupSummary}。` : "",
+    agentPlanText ? `规划摘要：${agentPlanText}` : "",
+    "生成结果会自动回填到画布结果墙，完成后可以按单张或分组继续修改。",
+  ].filter(Boolean).join("\n");
+}
+
+function formatAgentWorkflowPlanGroupSummary(preview: WorkflowPlanPreview | null): string {
+  if (!preview) return "";
+  const sourceTitles = preview.agentPlan?.generationMatrix?.length
+    ? preview.agentPlan.generationMatrix.map((item) =>
+        getAgentPlanGroupDisplayTitle(item.title, item.outputSlotId || item.type)
+      )
+    : preview.items.map((item) => getAgentPlanGroupDisplayTitle(item.title, item.slot));
+  const titles = agentUniqueStrings(sourceTitles).slice(0, 4);
+  if (titles.length === 0) return "";
+  const hiddenCount = Math.max(0, sourceTitles.length - titles.length);
+  return `${titles.join("、")}${hiddenCount > 0 ? `等 ${sourceTitles.length} 组` : ""}`;
 }
 
 function buildAgentImageRevisionMessage(target: AgentImageEditTarget, userBrief: string): string {

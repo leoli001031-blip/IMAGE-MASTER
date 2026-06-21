@@ -93,6 +93,16 @@ assert.match(
 );
 assert.match(
   source,
+  /buildAgentWorkflowPlanAppliedMessage[\s\S]*计划已应用到画布[\s\S]*结果会自动回填到画布结果墙/,
+  "applying an Agent plan should explain where the plan went and where results return"
+);
+assert.match(
+  source,
+  /setComposeMessage\(buildAgentSampleRunFeedbackMessage\(confirmedPlan\.preview, createdJobs\.length, agentPlanText\)\)[\s\S]*function buildAgentSampleRunFeedbackMessage[\s\S]*正在排队生成[\s\S]*完成后可以按单张或分组继续修改/,
+  "confirmed Agent sample generation should tell users what is running and how results come back"
+);
+assert.match(
+  source,
   /data-testid="agent-gap-checklist"[\s\S]*关键缺口/,
   "Agent panel should expose a visible critical-gap checklist instead of burying missing assets in long chat text"
 );
