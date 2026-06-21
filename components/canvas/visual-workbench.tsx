@@ -11535,6 +11535,8 @@ function buildAgentCompletionSummary({
     : redoTarget
       ? `建议先重做：${redoTarget.label}，${redoTarget.reason}。`
       : `建议先重做：先挑最影响转化的 ${candidateGroups[0] || "主图/海报"}，只重做问题单张。`;
+  const resultEntryText =
+    "结果入口：画布结果墙已按用途分组；点单张看大图、参考图和 prompt，点分组只改这一组。";
   const nextText = buildAgentCompletionNextAction({
     failedCount,
     hasPlan,
@@ -11545,6 +11547,7 @@ function buildAgentCompletionSummary({
     `已完成 ${visibleOutputCount} 张结果。`,
     reviewSummary ? `挑图状态：${reviewSummary}。` : "",
     visualQaSummary ? `视觉 QA：${visualQaSummary}。` : "",
+    resultEntryText,
     keepText,
     riskText,
     redoText,

@@ -618,8 +618,8 @@ assert.match(
 );
 assert.match(
   source,
-  /function buildAgentCompletionSummary[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*buildAgentCompletionRiskChecks\(\{ planGroups, matrixItems, visibleArtifacts \}\)[\s\S]*有问题点单张说“这张重做”，或点一组说“换一批”/,
-  "Agent completion summary should use current plan groups and guide users to inspect or redo a single image or group"
+  /function buildAgentCompletionSummary[\s\S]*visibleArtifacts: PersistedGeneratedArtifact\[\][\s\S]*buildAgentCompletionRiskChecks\(\{ planGroups, matrixItems, visibleArtifacts \}\)[\s\S]*结果入口：画布结果墙已按用途分组[\s\S]*点单张看大图、参考图和 prompt[\s\S]*有问题点单张说“这张重做”，或点一组说“换一批”/,
+  "Agent completion summary should use current plan groups and guide users to the result wall, image details, and single/group redo"
 );
 assert.match(
   source,
