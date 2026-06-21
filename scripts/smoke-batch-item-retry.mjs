@@ -110,10 +110,12 @@ try {
       throw new Error(`Expected retry dry-run to recover all provider references: ${JSON.stringify(dryRun.estimate)}`);
     }
 
+    const retryGroupTitle = "单图重试分组";
     const retryResponse = await requestJson(`${baseUrl}/api/jobs/${failedJobId}/retry-image`, {
       method: "POST",
       body: JSON.stringify({
         confirmedProviderCallLimit: dryRun.estimate.maxProviderCallCount,
+        groupTitle: retryGroupTitle,
         mockResults: [
           {
             url: tinyPngDataUrl(),
@@ -154,6 +156,12 @@ try {
     if (retryResponse.artifact?.metadata?.providerReferenceImageUrls?.length !== retryReferenceUrls.length) {
       throw new Error("Expected retry artifact to persist all provider reference image URLs");
     }
+    if (retryResponse.job?.metadata?.resultGroupTitle !== retryGroupTitle || retryResponse.job?.metadata?.rerunGroupTitle !== retryGroupTitle) {
+      throw new Error(`Expected retried job to preserve frontend-provided group title: ${JSON.stringify(retryResponse.job?.metadata)}`);
+    }
+    if (retryResponse.artifact?.metadata?.resultGroupTitle !== retryGroupTitle || retryResponse.artifact?.metadata?.rerunGroupTitle !== retryGroupTitle) {
+      throw new Error(`Expected retry artifact to preserve frontend-provided group title: ${JSON.stringify(retryResponse.artifact?.metadata)}`);
+    }
 
     const doneJob = db
       .prepare(
@@ -171,10 +179,12 @@ try {
       throw new Error(`Expected successful image regenerate dry-run to keep references: ${JSON.stringify(regenerateDryRun.estimate)}`);
     }
 
+    const regenerateGroupTitle = "成片重做分组";
     const regenerateResponse = await requestJson(`${baseUrl}/api/jobs/${doneJobId}/retry-image`, {
       method: "POST",
       body: JSON.stringify({
         confirmedProviderCallLimit: regenerateDryRun.estimate.maxProviderCallCount,
+        groupTitle: regenerateGroupTitle,
         mockResults: [
           {
             url: tinyPngDataUrl(),
@@ -194,6 +204,12 @@ try {
     }
     if (regenerateResponse.artifact?.metadata?.providerReferenceImageUrls?.length !== doneReferenceUrls.length) {
       throw new Error("Expected successful image regenerate artifact to persist all provider reference image URLs");
+    }
+    if (regenerateResponse.job?.metadata?.resultGroupTitle !== regenerateGroupTitle || regenerateResponse.job?.metadata?.rerunGroupTitle !== regenerateGroupTitle) {
+      throw new Error(`Expected regenerated job to preserve frontend-provided group title: ${JSON.stringify(regenerateResponse.job?.metadata)}`);
+    }
+    if (regenerateResponse.artifact?.metadata?.resultGroupTitle !== regenerateGroupTitle || regenerateResponse.artifact?.metadata?.rerunGroupTitle !== regenerateGroupTitle) {
+      throw new Error(`Expected regenerated artifact to preserve frontend-provided group title: ${JSON.stringify(regenerateResponse.artifact?.metadata)}`);
     }
 
     const jobs = db
@@ -337,7 +353,11 @@ function buildBatchPayload(extra) {
 }
 
 function attachMultiReferenceContextForRetry(db, failedJob) {
-  const metadata = parseJson(failedJob.metadata);
+  const {
+    resultGroupTitle: _resultGroupTitle,
+    rerunGroupTitle: _rerunGroupTitle,
+    ...metadata
+  } = parseJson(failedJob.metadata);
   const productUrl =
     metadata.referenceImageUrl ||
     metadata.referenceImageStorage?.publicUrl ||

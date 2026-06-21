@@ -187,13 +187,13 @@ assert.match(
 
 assert.match(
   source,
-  /if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job,[\s\S]*if \(canRetryJob\(job\)\) \{[\s\S]*handleRetryJob\(job\)/,
+  /if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job, \{ groupTitle: getStringValue\(detail\.group\) \}\)[\s\S]*if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job,[\s\S]*if \(canRetryJob\(job\)\) \{[\s\S]*handleRetryJob\(job\)/,
   "result detail retry should prefer image regenerate, then completed-image rerun, before generic failed-job retry"
 );
 
 assert.match(
   source,
-  /const handleRetryAll = \(event: Event\) => \{[\s\S]*canRetryImageJob\(job\) \|\| canRerunImageJob\(job\) \|\| canRetryJob\(job\)[\s\S]*if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job\)[\s\S]*else if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job,[\s\S]*else \{[\s\S]*handleRetryJob\(job\)/,
+  /const handleRetryAll = \(event: Event\) => \{[\s\S]*canRetryImageJob\(job\) \|\| canRerunImageJob\(job\) \|\| canRetryJob\(job\)[\s\S]*if \(canRetryImageJob\(job\)\) \{[\s\S]*handleRetryImageJob\(job, \{ groupTitle: getStringValue\(detail\?\.group\) \}\)[\s\S]*else if \(canRerunImageJob\(job\)\) \{[\s\S]*handleRerunImageJob\(job,[\s\S]*else \{[\s\S]*handleRetryJob\(job\)/,
   "group retry should support completed-image rerun in addition to retry-image and failed-job retry"
 );
 
@@ -231,6 +231,11 @@ assert.match(
   retryImageRouteSource,
   /const cleanMetadataWithAttempts = stripResultReviewAuditMetadata\(metadataWithAttempts\)[\s\S]*\.\.\.cleanMetadataWithAttempts[\s\S]*function stripResultReviewAuditMetadata[\s\S]*delete result\.reviewState;[\s\S]*delete result\.visualQa;/,
   "single-image retry should clear old review and visual QA state before writing the regenerated image"
+);
+assert.match(
+  retryImageRouteSource,
+  /groupTitle\?: unknown[\s\S]*const groupTitle = getString\(body\.groupTitle\)[\s\S]*const groupMetadata = groupTitle[\s\S]*resultGroupTitle: groupTitle[\s\S]*rerunGroupTitle: groupTitle[\s\S]*\.\.\.groupMetadata/,
+  "single-image retry should preserve the source result group when the frontend provides it"
 );
 assert.match(
   jobRunnerSource,

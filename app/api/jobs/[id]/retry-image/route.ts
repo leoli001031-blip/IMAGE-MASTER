@@ -63,6 +63,7 @@ type BatchImageResult = {
 interface RetryImageRequest {
   dryRun?: boolean;
   confirmedProviderCallLimit?: number;
+  groupTitle?: unknown;
   mockResults?: unknown;
 }
 
@@ -260,12 +261,16 @@ export async function POST(
 
     const result = results[0];
     const now = new Date().toISOString();
+    const groupTitle = getString(body.groupTitle);
     const metadataWithAttempts = appendProviderBudgetMetadata(
       appendProviderAttemptLedger(job.metadata, providerAttempts),
       providerCallBudgetId,
       lastBudgetEvent ?? reserveEvent
     );
     const cleanMetadataWithAttempts = stripResultReviewAuditMetadata(metadataWithAttempts);
+    const groupMetadata = groupTitle && !getString(cleanMetadataWithAttempts.resultGroupTitle)
+      ? { resultGroupTitle: groupTitle, rerunGroupTitle: groupTitle }
+      : {};
     const retryMeta = {
       retryImage: true,
       retriedImageAt: now,
@@ -320,6 +325,7 @@ export async function POST(
         providerDiagnostics: undefined,
         errorCode: undefined,
         retryImageErrorCode: undefined,
+        ...groupMetadata,
       };
       const artifact = await artifactDB.add({
         workflowId: job.workflowId,
@@ -406,6 +412,7 @@ export async function POST(
       error: failure.message,
       metadata: {
         ...cleanMetadataWithAttempts,
+        ...groupMetadata,
         ...retryMeta,
         errorCode: failure.code,
         providerDiagnostics: failure.diagnostics,

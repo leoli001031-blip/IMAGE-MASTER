@@ -3783,7 +3783,10 @@ export function VisualWorkbench() {
     }
   };
 
-  const handleRetryImageJob = async (job: PersistedGenerationJob) => {
+  const handleRetryImageJob = async (
+    job: PersistedGenerationJob,
+    options: { groupTitle?: string } = {}
+  ) => {
     setRunningJobId(job.id);
     setJobMessage("正在估算单图重试成本...");
 
@@ -3807,7 +3810,10 @@ export function VisualWorkbench() {
       const response = await apiFetch(`/api/jobs/${job.id}/retry-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmedProviderCallLimit: providerCallLimit }),
+        body: JSON.stringify({
+          confirmedProviderCallLimit: providerCallLimit,
+          groupTitle: options.groupTitle,
+        }),
       });
       const payload = await response.json();
       const updated = mapPersistedJob(payload.job ?? payload);
@@ -4677,7 +4683,7 @@ export function VisualWorkbench() {
           return;
         }
         if (canRetryImageJob(job)) {
-          void handleRetryImageJob(job);
+          void handleRetryImageJob(job, { groupTitle: getStringValue(detail.group) });
           return;
         }
         if (canRerunImageJob(job)) {
@@ -4711,7 +4717,7 @@ export function VisualWorkbench() {
         setJobMessage(`开始按顺序重做 ${retryJobs.length} 张图片`);
         for (const job of retryJobs) {
           if (canRetryImageJob(job)) {
-            await handleRetryImageJob(job);
+            await handleRetryImageJob(job, { groupTitle: getStringValue(detail?.group) });
           } else if (canRerunImageJob(job)) {
             await handleRerunImageJob(job, { groupTitle: getStringValue(detail?.group) });
           } else {
