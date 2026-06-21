@@ -2957,6 +2957,30 @@ export function VisualWorkbench() {
     const sourceArtifacts = groupArtifacts.length > 0
       ? groupArtifacts
       : resolveAgentResultGroupArtifacts(group, artifacts);
+    if (getAgentResultGroupOpenFolderIntent(brief)) {
+      const urls = sourceArtifacts
+        .map((artifact) => artifact.url)
+        .filter((url): url is string => typeof url === "string" && url.length > 0);
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      if (urls.length === 0) {
+        setComposeMessage(`「${group.title}」没有可打开文件夹的本地图像。`);
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-open-folder", {
+          detail: {
+            urls,
+            group: group.title,
+            title: group.title,
+            artifactIds: sourceArtifacts.map((artifact) => artifact.id),
+          },
+        })
+      );
+      setHighlightedArtifactGroupTitle(group.title);
+      setComposeMessage(`正在打开「${group.title}」这一组 ${urls.length} 张图所在文件夹。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (sourceArtifacts.length === 0) {
@@ -12121,6 +12145,12 @@ function getAgentImageOpenFolderIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(打开|查看|显示|定位|找到|露出)(这张|当前)?的?(本地)?(文件夹|目录|所在位置|本地位置|finder|访达)|(?:文件夹|目录|所在位置|本地位置|finder|访达)(打开|查看|显示|定位|找到|露出)/i.test(compactText);
+}
+
+function getAgentResultGroupOpenFolderIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(打开|查看|显示|定位|找到|露出)(这组|本组|这一组|当前组|这批|这一批|当前这组)?的?(本地)?(文件夹|目录|所在位置|本地位置|finder|访达)|(?:这组|本组|这一组|当前组|这批|这一批|当前这组)(图|图片|结果)?(文件夹|目录|所在位置|本地位置|finder|访达)(打开|查看|显示|定位|找到|露出)?|(?:文件夹|目录|所在位置|本地位置|finder|访达)(打开|查看|显示|定位|找到|露出)(这组|本组|这一组|当前组|这批|这一批|当前这组)?/i.test(compactText);
 }
 
 function getAgentImageDownloadIntent(text: string): boolean {

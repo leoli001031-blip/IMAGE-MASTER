@@ -522,6 +522,11 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleRunAgentResultGroupRevision[\s\S]*getAgentResultGroupOpenFolderIntent\(brief\)[\s\S]*urls = sourceArtifacts[\s\S]*image-master:generation-frame-output-open-folder[\s\S]*urls,[\s\S]*artifactIds: sourceArtifacts\.map[\s\S]*正在打开「\$\{group\.title\}」这一组 \$\{urls\.length\} 张图所在文件夹[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused result-group chat should open the selected group folder before falling through to picking or revision jobs"
+);
+assert.match(
+  workbenchSource,
   /action === "group_redo"[\s\S]*retryableGroupArtifacts[\s\S]*length === 0[\s\S]*selectGroupForEdit[\s\S]*没有可直接重跑的任务[\s\S]*artifactIds: retryableGroupArtifacts\.map[\s\S]*\$\{retryableGroupArtifacts\.length\} 张待处理图[\s\S]*getRemainingReviewText\(\)/,
   "Agent group redo suggestions should report batch size and remaining review work, with scoped editing fallback"
 );
@@ -590,6 +595,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageOpenFolderIntent[\s\S]*文件夹\|目录\|所在位置\|本地位置[\s\S]*finder\|访达[\s\S]*\/i\.test\(compactText\)/,
   "single-image open-folder intent should require explicit local folder wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentResultGroupOpenFolderIntent[\s\S]*这组\|本组\|这一组\|当前组[\s\S]*文件夹\|目录\|所在位置\|本地位置[\s\S]*finder\|访达/,
+  "result-group open-folder intent should require explicit group and local folder wording"
 );
 assert.match(
   workbenchSource,
