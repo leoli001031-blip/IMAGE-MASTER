@@ -427,6 +427,16 @@ assert.match(
 );
 assert.match(
   workbenchSource,
+  /handleRunAgentResultGroupRevision[\s\S]*reviewStatusIntent = getAgentResultGroupReviewStatusIntent\(brief\)[\s\S]*handleSetArtifactGroupReviewStatus[\s\S]*Agent 自然语言[\s\S]*只影响这组，其他图组不变[\s\S]*getAgentActionableGroupSuggestionArtifacts/,
+  "focused result-group chat should mark group review state directly before creating revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentResultGroupReviewStatusIntent[\s\S]*待检查[\s\S]*needs_redo[\s\S]*rejected[\s\S]*approved/,
+  "focused result-group chat should parse keep, redo, reject, and pending review-state intents"
+);
+assert.match(
+  workbenchSource,
   /视觉 QA 风险[\s\S]*\["open", "edit", "mark_needs_redo", "approve"\][\s\S]*检查烧字图[\s\S]*\["open", "copy", "mark_needs_redo", "approve"\][\s\S]*优先挑关键图[\s\S]*\["open", "edit", "approve", "reject"\]/,
   "Agent review suggestions that ask users to inspect a result should expose a direct detail action"
 );

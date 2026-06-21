@@ -2773,6 +2773,31 @@ export function VisualWorkbench() {
     const sourceArtifacts = groupArtifacts.length > 0
       ? groupArtifacts
       : resolveAgentResultGroupArtifacts(group, artifacts);
+    const reviewStatusIntent = getAgentResultGroupReviewStatusIntent(brief);
+    if (reviewStatusIntent) {
+      const artifactIds = sourceArtifacts.map((artifact) => artifact.id);
+      if (artifactIds.length === 0) {
+        setComposeMessage(`「${group.title}」没有可标记挑图状态的成片。`);
+        return;
+      }
+      const filter = getResultReviewFilterForArtifactReviewStatus(reviewStatusIntent);
+      if (filter) {
+        setResultReviewFilter(filter);
+        setHighlightedResultReviewFilter(filter);
+      }
+      setHighlightedArtifactGroupTitle(group.title);
+      await handleSetArtifactGroupReviewStatus(
+        artifactIds,
+        reviewStatusIntent,
+        `Agent 自然语言：${brief}`
+      );
+      setAgentLastUserBrief(brief);
+      setComposeMessage(
+        `已把「${group.title}」这一组 ${artifactIds.length} 张标记为${getArtifactReviewStatusLabel(reviewStatusIntent)}；只影响这组，其他图组不变。`
+      );
+      setComposeBrief("");
+      return;
+    }
     const actionableArtifacts = getAgentActionableGroupSuggestionArtifacts(sourceArtifacts);
     const protectedCount = sourceArtifacts.length - actionableArtifacts.length;
     const targets = actionableArtifacts
@@ -11154,6 +11179,16 @@ function buildAgentFocusedGroupScopeText(
     `状态：${formatAgentArtifactReviewSummary(artifacts) || "待检查"}`,
   ].filter(Boolean);
   return parts.join("；");
+}
+
+function getAgentResultGroupReviewStatusIntent(text: string): ArtifactReviewStatus | null {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return null;
+  if (/(恢复|改回|设为|标为)?待检查|取消标记|取消状态/.test(compactText)) return "pending";
+  if (/(标记?重做|标待重做|待重做|建议重做|标成重做)/.test(compactText)) return "needs_redo";
+  if (/(淘汰|不要这组|不用这组|不留这组|弃用|废掉|拒绝|打掉)/.test(compactText)) return "rejected";
+  if (/(保留|留下|留着|可用|通过|要这组|这组可以|先留|先收|选中)/i.test(compactText)) return "approved";
+  return null;
 }
 
 function buildAgentResultGroupRevisionDiff(
