@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils/cn";
 import Image from "next/image";
 import type { ImageDetailItem } from "./image-detail-panel";
 
+type ReviewStatus = NonNullable<ImageDetailItem["reviewStatus"]>;
+
 interface ImageCardProps {
   id: string;
   url: string;
@@ -49,6 +51,14 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "已取消",
 };
 
+const REVIEW_STATUS_CLASSES: Record<ReviewStatus, string> = {
+  approved: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
+  pending: "bg-amber-50 text-amber-700 ring-1 ring-amber-100",
+  needs_redo: "bg-red-50 text-red-700 ring-1 ring-red-100",
+  rejected: "bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200",
+  failed: "bg-red-50 text-red-700 ring-1 ring-red-100",
+};
+
 export function ImageCard({
   id,
   url,
@@ -79,6 +89,7 @@ export function ImageCard({
   const statusLabel = _detailData?.status
     ? STATUS_LABELS[_detailData.status] || _detailData.status
     : undefined;
+  const reviewStatus = _detailData?.reviewStatus;
 
   return (
     <div className="group overflow-hidden rounded-lg border border-transparent bg-transparent transition hover:border-warm-line/50">
@@ -144,7 +155,10 @@ export function ImageCard({
           )}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {reviewLabel && (
-              <span className="rounded-full bg-warm-primary-soft px-2 py-0.5 text-[10px] text-warm-primary">
+              <span className={cn(
+                "rounded-full px-2 py-0.5 text-[10px]",
+                reviewStatus ? REVIEW_STATUS_CLASSES[reviewStatus] : "bg-warm-primary-soft text-warm-primary"
+              )}>
                 {reviewLabel}
               </span>
             )}

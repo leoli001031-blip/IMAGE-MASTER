@@ -81,6 +81,7 @@ export function ImageGroup({
             reviewLabel={getReviewLabel?.(img)}
             copyModeLabel={getCopyModeLabel?.(img)}
             ratio={getImageRatio(img)}
+            detailData={{ reviewStatus: getImageReviewStatus(img) }}
           />
         ))}
       </div>
@@ -136,6 +137,22 @@ function getImageRatio(image: GeneratedImage): string | undefined {
         : undefined;
   const match = size?.match(/^(\d+)x(\d+)$/i);
   return match ? `${match[1]}:${match[2]}` : undefined;
+}
+
+function getImageReviewStatus(image: GeneratedImage): ImageDetailReviewStatus {
+  if (image.error || !image.url) return "failed";
+  const metadata = (image.metadata ?? {}) as Record<string, unknown>;
+  const reviewState = isRecord(metadata.reviewState) ? metadata.reviewState : undefined;
+  const status = getString(reviewState?.status);
+  return isImageDetailReviewStatus(status) ? status : "pending";
+}
+
+function isImageDetailReviewStatus(value: string | undefined): value is ImageDetailReviewStatus {
+  return value === "approved" ||
+    value === "pending" ||
+    value === "needs_redo" ||
+    value === "rejected" ||
+    value === "failed";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

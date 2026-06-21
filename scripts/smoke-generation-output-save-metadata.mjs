@@ -246,6 +246,16 @@ assert.match(
   /const imagePreviewUrl = previewUrl \|\| url[\s\S]*src=\{imagePreviewUrl\}[\s\S]*loading="lazy"[\s\S]*sizes="\(min-width: 1024px\) 320px, 50vw"/,
   "result image cards should lazy-load the preview URL with bounded responsive sizes"
 );
+assert.match(
+  imageGroupSource,
+  /detailData=\{\{ reviewStatus: getImageReviewStatus\(img\) \}\}[\s\S]*function getImageReviewStatus[\s\S]*metadata\.reviewState[\s\S]*return isImageDetailReviewStatus\(status\) \? status : "pending"/,
+  "result image groups should pass persisted review status into image cards"
+);
+assert.match(
+  imageCardSource,
+  /const REVIEW_STATUS_CLASSES[\s\S]*approved:[\s\S]*needs_redo:[\s\S]*rejected:[\s\S]*const reviewStatus = _detailData\?\.reviewStatus[\s\S]*reviewStatus \? REVIEW_STATUS_CLASSES\[reviewStatus\]/,
+  "result image cards should use review-state colors for keep, redo, rejected, and failed states"
+);
 
 assert.match(
   imageCardSource,
