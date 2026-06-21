@@ -416,13 +416,13 @@ function WorkflowNodeComponent(props: NodeProps<CanvasFlowNode>) {
                   </button>
                   <button
                     type="button"
-                    aria-label={`建议重做：${data.label}`}
+                    aria-label={`重做：${data.label}`}
                     className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded border border-warm-paper/45 bg-warm-paper/95 text-amber-700 shadow-sm backdrop-blur transition hover:bg-amber-50"
-                    title="标记为建议重做"
+                    title="按原上下文重做这张"
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
-                      dispatchArtifactReviewState({ ...artifactReviewDetail, status: "needs_redo", note: "用户标记建议重做" });
+                      dispatchArtifactRetry(data, id);
                     }}
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -783,6 +783,21 @@ function dispatchArtifactEdit(data: CanvasNodeData, nodeId: string): void {
 function dispatchArtifactSave(data: CanvasNodeData, nodeId: string): void {
   window.dispatchEvent(
     new CustomEvent("image-master:generation-frame-output-save", {
+      detail: {
+        nodeId,
+        artifactId: getStringParameter(data.artifactId),
+        jobId: getStringParameter(data.jobId),
+        url: getStringParameter(data.referenceUrl) || getStringParameter(data.previewUrl),
+        title: getArtifactNodeFullTitle(data),
+        status: getStringParameter(data.artifactStatus),
+      },
+    })
+  );
+}
+
+function dispatchArtifactRetry(data: CanvasNodeData, nodeId: string): void {
+  window.dispatchEvent(
+    new CustomEvent("image-master:generation-frame-output-retry", {
       detail: {
         nodeId,
         artifactId: getStringParameter(data.artifactId),

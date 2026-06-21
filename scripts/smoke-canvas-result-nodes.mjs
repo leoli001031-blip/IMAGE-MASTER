@@ -184,8 +184,8 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /让 Agent 修改[\s\S]*dispatchArtifactEdit\(data, id\)[\s\S]*改图[\s\S]*保存为资产[\s\S]*dispatchArtifactSave\(data, id\)/,
-  "artifact result cards should expose direct single-image Agent edit and save-as-asset actions"
+  /让 Agent 修改[\s\S]*dispatchArtifactEdit\(data, id\)[\s\S]*改图[\s\S]*保存为资产[\s\S]*dispatchArtifactSave\(data, id\)[\s\S]*重做[\s\S]*dispatchArtifactRetry\(data, id\)/,
+  "artifact result cards should expose direct single-image Agent edit, save-as-asset, and retry actions"
 );
 assert.match(
   workflowNodeSource,
@@ -196,6 +196,11 @@ assert.match(
   workflowNodeSource,
   /function dispatchArtifactSave[\s\S]*image-master:generation-frame-output-save[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
   "artifact result cards should dispatch the same save-as-asset context as the detail preview"
+);
+assert.match(
+  workflowNodeSource,
+  /function dispatchArtifactRetry[\s\S]*image-master:generation-frame-output-retry[\s\S]*artifactId[\s\S]*jobId[\s\S]*url[\s\S]*getArtifactNodeFullTitle/,
+  "artifact result cards should dispatch the same single-image retry context as the detail preview"
 );
 assert.match(
   outputPreviewModalSource,
@@ -292,8 +297,8 @@ assert.match(
 );
 assert.match(
   workflowNodeSource,
-  /保留这张[\s\S]*标记为建议重做[\s\S]*淘汰这张/,
-  "artifact cards should expose keep, needs-redo, and reject actions"
+  /保留这张[\s\S]*按原上下文重做这张[\s\S]*淘汰这张/,
+  "artifact cards should expose keep, retry, and reject actions"
 );
 assert.match(
   outputPreviewModalSource,
