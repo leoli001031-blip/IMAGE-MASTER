@@ -487,8 +487,13 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /handleRunAgentImageRevision[\s\S]*getAgentImageSaveAsAssetIntent\(brief\)[\s\S]*image-master:generation-frame-output-save[\s\S]*已提交保存「\$\{target\.title\}」为资产[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageSaveAsAssetIntent\(brief\)[\s\S]*image-master:generation-frame-output-save[\s\S]*已提交保存「\$\{target\.title\}」为资产[\s\S]*return[\s\S]*getAgentImageOpenFolderIntent\(brief\)/,
   "focused single-image chat should save the selected result as an asset before falling through to revision jobs"
+);
+assert.match(
+  workbenchSource,
+  /handleRunAgentImageRevision[\s\S]*getAgentImageOpenFolderIntent\(brief\)[\s\S]*image-master:generation-frame-output-open-folder[\s\S]*正在打开「\$\{target\.title\}」所在文件夹[\s\S]*return[\s\S]*keepCountIntent = getAgentResultGroupKeepCountIntent\(brief\)/,
+  "focused single-image chat should open the selected result folder before falling through to revision jobs"
 );
 assert.match(
   workbenchSource,
@@ -560,6 +565,11 @@ assert.match(
   workbenchSource,
   /function getAgentImageOpenDetailIntent[\s\S]*详情\|参考图\|提示词\|prompt[\s\S]*锁定信息\|参考信息[\s\S]*\/i\.test\(compactText\)/,
   "single-image detail intent should require explicit detail, reference, prompt, QA, or lock-info wording"
+);
+assert.match(
+  workbenchSource,
+  /function getAgentImageOpenFolderIntent[\s\S]*文件夹\|目录\|所在位置\|本地位置[\s\S]*finder\|访达[\s\S]*\/i\.test\(compactText\)/,
+  "single-image open-folder intent should require explicit local folder wording"
 );
 assert.match(
   workbenchSource,

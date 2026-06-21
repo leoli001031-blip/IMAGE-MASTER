@@ -2710,6 +2710,27 @@ export function VisualWorkbench() {
       setComposeMessage(`已提交保存「${target.title}」为资产；保存成功后会自动标记为可用。`);
       return;
     }
+    if (getAgentImageOpenFolderIntent(brief)) {
+      window.dispatchEvent(
+        new CustomEvent("image-master:generation-frame-output-open-folder", {
+          detail: {
+            nodeId: target.nodeId,
+            outputId: target.outputId,
+            artifactId: target.artifactId,
+            jobId: target.jobId,
+            url: target.url,
+            title: target.title,
+            status: target.status,
+            prompt: target.prompt,
+            metadata: target.metadata,
+          },
+        })
+      );
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(`正在打开「${target.title}」所在文件夹。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (keepCountIntent === 1 && target.artifactId) {
@@ -12038,6 +12059,12 @@ function getAgentImageOpenDetailIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(打开|查看|看看|看一下|看)(这张|当前)?的?(详情|参考图|提示词|prompt|原prompt|原始prompt|qa|质检|锁定信息|参考信息)|(?:详情|参考图|提示词|prompt|原prompt|原始prompt|qa|质检|锁定信息|参考信息)(打开|查看|看看|看一下)/i.test(compactText);
+}
+
+function getAgentImageOpenFolderIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(打开|查看|显示|定位|找到|露出)(这张|当前)?的?(本地)?(文件夹|目录|所在位置|本地位置|finder|访达)|(?:文件夹|目录|所在位置|本地位置|finder|访达)(打开|查看|显示|定位|找到|露出)/i.test(compactText);
 }
 
 function getAgentGlobalResultReviewTargets(
