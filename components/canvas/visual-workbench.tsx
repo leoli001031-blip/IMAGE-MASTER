@@ -2731,6 +2731,13 @@ export function VisualWorkbench() {
       setComposeMessage(`正在打开「${target.title}」所在文件夹。`);
       return;
     }
+    if (getAgentImageDownloadIntent(brief)) {
+      downloadAgentImageTarget(target.url, target.title);
+      setAgentLastUserBrief(brief);
+      setComposeBrief("");
+      setComposeMessage(`已开始下载「${target.title}」。`);
+      return;
+    }
     const keepCountIntent = getAgentResultGroupKeepCountIntent(brief);
     if (keepCountIntent) {
       if (keepCountIntent === 1 && target.artifactId) {
@@ -12065,6 +12072,31 @@ function getAgentImageOpenFolderIntent(text: string): boolean {
   const compactText = text.replace(/\s+/g, "");
   if (!compactText) return false;
   return /(打开|查看|显示|定位|找到|露出)(这张|当前)?的?(本地)?(文件夹|目录|所在位置|本地位置|finder|访达)|(?:文件夹|目录|所在位置|本地位置|finder|访达)(打开|查看|显示|定位|找到|露出)/i.test(compactText);
+}
+
+function getAgentImageDownloadIntent(text: string): boolean {
+  const compactText = text.replace(/\s+/g, "");
+  if (!compactText) return false;
+  return /(下载|导出|另存为)(这张|当前)?(图|图片|结果)?|(?:这张|当前)?(图|图片|结果)?(下载|导出|另存为)|(?:存到|保存到|保存至|存进|保存进)本地|本地保存/.test(compactText);
+}
+
+function downloadAgentImageTarget(url: string, title: string): void {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${sanitizeAgentDownloadFileName(title || "image-master-result")}.png`;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function sanitizeAgentDownloadFileName(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "image-master-result";
 }
 
 function getAgentGlobalResultReviewTargets(
