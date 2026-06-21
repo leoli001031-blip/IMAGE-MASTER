@@ -263,12 +263,14 @@ const quickWorkflowPresets = [
 ];
 
 type CanvasAgentPrimaryMode = "create_frame" | "plan_frame" | "generate_frame" | "global_plan";
-type ResultReviewFilter = "all" | "approved" | "needs_redo" | "failed" | "qa_risk";
+type ResultReviewFilter = "all" | "approved" | "pending" | "needs_redo" | "rejected" | "failed" | "qa_risk";
 
 const resultReviewFilterOptions: Array<{ id: ResultReviewFilter; label: string }> = [
   { id: "all", label: "全部" },
   { id: "approved", label: "只看可用" },
+  { id: "pending", label: "只看待检查" },
   { id: "needs_redo", label: "只看建议重做" },
+  { id: "rejected", label: "只看已淘汰" },
   { id: "failed", label: "只看失败" },
   { id: "qa_risk", label: "只看 QA 风险" },
 ];
@@ -7256,14 +7258,18 @@ function buildResultReviewFilterCounts(
   const counts: Record<ResultReviewFilter, number> = {
     all: artifacts.length,
     approved: 0,
+    pending: 0,
     needs_redo: 0,
+    rejected: 0,
     failed: 0,
     qa_risk: 0,
   };
   for (const artifact of artifacts) {
     const status = getArtifactReviewStatus(artifact);
     if (status === "approved") counts.approved += 1;
+    if (status === "pending") counts.pending += 1;
     if (status === "needs_redo") counts.needs_redo += 1;
+    if (status === "rejected") counts.rejected += 1;
     if (status === "failed") counts.failed += 1;
     if (isArtifactVisualQaRisk(artifact)) counts.qa_risk += 1;
   }
@@ -7272,7 +7278,9 @@ function buildResultReviewFilterCounts(
 
 function getResultReviewFilterForArtifactReviewStatus(status: ArtifactReviewStatus): ResultReviewFilter | null {
   if (status === "approved") return "approved";
+  if (status === "pending") return "pending";
   if (status === "needs_redo") return "needs_redo";
+  if (status === "rejected") return "rejected";
   if (status === "failed") return "failed";
   return null;
 }

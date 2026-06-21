@@ -459,13 +459,18 @@ assert.match(
 );
 assert.match(
   workbenchSource,
-  /type ResultReviewFilter = "all" \| "approved" \| "needs_redo" \| "failed" \| "qa_risk"[\s\S]*只看 QA 风险/,
-  "result review filter should include a QA-risk view for large result sets"
+  /type ResultReviewFilter = "all" \| "approved" \| "pending" \| "needs_redo" \| "rejected" \| "failed" \| "qa_risk"[\s\S]*只看待检查[\s\S]*只看已淘汰[\s\S]*只看 QA 风险/,
+  "result review filter should expose every pick-state plus a QA-risk view for large result sets"
 );
 assert.match(
   workbenchSource,
-  /buildResultReviewFilterCounts[\s\S]*qa_risk[\s\S]*isArtifactVisualQaRisk/,
-  "result review filter counts should include visual QA risk counts"
+  /buildResultReviewFilterCounts[\s\S]*pending: 0[\s\S]*rejected: 0[\s\S]*status === "pending"[\s\S]*status === "rejected"[\s\S]*qa_risk[\s\S]*isArtifactVisualQaRisk/,
+  "result review filter counts should include pending, rejected, and visual QA risk counts"
+);
+assert.match(
+  workbenchSource,
+  /getResultReviewFilterForArtifactReviewStatus[\s\S]*status === "pending"[\s\S]*return "pending"[\s\S]*status === "rejected"[\s\S]*return "rejected"/,
+  "review status changes should highlight pending and rejected filters too"
 );
 assert.match(
   workbenchSource,
